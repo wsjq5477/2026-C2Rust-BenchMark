@@ -1,0 +1,37 @@
+{
+  "extension": [],
+  "kvdb": [
+    "test_fdb_change_kv",
+    "test_fdb_change_kv_blob",
+    "test_fdb_create_kv",
+    "test_fdb_create_kv_blob",
+    "test_fdb_del_kv",
+    "test_fdb_del_kv_blob",
+    "test_fdb_gc",
+    "test_fdb_gc2",
+    "test_fdb_kvdb_deinit",
+    "test_fdb_kvdb_init",
+    "test_fdb_kvdb_init_check",
+    "test_fdb_kvdb_set_default",
+    "test_fdb_scale_up"
+  ],
+  "source_to_rust": {
+    "equivalence": "flashDB_rust/tests/equivalence_tests.rs",
+    "kvdb": "flashDB_rust/tests/kvdb_tests.rs",
+    "tsdb": "flashDB_rust/tests/tsdb_tests.rs"
+  },
+  "total_scenarios": 23,
+  "tsdb": [
+    "test_fdb_github_issue_249",
+    "test_fdb_tsdb_deinit",
+    "test_fdb_tsdb_init_ex",
+    "test_fdb_tsl_append",
+    "test_fdb_tsl_clean",
+    "test_fdb_tsl_iter",
+    "test_fdb_tsl_iter_by_time",
+    "test_fdb_tsl_iter_by_time_1",
+    "test_fdb_tsl_query_count",
+    "test_fdb_tsl_set_status"
+  ],
+  "unmapped": []
+}

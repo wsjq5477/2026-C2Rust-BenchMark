@@ -1,0 +1,222 @@
+{
+  "kvdb_tests": [
+    "test_fdb_change_kv",
+    "test_fdb_change_kv_blob",
+    "test_fdb_create_kv",
+    "test_fdb_create_kv_blob",
+    "test_fdb_del_kv",
+    "test_fdb_del_kv_blob",
+    "test_fdb_gc",
+    "test_fdb_gc2",
+    "test_fdb_kvdb_deinit",
+    "test_fdb_kvdb_init",
+    "test_fdb_kvdb_init_check",
+    "test_fdb_kvdb_set_default",
+    "test_fdb_scale_up"
+  ],
+  "registered_tests": [
+    "test_fdb_change_kv",
+    "test_fdb_change_kv_blob",
+    "test_fdb_create_kv",
+    "test_fdb_create_kv_blob",
+    "test_fdb_del_kv",
+    "test_fdb_del_kv_blob",
+    "test_fdb_gc",
+    "test_fdb_gc2",
+    "test_fdb_github_issue_249",
+    "test_fdb_kvdb_deinit",
+    "test_fdb_kvdb_init",
+    "test_fdb_kvdb_init_check",
+    "test_fdb_kvdb_set_default",
+    "test_fdb_scale_up",
+    "test_fdb_tsdb_deinit",
+    "test_fdb_tsdb_init_ex",
+    "test_fdb_tsl_append",
+    "test_fdb_tsl_clean",
+    "test_fdb_tsl_iter",
+    "test_fdb_tsl_iter_by_time",
+    "test_fdb_tsl_iter_by_time_1",
+    "test_fdb_tsl_query_count",
+    "test_fdb_tsl_set_status"
+  ],
+  "scenario_tags": {
+    "test_check_fdb_by_kvs": [
+      "kvdb"
+    ],
+    "test_fdb_by_kvs": [
+      "kvdb"
+    ],
+    "test_fdb_change_kv": [
+      "change",
+      "kvdb"
+    ],
+    "test_fdb_change_kv_blob": [
+      "change",
+      "kvdb"
+    ],
+    "test_fdb_create_kv": [
+      "create",
+      "kvdb"
+    ],
+    "test_fdb_create_kv_blob": [
+      "create",
+      "kvdb"
+    ],
+    "test_fdb_del_kv": [
+      "del",
+      "kvdb"
+    ],
+    "test_fdb_del_kv_blob": [
+      "del",
+      "kvdb"
+    ],
+    "test_fdb_gc": [
+      "gc",
+      "kvdb"
+    ],
+    "test_fdb_gc2": [
+      "gc",
+      "kvdb"
+    ],
+    "test_fdb_github_issue_249": [
+      "tsdb"
+    ],
+    "test_fdb_kvdb_deinit": [
+      "deinit",
+      "init",
+      "kvdb"
+    ],
+    "test_fdb_kvdb_init": [
+      "init",
+      "kvdb"
+    ],
+    "test_fdb_kvdb_init_by_8_sectors": [
+      "init",
+      "kvdb"
+    ],
+    "test_fdb_kvdb_init_by_sector_num": [
+      "init",
+      "kvdb"
+    ],
+    "test_fdb_kvdb_init_check": [
+      "init",
+      "kvdb"
+    ],
+    "test_fdb_kvdb_set_default": [
+      "kvdb",
+      "set"
+    ],
+    "test_fdb_scale_up": [
+      "kvdb"
+    ],
+    "test_fdb_tsdb_deinit": [
+      "deinit",
+      "init",
+      "tsdb"
+    ],
+    "test_fdb_tsdb_init_ex": [
+      "init",
+      "tsdb"
+    ],
+    "test_fdb_tsl_append": [
+      "append",
+      "tsdb"
+    ],
+    "test_fdb_tsl_clean": [
+      "clean",
+      "tsdb"
+    ],
+    "test_fdb_tsl_clean_cb": [
+      "clean",
+      "tsdb"
+    ],
+    "test_fdb_tsl_iter": [
+      "iter",
+      "tsdb"
+    ],
+    "test_fdb_tsl_iter_by_time": [
+      "iter",
+      "tsdb"
+    ],
+    "test_fdb_tsl_iter_by_time_1": [
+      "iter",
+      "tsdb"
+    ],
+    "test_fdb_tsl_iter_cb": [
+      "iter",
+      "tsdb"
+    ],
+    "test_fdb_tsl_query_count": [
+      "query",
+      "tsdb"
+    ],
+    "test_fdb_tsl_sector_bound_test": [
+      "tsdb"
+    ],
+    "test_fdb_tsl_set_status": [
+      "set",
+      "status",
+      "tsdb"
+    ],
+    "test_save_fdb_by_kvs": [
+      "kvdb"
+    ],
+    "test_tsdb_data_by_time": [
+      "tsdb"
+    ]
+  },
+  "test_files": [
+    "tests/benchmark/bench_main.c",
+    "tests/fdb_kvdb_tc.c",
+    "tests/fdb_tsdb_tc.c",
+    "tests/kvdb_main.c",
+    "tests/main.c",
+    "tests/tsdb_main.c"
+  ],
+  "test_functions": [
+    "test_check_fdb_by_kvs",
+    "test_fdb_by_kvs",
+    "test_fdb_change_kv",
+    "test_fdb_change_kv_blob",
+    "test_fdb_create_kv",
+    "test_fdb_create_kv_blob",
+    "test_fdb_del_kv",
+    "test_fdb_del_kv_blob",
+    "test_fdb_gc",
+    "test_fdb_gc2",
+    "test_fdb_github_issue_249",
+    "test_fdb_kvdb_deinit",
+    "test_fdb_kvdb_init",
+    "test_fdb_kvdb_init_by_8_sectors",
+    "test_fdb_kvdb_init_by_sector_num",
+    "test_fdb_kvdb_init_check",
+    "test_fdb_kvdb_set_default",
+    "test_fdb_scale_up",
+    "test_fdb_tsdb_deinit",
+    "test_fdb_tsdb_init_ex",
+    "test_fdb_tsl_append",
+    "test_fdb_tsl_clean",
+    "test_fdb_tsl_clean_cb",
+    "test_fdb_tsl_iter",
+    "test_fdb_tsl_iter_by_time",
+    "test_fdb_tsl_iter_by_time_1",
+    "test_fdb_tsl_iter_cb",
+    "test_fdb_tsl_query_count",
+    "test_fdb_tsl_sector_bound_test",
+    "test_fdb_tsl_set_status",
+    "test_save_fdb_by_kvs",
+    "test_tsdb_data_by_time"
+  ],
+  "tsdb_tests": [
+    "test_fdb_github_issue_249",
+    "test_fdb_tsdb_deinit",
+    "test_fdb_tsdb_init_ex",
+    "test_fdb_tsl_append",
+    "test_fdb_tsl_clean",
+    "test_fdb_tsl_iter",
+    "test_fdb_tsl_iter_by_time",
+    "test_fdb_tsl_iter_by_time_1",
+    "test_fdb_tsl_query_count",
+    "test_fdb_tsl_set_status"
+  ]
+}

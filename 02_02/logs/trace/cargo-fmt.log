@@ -1,0 +1,316 @@
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/error.rs:1:
+[31m-
+(B[m use std::fmt::{Display, Formatter};
+ 
+ pub type Result<T> = std::result::Result<T, FdbError>;
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/flash.rs:79:
+         if addr + size > total {
+             return Err(FdbError::InvalidInput(format!(
+                 "erase out of bounds: addr {} + size {} > total {}",
+[31m-                addr,
+(B[m[31m-                size,
+(B[m[31m-                total
+(B[m[32m+                addr, size, total
+(B[m             )));
+         }
+         let start = addr as usize;
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/flash.rs:181:
+         if addr + size > total {
+             return Err(FdbError::InvalidInput(format!(
+                 "erase out of bounds: addr {} + size {} > total {}",
+[31m-                addr,
+(B[m[31m-                size,
+(B[m[31m-                total
+(B[m[32m+                addr, size, total
+(B[m             )));
+         }
+         let start = addr as usize;
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/kvdb.rs:149:
+                 let key = String::from_utf8_lossy(&name_buf).into_owned();
+ 
+                 let mut value_buf = vec![0u8; value_len as usize];
+[31m-                self.storage.read(abs_addr + KV_HDR_SIZE + name_len, &mut value_buf)?;
+(B[m[32m+                self.storage
+(B[m[32m+                    .read(abs_addr + KV_HDR_SIZE + name_len, &mut value_buf)?;
+(B[m 
+                 match hdr_buf[0] {
+                     KV_STATUS_WRITE => {
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/kvdb.rs:214:
+ 
+     pub fn get_blob(&self, key: impl AsRef<str>) -> Result<Option<Vec<u8>>> {
+         match self.index.get(key.as_ref()) {
+[31m-            Some(entry) if matches!(entry.status, KvStatus::Write) => {
+(B[m[31m-                Ok(Some(entry.value.clone()))
+(B[m[31m-            }
+(B[m[32m+            Some(entry) if matches!(entry.status, KvStatus::Write) => Ok(Some(entry.value.clone())),
+(B[m             _ => Ok(None),
+         }
+     }
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/kvdb.rs:264:
+             }
+ 
+             let name_len = hdr_buf[5] as u32;
+[31m-            let value_len =
+(B[m[31m-                u32::from_le_bytes([hdr_buf[6], hdr_buf[7], hdr_buf[8], hdr_buf[9]]);
+(B[m[32m+            let value_len = u32::from_le_bytes([hdr_buf[6], hdr_buf[7], hdr_buf[8], hdr_buf[9]]);
+(B[m             let record_len = KV_HDR_SIZE + name_len + value_len;
+ 
+             if src_offset + record_len > self.sec_size {
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/kvdb.rs:398:
+         Err(FdbError::InvalidInput("no available sector".into()))
+     }
+ 
+[31m-    fn is_sector_empty_with_space(
+(B[m[31m-        &mut self,
+(B[m[31m-        sec_addr: u32,
+(B[m[31m-        required_size: u32,
+(B[m[31m-    ) -> Result<bool> {
+(B[m[32m+    fn is_sector_empty_with_space(&mut self, sec_addr: u32, required_size: u32) -> Result<bool> {
+(B[m         let mut first_byte = [0u8; 1];
+[31m-        self.storage.read(sec_addr + SECTOR_HDR_SIZE, &mut first_byte)?;
+(B[m[32m+        self.storage
+(B[m[32m+            .read(sec_addr + SECTOR_HDR_SIZE, &mut first_byte)?;
+(B[m         if first_byte[0] != KV_STATUS_UNUSED {
+             return Ok(false);
+         }
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/kvdb.rs:466:
+             }
+ 
+             let name_len = hdr_buf[5] as u32;
+[31m-            let value_len =
+(B[m[31m-                u32::from_le_bytes([hdr_buf[6], hdr_buf[7], hdr_buf[8], hdr_buf[9]]);
+(B[m[32m+            let value_len = u32::from_le_bytes([hdr_buf[6], hdr_buf[7], hdr_buf[8], hdr_buf[9]]);
+(B[m             let record_len = KV_HDR_SIZE + name_len + value_len;
+ 
+             if pos + record_len > self.sec_size {
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/kvdb.rs:485:
+                 let key = String::from_utf8_lossy(&name_buf).into_owned();
+ 
+                 match self.index.get(&key) {
+[31m-                    Some(e)
+(B[m[31m-                        if e.addr == abs_addr && matches!(e.status, KvStatus::Write) => {}
+(B[m[32m+                    Some(e) if e.addr == abs_addr && matches!(e.status, KvStatus::Write) => {}
+(B[m                     _ => return Ok(true),
+                 }
+             }
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/kvdb.rs:503:
+         for i in 0..num_sectors {
+             let sec_addr = i * self.sec_size;
+             let mut first_byte = [0u8; 1];
+[31m-            self.storage.read(sec_addr + SECTOR_HDR_SIZE, &mut first_byte)?;
+(B[m[32m+            self.storage
+(B[m[32m+                .read(sec_addr + SECTOR_HDR_SIZE, &mut first_byte)?;
+(B[m 
+             if first_byte[0] == KV_STATUS_UNUSED {
+                 let mut magic_buf = [0u8; 4];
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/kvdb.rs:516:
+             }
+         }
+ 
+[31m-        Err(FdbError::InvalidInput("no empty sector for GC destination".into()))
+(B[m[32m+        Err(FdbError::InvalidInput(
+(B[m[32m+            "no empty sector for GC destination".into(),
+(B[m[32m+        ))
+(B[m     }
+ 
+     fn find_oldest_data_sector(&mut self) -> Result<u32> {
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/kvdb.rs:525:
+         for i in 0..num_sectors {
+             let sec_addr = i * self.sec_size;
+             let mut first_byte = [0u8; 1];
+[31m-            self.storage.read(sec_addr + SECTOR_HDR_SIZE, &mut first_byte)?;
+(B[m[32m+            self.storage
+(B[m[32m+                .read(sec_addr + SECTOR_HDR_SIZE, &mut first_byte)?;
+(B[m             if first_byte[0] != KV_STATUS_UNUSED {
+                 let mut magic_buf = [0u8; 4];
+                 self.storage.read(sec_addr + 4, &mut magic_buf)?;
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/tsdb.rs:1:
+[31m-use crate::{FdbError, Result};
+(B[m use crate::flash::{FlashStorage, MemFlash};
+[32m+use crate::{FdbError, Result};
+(B[m 
+ const SECTOR_HDR_SIZE: u32 = 40;
+ const TSL_IDX_SIZE: u32 = 17;
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/tsdb.rs:164:
+             return 0;
+         }
+         let ts = u64::from_le_bytes(buf);
+[31m-        if ts == u64::MAX { 0 } else { ts }
+(B[m[32m+        if ts == u64::MAX {
+(B[m[32m+            0
+(B[m[32m+        } else {
+(B[m[32m+            ts
+(B[m[32m+        }
+(B[m     }
+ 
+     fn find_next_empty_sector(&self) -> Option<usize> {
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/tsdb.rs:241:
+         if data.len() as u32 > self.max_len {
+             return Err(FdbError::InvalidInput(format!(
+                 "payload len {} exceeds max_len {}",
+[31m-                data.len(), self.max_len
+(B[m[32m+                data.len(),
+(B[m[32m+                self.max_len
+(B[m             )));
+         }
+         let data_len = data.len() as u32;
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/tsdb.rs:278:
+     }
+ 
+     pub fn iter_reverse(&self) -> impl Iterator<Item = &TslRecord> {
+[31m-        self.records.iter().rev().filter(|r| r.status == TslStatus::Write)
+(B[m[32m+        self.records
+(B[m[32m+            .iter()
+(B[m[32m+            .rev()
+(B[m[32m+            .filter(|r| r.status == TslStatus::Write)
+(B[m     }
+ 
+     pub fn query_by_time(&self, from: u64, to: u64) -> Result<Vec<TslRecord>> {
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/tsdb.rs:344:
+         for &sec_idx in &active_sectors {
+             self.scan_sector(sec_idx)?;
+         }
+[31m-        let using_idx = self.sectors.iter().position(|s| s.status == SectorStatus::Using);
+(B[m[32m+        let using_idx = self
+(B[m[32m+            .sectors
+(B[m[32m+            .iter()
+(B[m[32m+            .position(|s| s.status == SectorStatus::Using);
+(B[m         if let Some(idx) = using_idx {
+             self.cur_sec_idx = idx;
+             self.recalc_positions(idx)?;
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/src/tsdb.rs:351:
+         } else {
+[31m-            let empty_idx = self.sectors.iter().position(|s| s.status == SectorStatus::Empty);
+(B[m[32m+            let empty_idx = self
+(B[m[32m+                .sectors
+(B[m[32m+                .iter()
+(B[m[32m+                .position(|s| s.status == SectorStatus::Empty);
+(B[m             let idx = match empty_idx {
+                 Some(e) => e,
+                 None => {
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/equivalence_tests.rs:1:
+[31m-
+(B[m use flashdb_rust::{KvDb, MemFlash, TsDb, TslStatus};
+ 
+ #[test]
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/equivalence_tests.rs:21:
+     let mut kv = KvDb::open(Box::new(MemFlash::new(4096, 4))).expect("open kvdb");
+     kv.set("text_key", "hello").expect("set string");
+     kv.set_blob("bin_key", &[0xDE, 0xAD]).expect("set blob");
+[31m-    assert_eq!(kv.get("text_key").expect("get string"), Some("hello".to_string()));
+(B[m[31m-    assert_eq!(kv.get_blob("bin_key").expect("get blob"), Some(vec![0xDE, 0xAD]));
+(B[m[32m+    assert_eq!(
+(B[m[32m+        kv.get("text_key").expect("get string"),
+(B[m[32m+        Some("hello".to_string())
+(B[m[32m+    );
+(B[m[32m+    assert_eq!(
+(B[m[32m+        kv.get_blob("bin_key").expect("get blob"),
+(B[m[32m+        Some(vec![0xDE, 0xAD])
+(B[m[32m+    );
+(B[m }
+ 
+ #[test]
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/equivalence_tests.rs:31:
+     ts.append(2, b"r1").expect("append");
+     ts.append(4, b"r2").expect("append");
+     ts.append(6, b"r3").expect("append");
+[31m-    ts.set_status(2, TslStatus::UserStatus1).expect("set status");
+(B[m[32m+    ts.set_status(2, TslStatus::UserStatus1)
+(B[m[32m+        .expect("set status");
+(B[m     ts.set_status(6, TslStatus::Deleted).expect("set status");
+     assert_eq!(ts.count_by_time(0, 10, TslStatus::Write), 1);
+     assert_eq!(ts.count_by_time(0, 10, TslStatus::UserStatus1), 1);
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/kvdb_tests.rs:1:
+[31m-
+(B[m use flashdb_rust::{KvDb, MemFlash};
+ use std::collections::HashMap;
+ 
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/kvdb_tests.rs:30:
+     db.set("key1", "value1").expect("set");
+     assert_eq!(db.get("key1").expect("get"), Some("value1".to_string()));
+     db.set("key1", "value2").expect("change");
+[31m-    assert_eq!(db.get("key1").expect("get changed"), Some("value2".to_string()));
+(B[m[32m+    assert_eq!(
+(B[m[32m+        db.get("key1").expect("get changed"),
+(B[m[32m+        Some("value2".to_string())
+(B[m[32m+    );
+(B[m }
+ 
+ #[test]
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/kvdb_tests.rs:55:
+     db.set_blob("blob1", &[1u8, 2]).expect("set blob");
+     assert_eq!(db.get_blob("blob1").expect("get blob"), Some(vec![1, 2]));
+     db.set_blob("blob1", &[5u8, 6, 7]).expect("change blob");
+[31m-    assert_eq!(db.get_blob("blob1").expect("get changed"), Some(vec![5, 6, 7]));
+(B[m[32m+    assert_eq!(
+(B[m[32m+        db.get_blob("blob1").expect("get changed"),
+(B[m[32m+        Some(vec![5, 6, 7])
+(B[m[32m+    );
+(B[m }
+ 
+ #[test]
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/kvdb_tests.rs:81:
+ fn kvdb_gc_compacts_deleted_records() {
+     let mut db = make_kvdb();
+     for i in 0..20 {
+[31m-        db.set(format!("key{}", i), format!("val{}", i)).expect("set");
+(B[m[32m+        db.set(format!("key{}", i), format!("val{}", i))
+(B[m[32m+            .expect("set");
+(B[m     }
+     for i in 0..10 {
+         db.delete(format!("key{}", i)).expect("delete");
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/kvdb_tests.rs:101:
+     let mut db = make_kvdb();
+     db.set("key1", "default1").expect("set default 1");
+     db.set("key2", "default2").expect("set default 2");
+[31m-    assert_eq!(db.get("key1").expect("get default"), Some("default1".to_string()));
+(B[m[31m-    assert_eq!(db.get("key2").expect("get default"), Some("default2".to_string()));
+(B[m[32m+    assert_eq!(
+(B[m[32m+        db.get("key1").expect("get default"),
+(B[m[32m+        Some("default1".to_string())
+(B[m[32m+    );
+(B[m[32m+    assert_eq!(
+(B[m[32m+        db.get("key2").expect("get default"),
+(B[m[32m+        Some("default2".to_string())
+(B[m[32m+    );
+(B[m }
+ 
+ #[test]
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/kvdb_tests.rs:112:
+         db.set(format!("k{}", i), format!("v{}", i)).expect("set");
+     }
+     for i in 0..30 {
+[31m-        assert_eq!(db.get(format!("k{}", i)).expect("get"), Some(format!("v{}", i)));
+(B[m[32m+        assert_eq!(
+(B[m[32m+            db.get(format!("k{}", i)).expect("get"),
+(B[m[32m+            Some(format!("v{}", i))
+(B[m[32m+        );
+(B[m     }
+ }
+ 
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/kvdb_tests.rs:122:
+     let mut db = KvDb::open(Box::new(flash)).expect("open");
+     db.set("persistent", "data").expect("set");
+     db.reload().expect("reload");
+[31m-    assert_eq!(db.get("persistent").expect("get after reload"), Some("data".to_string()));
+(B[m[32m+    assert_eq!(
+(B[m[32m+        db.get("persistent").expect("get after reload"),
+(B[m[32m+        Some("data".to_string())
+(B[m[32m+    );
+(B[m }
+ 
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/tsdb_tests.rs:1:
+[31m-
+(B[m use flashdb_rust::{TsDb, TslStatus};
+ 
+ const SEC_SIZE: u32 = 4096;
+Diff in /home/nv_test/777/flashdb2rust/02_02/flashDB_rust/tests/tsdb_tests.rs:33:
+ fn tsdb_query_by_time() {
+     let mut db = make_tsdb();
+     for ts in [2u64, 4, 6, 8, 10] {
+[31m-        db.append(ts, format!("data{}", ts).as_bytes()).expect("append");
+(B[m[32m+        db.append(ts, format!("data{}", ts).as_bytes())
+(B[m[32m+            .expect("append");
+(B[m     }
+     let queried = db.query_by_time(4, 8).expect("query");
+     assert_eq!(queried.len(), 3);

@@ -1,0 +1,274 @@
+{
+  "c_to_rust_symbol_map": {
+    "fdb_kv_del": "KvDb::delete",
+    "fdb_kv_get": "KvDb::get",
+    "fdb_kv_get_blob": "KvDb::get_blob",
+    "fdb_kv_get_obj": "KvDb::get_blob",
+    "fdb_kv_iterate": "KvDb::iter",
+    "fdb_kv_iterator_init": "KvDb::iter",
+    "fdb_kv_set": "KvDb::set",
+    "fdb_kv_set_blob": "KvDb::set_blob",
+    "fdb_kvdb_check": "KvDb::gc",
+    "fdb_kvdb_deinit": "drop(KvDb)",
+    "fdb_kvdb_init": "KvDb::open",
+    "fdb_tsdb_deinit": "drop(TsDb)",
+    "fdb_tsdb_init": "TsDb::open",
+    "fdb_tsl_append": "TsDb::append",
+    "fdb_tsl_append_with_ts": "TsDb::append",
+    "fdb_tsl_clean": "TsDb::clean",
+    "fdb_tsl_iter": "TsDb::iter",
+    "fdb_tsl_iter_by_time": "TsDb::query_by_time",
+    "fdb_tsl_iter_reverse": "TsDb::iter_reverse",
+    "fdb_tsl_query_count": "TsDb::count_by_time",
+    "fdb_tsl_set_status": "TsDb::set_status",
+    "fdb_tsl_to_blob": "TslRecord::payload"
+  },
+  "core_types": [
+    "FlashStorage",
+    "MemFlash",
+    "FileFlash",
+    "FdbError",
+    "KvDb",
+    "TsDb",
+    "TslRecord"
+  ],
+  "crate_name": "flashdb_rust",
+  "error_model": {
+    "c_success": "FDB_NO_ERR",
+    "result_alias": "Result<T, FdbError>",
+    "strategy": "Map C status and validation failures into typed Rust Result values.",
+    "type": "FdbError"
+  },
+  "generation_boundary": {
+    "creates_rust_project": false,
+    "next_stage": "GENERATE_RUST_SCAFFOLD",
+    "writes_rust_source": false
+  },
+  "kvdb_api": [
+    {
+      "c_symbols": [
+        "fdb_kvdb_init"
+      ],
+      "name": "open",
+      "notes": "Create a KV database over a FlashStorage implementation.",
+      "returns": "Result<KvDb, FdbError>",
+      "rust": "KvDb::open"
+    },
+    {
+      "c_symbols": [
+        "fdb_kv_set"
+      ],
+      "name": "set",
+      "notes": "Store a string value through append-style records.",
+      "returns": "Result<(), FdbError>",
+      "rust": "KvDb::set"
+    },
+    {
+      "c_symbols": [
+        "fdb_kv_get"
+      ],
+      "name": "get",
+      "notes": "Read the latest non-deleted string value.",
+      "returns": "Result<Option<String>, FdbError>",
+      "rust": "KvDb::get"
+    },
+    {
+      "c_symbols": [
+        "fdb_kv_set_blob",
+        "fdb_kv_to_blob"
+      ],
+      "name": "set_blob",
+      "notes": "Store binary payloads without exposing C buffers.",
+      "returns": "Result<(), FdbError>",
+      "rust": "KvDb::set_blob"
+    },
+    {
+      "c_symbols": [
+        "fdb_kv_get_blob",
+        "fdb_kv_get_obj"
+      ],
+      "name": "get_blob",
+      "notes": "Return owned bytes so callers do not manage C lifetimes.",
+      "returns": "Result<Option<Vec<u8>>, FdbError>",
+      "rust": "KvDb::get_blob"
+    },
+    {
+      "c_symbols": [
+        "fdb_kv_del"
+      ],
+      "name": "delete",
+      "notes": "Represent deletion as a tombstone record.",
+      "returns": "Result<(), FdbError>",
+      "rust": "KvDb::delete"
+    },
+    {
+      "c_symbols": [
+        "fdb_kv_iterator_init",
+        "fdb_kv_iterate"
+      ],
+      "name": "iterate",
+      "notes": "Expose iteration as a safe Rust iterator.",
+      "returns": "Result<impl Iterator<Item = (String, Vec<u8>)>, FdbError>",
+      "rust": "KvDb::iter"
+    },
+    {
+      "c_symbols": [],
+      "name": "reload",
+      "notes": "Rebuild the runtime index by scanning storage.",
+      "returns": "Result<(), FdbError>",
+      "rust": "KvDb::reload"
+    },
+    {
+      "c_symbols": [
+        "fdb_kvdb_check"
+      ],
+      "name": "gc",
+      "notes": "Compact obsolete records while retaining latest valid values.",
+      "returns": "Result<(), FdbError>",
+      "rust": "KvDb::gc"
+    }
+  ],
+  "modules": [
+    "error",
+    "flash",
+    "kvdb",
+    "tsdb"
+  ],
+  "semantic_requirements": [
+    "KVDB deletion must be persisted as tombstone behavior, not immediate erase.",
+    "KVDB reload must scan storage and rebuild the latest-value index.",
+    "KVDB garbage collection must retain the newest valid record for each key.",
+    "TSDB append must preserve timestamp ordering facts used by query-by-time tests.",
+    "TSDB iteration must avoid callback-style unsafe ownership in the public API.",
+    "FlashStorage is the boundary for memory-backed and file-backed test storage."
+  ],
+  "source_evidence": {
+    "headers": 7,
+    "kvdb_symbols": 15,
+    "kvdb_tests": 13,
+    "public_functions": 51,
+    "registered_tests": 23,
+    "source_files": 5,
+    "test_files": 6,
+    "tsdb_symbols": 13,
+    "tsdb_tests": 10
+  },
+  "stage": "DESIGN_RUST_API",
+  "storage_model": {
+    "implementations": [
+      "MemFlash",
+      "FileFlash"
+    ],
+    "semantics": [
+      "record_append",
+      "tombstone_delete",
+      "reload_scan",
+      "gc_retain_latest"
+    ],
+    "trait": "FlashStorage"
+  },
+  "test_api": {
+    "kvdb_tests": [
+      "test_fdb_change_kv",
+      "test_fdb_change_kv_blob",
+      "test_fdb_create_kv",
+      "test_fdb_create_kv_blob",
+      "test_fdb_del_kv",
+      "test_fdb_del_kv_blob",
+      "test_fdb_gc",
+      "test_fdb_gc2",
+      "test_fdb_kvdb_deinit",
+      "test_fdb_kvdb_init",
+      "test_fdb_kvdb_init_check",
+      "test_fdb_kvdb_set_default",
+      "test_fdb_scale_up"
+    ],
+    "migration_strategy": "Translate C registered tests into Rust integration tests against the safe API.",
+    "rust_test_files": [
+      "kvdb_tests.rs",
+      "tsdb_tests.rs",
+      "equivalence_tests.rs"
+    ],
+    "tsdb_tests": [
+      "test_fdb_github_issue_249",
+      "test_fdb_tsdb_deinit",
+      "test_fdb_tsdb_init_ex",
+      "test_fdb_tsl_append",
+      "test_fdb_tsl_clean",
+      "test_fdb_tsl_iter",
+      "test_fdb_tsl_iter_by_time",
+      "test_fdb_tsl_iter_by_time_1",
+      "test_fdb_tsl_query_count",
+      "test_fdb_tsl_set_status"
+    ]
+  },
+  "traits": [
+    "FlashStorage"
+  ],
+  "tsdb_api": [
+    {
+      "c_symbols": [
+        "fdb_tsdb_init"
+      ],
+      "name": "open",
+      "notes": "Create a time-series database over a FlashStorage implementation.",
+      "returns": "Result<TsDb, FdbError>",
+      "rust": "TsDb::open"
+    },
+    {
+      "c_symbols": [
+        "fdb_tsl_append",
+        "fdb_tsl_append_with_ts"
+      ],
+      "name": "append",
+      "notes": "Append a time-series log record, with optional explicit timestamp.",
+      "returns": "Result<(), FdbError>",
+      "rust": "TsDb::append"
+    },
+    {
+      "c_symbols": [
+        "fdb_tsl_iter",
+        "fdb_tsl_iter_reverse"
+      ],
+      "name": "iter",
+      "notes": "Expose forward and reverse traversal without callbacks.",
+      "returns": "Result<impl Iterator<Item = TslRecord>, FdbError>",
+      "rust": "TsDb::iter"
+    },
+    {
+      "c_symbols": [
+        "fdb_tsl_iter_by_time",
+        "fdb_tsl_query_count"
+      ],
+      "name": "query_by_time",
+      "notes": "Return matching records for a timestamp range.",
+      "returns": "Result<Vec<TslRecord>, FdbError>",
+      "rust": "TsDb::query_by_time"
+    },
+    {
+      "c_symbols": [
+        "fdb_tsl_set_status"
+      ],
+      "name": "set_status",
+      "notes": "Update a record status through a typed enum boundary.",
+      "returns": "Result<(), FdbError>",
+      "rust": "TsDb::set_status"
+    },
+    {
+      "c_symbols": [
+        "fdb_tsl_clean"
+      ],
+      "name": "clean",
+      "notes": "Remove stale log sectors according to FlashDB semantics.",
+      "returns": "Result<(), FdbError>",
+      "rust": "TsDb::clean"
+    },
+    {
+      "c_symbols": [],
+      "name": "reload",
+      "notes": "Rebuild TSDB state by scanning storage.",
+      "returns": "Result<(), FdbError>",
+      "rust": "TsDb::reload"
+    }
+  ]
+}

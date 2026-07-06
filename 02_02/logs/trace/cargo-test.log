@@ -1,0 +1,58 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/flashdb_rust-f849a831fa6813b2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/equivalence_tests.rs (target/debug/deps/equivalence_tests-60a8d83f0ed6a4d6)
+
+running 4 tests
+test kvdb_blob_string_interop ... ok
+test kvdb_gc_retains_latest_values ... ok
+test kvdb_and_tsdb_coexist_independently ... ok
+test tsdb_status_then_query ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/kvdb_tests.rs (target/debug/deps/kvdb_tests-a2058e05e5b1c53f)
+
+running 12 tests
+test kvdb_change_blob ... ok
+test kvdb_change_kv ... ok
+test kvdb_create_and_get_blob ... ok
+test kvdb_create_and_get_kv ... ok
+test kvdb_del_blob ... ok
+test kvdb_gc_compacts_deleted_records ... ok
+test kvdb_init_creates_empty_db ... ok
+test kvdb_del_kv ... ok
+test kvdb_iter_exposes_written_entries ... ok
+test kvdb_multiple_keys_stress ... ok
+test kvdb_reload_preserves_data ... ok
+test kvdb_set_default_stores_defaults ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tsdb_tests.rs (target/debug/deps/tsdb_tests-0dda8eb281e6b6da)
+
+running 11 tests
+test tsdb_append_and_iter ... ok
+test tsdb_init_creates_empty_db ... ok
+test tsdb_query_count ... ok
+test tsdb_iter_reverse ... ok
+test tsdb_clean_removes_all ... ok
+test tsdb_multi_sector ... ok
+test tsdb_clean_and_reuse ... ok
+test tsdb_query_by_time ... ok
+test tsdb_set_user_status ... ok
+test tsdb_reload_preserves_data ... ok
+test tsdb_set_status ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests flashdb_rust
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
