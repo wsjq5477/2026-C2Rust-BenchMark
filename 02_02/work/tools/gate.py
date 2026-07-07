@@ -54,6 +54,16 @@ VALID_DIAGNOSES = {
 }
 
 
+def is_trace_owned_log_path(log_path: str) -> bool:
+    candidate = Path(log_path)
+    if candidate.is_absolute():
+        return False
+    parts = candidate.parts
+    if len(parts) < 3 or parts[0] != "logs" or parts[1] != "trace":
+        return False
+    return ".." not in parts
+
+
 def load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -648,6 +658,10 @@ def check_validation_matrix(root: Path, *, allow_not_supported: bool = True) -> 
                 errors.append(f"validation-matrix.json diagnosis must be a known value for scenario {scenario_id}")
             if not isinstance(log_path, str) or not log_path:
                 errors.append(f"validation-matrix.json log must be present for scenario {scenario_id}")
+            elif not is_trace_owned_log_path(log_path):
+                errors.append(
+                    f"validation-matrix.json log must stay under logs/trace/ for scenario {scenario_id}: {log_path}"
+                )
 
     if rust_impl_failures:
         errors.append(
@@ -810,6 +824,7 @@ def check_migrate_tests(root: Path) -> list[str]:
         "DESIGN_RUST_API",
         "GENERATE_RUST_SCAFFOLD",
         "REWRITE_CORE_MODULES",
+        "VERIFY_RUST_WITH_C_TESTS",
         "MIGRATE_TESTS",
     ]
     state, state_errors = require_state(root, REQUIRED_TEST_STATE_KEYS, "MIGRATE_TESTS", required_stages)
@@ -834,6 +849,7 @@ def check_build_test_repair(root: Path) -> list[str]:
         "DESIGN_RUST_API",
         "GENERATE_RUST_SCAFFOLD",
         "REWRITE_CORE_MODULES",
+        "VERIFY_RUST_WITH_C_TESTS",
         "MIGRATE_TESTS",
         "BUILD_TEST_REPAIR",
     ]
@@ -870,6 +886,7 @@ def check_report_and_verify(root: Path) -> list[str]:
         "DESIGN_RUST_API",
         "GENERATE_RUST_SCAFFOLD",
         "REWRITE_CORE_MODULES",
+        "VERIFY_RUST_WITH_C_TESTS",
         "MIGRATE_TESTS",
         "BUILD_TEST_REPAIR",
         "REPORT_AND_VERIFY",
