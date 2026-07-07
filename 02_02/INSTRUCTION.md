@@ -68,10 +68,11 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 
 ### INIT_WORKSPACE
 
-1. 创建或确认 `result/`、`result/issues/`、`logs/`、`logs/trace/`、`logs/interaction.md`。
-2. 写入 `logs/trace/workflow_state.json`，`current_stage` 为 `INIT_WORKSPACE`。
-3. 写入中文 `logs/trace/01-init-workspace.md`。
-4. 运行 `python3 work/tools/gate.py --stage INIT_WORKSPACE`。
+1. 删除旧的 `result/` 和 `logs/` 目录后重新创建 `result/`、`result/issues/`、`logs/`、`logs/trace/`。
+2. 只生成空文件 `logs/interaction.md`，不得写入标题、模板、阶段记录或自动执行内容。
+3. 写入 `logs/trace/workflow_state.json`，`current_stage` 为 `INIT_WORKSPACE`。
+4. 写入中文 `logs/trace/01-init-workspace.md`。
+5. 运行 `python3 work/tools/gate.py --stage INIT_WORKSPACE`。
 
 ### READ_C_PROJECT
 
@@ -120,12 +121,13 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 1. 读取 `work/agents/test-migrator.md` 和 `work/skills/flashdb-test-migration/SKILL.md`。
 2. 如果 opencode 原生 subagent 可用，优先用 `test-migrator`；如果不可用，主控按 Markdown fallback 执行同一契约。
 3. 运行 `python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json`。
-4. 以 `c_test_model.json.standard_scenarios` 为动态场景集合，不得写死 C 或 Rust 用例数量。
-5. 生成逐场景 baseline 后，根据每项 `semantic_facts` 完成 Rust 测试，清除 `MIGRATION_PENDING` 并把对应 mapping 更新为 `coverage: semantic`。
-6. 生成 `flashDB_rust/tests/kvdb_tests.rs`、`flashDB_rust/tests/tsdb_tests.rs`、`flashDB_rust/tests/equivalence_tests.rs`。
-7. 写入中文 `logs/trace/07-migrate-tests.md`。
-8. 更新 `workflow_state.json`，记录 `rust_test_mapping`。
-9. 运行 `python3 work/tools/gate.py --stage MIGRATE_TESTS`；C/Rust 场景集合不一致、pending、unmapped 或重复时必须失败。
+4. 以 `c_test_model.json.scorer_standard_cases` 为评分覆盖合同，逐项一一迁移；`standard_scenarios` 只作为动态 C 证据来源。
+5. 生成逐场景 baseline 后，根据每项 `semantic_obligations` 和 `semantic_facts` 完成 Rust 测试。
+6. 清除 `MIGRATION_PENDING` 后，只有 `validated_obligations` 覆盖全部 `semantic_obligations`，才可把对应 mapping 更新为 `coverage: semantic`。
+7. 生成 `flashDB_rust/tests/kvdb_tests.rs`、`flashDB_rust/tests/tsdb_tests.rs`、`flashDB_rust/tests/equivalence_tests.rs`。
+8. 写入中文 `logs/trace/07-migrate-tests.md`。
+9. 更新 `workflow_state.json`，记录 `rust_test_mapping`。
+10. 运行 `python3 work/tools/gate.py --stage MIGRATE_TESTS`；评分 case 集合不一致、pending、unmapped、重复或 semantic 义务未验证时必须失败。
 
 ### BUILD_TEST_REPAIR
 

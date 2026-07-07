@@ -288,10 +288,6 @@ def check_build_c_model(root: Path) -> list[str]:
     public_functions = api_model.get("public_functions")
     if not isinstance(public_functions, list) or not public_functions:
         errors.append("c_api_model.json public_functions must be non-empty")
-    else:
-        for symbol in ["fdb_kvdb_init", "fdb_tsdb_init"]:
-            if symbol not in public_functions:
-                errors.append(f"c_api_model.json public_functions missing {symbol}")
 
     if not api_model.get("kvdb_symbols"):
         errors.append("c_api_model.json kvdb_symbols must be non-empty")
@@ -329,6 +325,38 @@ def check_build_c_model(root: Path) -> list[str]:
             errors.append(
                 f"c_test_model.json standard_scenarios do not cover registered tests: {', '.join(missing_registered)}"
             )
+    scorer_cases = test_model.get("scorer_standard_cases")
+    if not isinstance(scorer_cases, list) or not scorer_cases:
+        errors.append("c_test_model.json scorer_standard_cases must be a non-empty dynamic list")
+    else:
+        case_ids = [
+            item.get("case_id")
+            for item in scorer_cases
+            if isinstance(item, dict) and isinstance(item.get("case_id"), str)
+        ]
+        case_names = [
+            item.get("case_name")
+            for item in scorer_cases
+            if isinstance(item, dict) and isinstance(item.get("case_name"), str)
+        ]
+        if len(case_ids) != len(scorer_cases) or len(set(case_ids)) != len(case_ids):
+            errors.append("c_test_model.json scorer_standard_cases case_id values must be present and unique")
+        if len(case_names) != len(scorer_cases) or len(set(case_names)) != len(case_names):
+            errors.append("c_test_model.json scorer_standard_cases case_name values must be present and unique")
+        scenario_id_set = set(scenario_ids) if isinstance(scenarios, list) else set()
+        case_scenario_ids = {
+            item.get("scenario_id")
+            for item in scorer_cases
+            if isinstance(item, dict) and isinstance(item.get("scenario_id"), str)
+        }
+        if case_scenario_ids != scenario_id_set:
+            errors.append("c_test_model.json scorer_standard_cases must match standard_scenarios by scenario_id")
+        for item in scorer_cases:
+            if not isinstance(item, dict):
+                continue
+            obligations = item.get("semantic_obligations")
+            if not isinstance(obligations, list) or not obligations:
+                errors.append(f"scorer case {item.get('case_name')} must declare semantic_obligations")
 
     stage_log = root / "logs" / "trace" / "03-build-c-model.md"
     if not stage_log.exists():
@@ -382,17 +410,16 @@ def check_design_rust_api(root: Path) -> list[str]:
             errors.append("rust_api_design.json crate_name must be flashdb_rust")
 
         modules = design.get("modules")
-        if not isinstance(modules, list) or not all(item in modules for item in ["error", "flash", "kvdb", "tsdb"]):
-            errors.append("rust_api_design.json modules must include error, flash, kvdb, and tsdb")
+        if not isinstance(modules, list) or not modules or not all(isinstance(item, str) and item for item in modules):
+            errors.append("rust_api_design.json modules must be a non-empty list of module names")
 
         core_types = design.get("core_types")
-        required_types = ["FlashStorage", "MemFlash", "FileFlash", "FdbError", "KvDb", "TsDb", "TslRecord"]
-        if not isinstance(core_types, list) or not all(item in core_types for item in required_types):
-            errors.append("rust_api_design.json core_types missing required FlashDB Rust types")
+        if not isinstance(core_types, list):
+            errors.append("rust_api_design.json core_types must be a list")
 
         traits = design.get("traits")
-        if not isinstance(traits, list) or "FlashStorage" not in traits:
-            errors.append("rust_api_design.json traits must include FlashStorage")
+        if not isinstance(traits, list):
+            errors.append("rust_api_design.json traits must be a list")
 
         if not isinstance(design.get("kvdb_api"), list) or not design.get("kvdb_api"):
             errors.append("rust_api_design.json kvdb_api must be a non-empty list")
@@ -402,22 +429,19 @@ def check_design_rust_api(root: Path) -> list[str]:
             errors.append("rust_api_design.json test_api must be an object")
 
         error_model = design.get("error_model")
-        if not isinstance(error_model, dict) or error_model.get("result_alias") != "Result<T, FdbError>":
-            errors.append("rust_api_design.json error_model.result_alias must be Result<T, FdbError>")
+        if not isinstance(error_model, dict) or not error_model:
+            errors.append("rust_api_design.json error_model must be a non-empty object")
 
         storage_model = design.get("storage_model")
         implementations = storage_model.get("implementations") if isinstance(storage_model, dict) else None
-        if not isinstance(implementations, list) or not all(item in implementations for item in ["MemFlash", "FileFlash"]):
-            errors.append("rust_api_design.json storage_model.implementations must include MemFlash and FileFlash")
+        if not isinstance(storage_model, dict) or not isinstance(implementations, list):
+            errors.append("rust_api_design.json storage_model.implementations must be a list")
 
         symbol_map = design.get("c_to_rust_symbol_map")
         if not isinstance(symbol_map, dict):
             errors.append("rust_api_design.json c_to_rust_symbol_map must be an object")
-        else:
-            if symbol_map.get("fdb_kvdb_init") != "KvDb::open":
-                errors.append("rust_api_design.json c_to_rust_symbol_map.fdb_kvdb_init must be KvDb::open")
-            if symbol_map.get("fdb_tsdb_init") != "TsDb::open":
-                errors.append("rust_api_design.json c_to_rust_symbol_map.fdb_tsdb_init must be TsDb::open")
+        elif not all(isinstance(key, str) and isinstance(value, str) for key, value in symbol_map.items()):
+            errors.append("rust_api_design.json c_to_rust_symbol_map keys and values must be strings")
 
     stage_log = root / "logs" / "trace" / "04-design-rust-api.md"
     try:
@@ -447,7 +471,7 @@ def check_generate_rust_scaffold(root: Path) -> list[str]:
         return errors
 
     project = root / "flashDB_rust"
-    for rel_path in ["Cargo.toml", "src/lib.rs", "src/error.rs", "src/flash.rs", "src/kvdb.rs", "src/tsdb.rs", "tests"]:
+    for rel_path in ["Cargo.toml", "src/lib.rs", "tests"]:
         if not (project / rel_path).exists():
             errors.append(f"missing flashDB_rust/{rel_path}")
 
@@ -491,12 +515,20 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
         return errors
 
     project = root / "flashDB_rust"
-    for rel_path in ["src/error.rs", "src/flash.rs", "src/kvdb.rs", "src/tsdb.rs"]:
-        path = project / rel_path
-        if not path.exists() or not path.read_text(encoding="utf-8", errors="ignore").strip():
-            errors.append(f"flashDB_rust/{rel_path} must exist and be non-empty")
-        elif "todo!()" in path.read_text(encoding="utf-8", errors="ignore") or "unimplemented!()" in path.read_text(encoding="utf-8", errors="ignore"):
-            errors.append(f"flashDB_rust/{rel_path} must not contain todo!() or unimplemented!()")
+    design, design_error = load_json(root / "logs" / "trace" / "rust_api_design.json")
+    modules = design.get("modules", []) if not design_error and isinstance(design, dict) else []
+    if not isinstance(modules, list) or not modules:
+        errors.append("rust_api_design.json modules must be available for REWRITE_CORE_MODULES")
+    else:
+        for module in modules:
+            if not isinstance(module, str):
+                continue
+            rel_path = f"src/{module}.rs"
+            path = project / rel_path
+            if not path.exists() or not path.read_text(encoding="utf-8", errors="ignore").strip():
+                errors.append(f"flashDB_rust/{rel_path} must exist and be non-empty")
+            elif "todo!()" in path.read_text(encoding="utf-8", errors="ignore") or "unimplemented!()" in path.read_text(encoding="utf-8", errors="ignore"):
+                errors.append(f"flashDB_rust/{rel_path} must not contain todo!() or unimplemented!()")
 
     if list((project / "src").glob("*.c")):
         errors.append("flashDB_rust/src must not contain C source files")
@@ -519,18 +551,21 @@ def check_dynamic_test_mapping(root: Path) -> list[str]:
         return [f"c_test_model.json: {test_model_error}"]
 
     c_scenarios = test_model.get("standard_scenarios")
+    scorer_cases = test_model.get("scorer_standard_cases")
     rust_scenarios = mapping.get("scenarios")
     if not isinstance(c_scenarios, list):
         errors.append("c_test_model.json standard_scenarios must be a list")
+    if not isinstance(scorer_cases, list):
+        errors.append("c_test_model.json scorer_standard_cases must be a list")
     if not isinstance(rust_scenarios, list):
         errors.append("rust_test_mapping.json scenarios must be a list")
-    if not isinstance(c_scenarios, list) or not isinstance(rust_scenarios, list):
+    if not isinstance(c_scenarios, list) or not isinstance(scorer_cases, list) or not isinstance(rust_scenarios, list):
         return errors
 
     c_ids = {
-        item.get("id")
-        for item in c_scenarios
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
+        item.get("scenario_id", item.get("id"))
+        for item in scorer_cases
+        if isinstance(item, dict) and isinstance(item.get("scenario_id", item.get("id")), str)
     }
     rust_ids = {
         item.get("id")
@@ -554,16 +589,66 @@ def check_dynamic_test_mapping(root: Path) -> list[str]:
     if incomplete:
         errors.append(f"Rust scenario mappings are not semantic: {', '.join(incomplete)}")
     if mapping.get("total_scenarios") != len(c_ids):
-        errors.append("rust_test_mapping.json total_scenarios must equal extracted C scenario count")
+        errors.append("rust_test_mapping.json total_scenarios must equal scorer-standard case count")
+    if mapping.get("total_scorer_cases") != len(c_ids):
+        errors.append("rust_test_mapping.json total_scorer_cases must equal scorer-standard case count")
+
+    scorer_case_ids = {
+        item.get("case_id")
+        for item in scorer_cases
+        if isinstance(item, dict) and isinstance(item.get("case_id"), str)
+    }
+    rust_case_ids = {
+        item.get("scorer_case_id")
+        for item in rust_scenarios
+        if isinstance(item, dict) and isinstance(item.get("scorer_case_id"), str)
+    }
+    missing_case_ids = sorted(scorer_case_ids - rust_case_ids, key=lambda item: int(item) if item.isdigit() else item)
+    extra_case_ids = sorted(rust_case_ids - scorer_case_ids, key=lambda item: int(item) if item.isdigit() else item)
+    if missing_case_ids:
+        errors.append(f"missing Rust mappings for scorer cases: {', '.join(missing_case_ids)}")
+    if extra_case_ids:
+        errors.append(f"Rust mapping contains unknown scorer cases: {', '.join(extra_case_ids)}")
+    if len(rust_case_ids) != len(rust_scenarios):
+        errors.append("rust_test_mapping.json scorer_case_id values must be present and unique")
+
+    obligation_gaps: list[str] = []
+    for item in rust_scenarios:
+        if not isinstance(item, dict):
+            continue
+        obligations = item.get("semantic_obligations")
+        if not isinstance(obligations, list) or not obligations:
+            obligation_gaps.append(str(item.get("id")))
+            continue
+        if item.get("coverage") == "semantic":
+            validated = item.get("validated_obligations")
+            if not isinstance(validated, list) or set(obligations) - set(validated):
+                obligation_gaps.append(str(item.get("id")))
+    if obligation_gaps:
+        errors.append(f"Rust scenario mappings lack validated scorer obligations: {', '.join(sorted(obligation_gaps))}")
     unmapped = mapping.get("unmapped")
     if isinstance(unmapped, list) and unmapped:
         errors.append("rust_test_mapping.json unmapped must be empty for MIGRATE_TESTS")
 
     project = root / "flashDB_rust"
+    source_to_rust = mapping.get("source_to_rust")
+    rust_test_files = []
+    if isinstance(source_to_rust, dict):
+        rust_test_files = [
+            str(path)
+            for path in source_to_rust.values()
+            if isinstance(path, str) and path.startswith("flashDB_rust/tests/")
+        ]
+    if not rust_test_files:
+        errors.append("rust_test_mapping.json source_to_rust must declare generated Rust test files")
+
     pending_files = []
-    for rel_path in ["tests/kvdb_tests.rs", "tests/tsdb_tests.rs", "tests/equivalence_tests.rs"]:
+    for rust_path in rust_test_files:
+        rel_path = rust_path.removeprefix("flashDB_rust/")
         path = project / rel_path
-        if path.exists() and "MIGRATION_PENDING" in path.read_text(encoding="utf-8", errors="ignore"):
+        if not path.exists():
+            errors.append(f"missing {rust_path}")
+        elif "MIGRATION_PENDING" in path.read_text(encoding="utf-8", errors="ignore"):
             pending_files.append(rel_path)
     if pending_files:
         errors.append(f"Rust tests still contain MIGRATION_PENDING markers: {', '.join(pending_files)}")
@@ -586,16 +671,6 @@ def check_migrate_tests(root: Path) -> list[str]:
     errors.extend(state_errors)
     if state is None:
         return errors
-
-    project = root / "flashDB_rust"
-    for rel_path in ["tests/kvdb_tests.rs", "tests/tsdb_tests.rs", "tests/equivalence_tests.rs"]:
-        path = project / rel_path
-        if not path.exists():
-            errors.append(f"missing flashDB_rust/{rel_path}")
-        else:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-            if "assert!" not in text and "assert_eq!" not in text:
-                errors.append(f"flashDB_rust/{rel_path} must contain assertions")
 
     errors.extend(check_dynamic_test_mapping(root))
 

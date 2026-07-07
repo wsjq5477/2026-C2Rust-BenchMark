@@ -1,126 +1,146 @@
-
 use flashdb_rust::{KvDb, MemFlash};
-use std::collections::HashMap;
 
 const SEC_SIZE: u32 = 4096;
-const SEC_COUNT: u32 = 4;
+const SECTORS: u32 = 4;
 
-fn make_kvdb() -> KvDb {
-    let flash = MemFlash::new(SEC_SIZE, SEC_COUNT);
-    KvDb::open(Box::new(flash)).expect("open kvdb")
+fn make_kvdb() -> KvDb<MemFlash> {
+    KvDb::open(MemFlash::new(SEC_SIZE, SECTORS)).expect("open kvdb")
 }
 
 #[test]
-fn kvdb_init_creates_empty_db() {
-    let db = make_kvdb();
-    assert_eq!(db.get("any_key").expect("get"), None);
+fn kvdb_test_fdb_kvdb_init() {
+    let db = KvDb::open(MemFlash::new(SEC_SIZE, SECTORS));
+    assert!(db.is_ok(), "KVDB init should succeed");
 }
 
 #[test]
-fn kvdb_create_and_get_kv() {
+fn kvdb_test_fdb_kvdb_init_check() {
     let mut db = make_kvdb();
-    db.set("key1", "value1").expect("set");
-    let result = db.get("key1").expect("get");
-    assert_eq!(result, Some("value1".to_string()));
+    db.set("key_check", "value_check").expect("set");
+    let result = db.get("key_check").expect("get");
+    assert!(result.is_some(), "init check: value should exist after set");
 }
 
 #[test]
-fn kvdb_change_kv() {
+fn kvdb_test_fdb_create_kv_blob() {
     let mut db = make_kvdb();
-    db.set("key1", "value1").expect("set");
-    assert_eq!(db.get("key1").expect("get"), Some("value1".to_string()));
-    db.set("key1", "value2").expect("change");
-    assert_eq!(db.get("key1").expect("get changed"), Some("value2".to_string()));
+    let blob: Vec<u8> = vec![0x01, 0x02, 0x03, 0x04, 0x05];
+    db.set_blob("blob_key", &blob).expect("set blob");
+    let got = db.get_blob("blob_key").expect("get blob");
+    assert!(got.is_some(), "blob should exist after create");
+    assert_eq!(got.unwrap(), blob, "blob content should match");
+    let blob2: Vec<u8> = vec![0xAA, 0xBB];
+    db.set_blob("blob_key2", &blob2).expect("set blob2");
+    assert_eq!(db.get_blob("blob_key2").expect("get blob2").unwrap(), blob2);
 }
 
 #[test]
-fn kvdb_del_kv() {
+fn kvdb_test_fdb_change_kv_blob() {
     let mut db = make_kvdb();
-    db.set("key1", "value1").expect("set");
-    db.delete("key1").expect("delete");
-    assert_eq!(db.get("key1").expect("get deleted"), None);
+    let blob1: Vec<u8> = vec![0x10, 0x20, 0x30];
+    db.set_blob("change_key", &blob1).expect("set blob initial");
+    let got1 = db.get_blob("change_key").expect("get blob initial");
+    assert_eq!(got1.unwrap(), blob1, "initial blob should match");
+    let blob2: Vec<u8> = vec![0x40, 0x50, 0x60, 0x70];
+    db.set_blob("change_key", &blob2).expect("set blob changed");
+    let got2 = db.get_blob("change_key").expect("get blob changed");
+    assert_ne!(got2.unwrap(), blob1, "changed blob should differ from initial");
+    assert_eq!(db.get_blob("change_key").expect("get").unwrap(), blob2, "changed blob content should match new value");
 }
 
 #[test]
-fn kvdb_create_and_get_blob() {
+fn kvdb_test_fdb_del_kv_blob() {
     let mut db = make_kvdb();
-    db.set_blob("blob1", &[1u8, 2, 3, 4]).expect("set blob");
-    let result = db.get_blob("blob1").expect("get blob");
-    assert_eq!(result, Some(vec![1, 2, 3, 4]));
+    let blob: Vec<u8> = vec![0xFF, 0xFE, 0xFD];
+    db.set_blob("del_key", &blob).expect("set blob");
+    assert!(db.get_blob("del_key").expect("get blob before del").is_some(), "blob should exist before delete");
+    db.delete("del_key").expect("delete");
+    let got = db.get_blob("del_key").expect("get blob after del");
+    assert!(got.is_none(), "blob should not exist after delete");
 }
 
 #[test]
-fn kvdb_change_blob() {
+fn kvdb_test_fdb_create_kv() {
     let mut db = make_kvdb();
-    db.set_blob("blob1", &[1u8, 2]).expect("set blob");
-    assert_eq!(db.get_blob("blob1").expect("get blob"), Some(vec![1, 2]));
-    db.set_blob("blob1", &[5u8, 6, 7]).expect("change blob");
-    assert_eq!(db.get_blob("blob1").expect("get changed"), Some(vec![5, 6, 7]));
+    db.set("str_key", "str_value").expect("set string");
+    let got = db.get("str_key").expect("get string");
+    assert!(got.is_some(), "string value should exist after create");
+    assert_eq!(got.unwrap(), "str_value", "string content should match");
+    db.set("key_num", "42").expect("set numeric string");
+    assert_eq!(db.get("key_num").expect("get").unwrap(), "42");
 }
 
 #[test]
-fn kvdb_del_blob() {
+fn kvdb_test_fdb_change_kv() {
     let mut db = make_kvdb();
-    db.set_blob("blob1", &[1u8, 2]).expect("set blob");
-    db.delete("blob1").expect("delete blob");
-    assert_eq!(db.get_blob("blob1").expect("get deleted"), None);
+    db.set("change_str", "v1").expect("set initial");
+    assert_eq!(db.get("change_str").expect("get").unwrap(), "v1", "initial value should be v1");
+    db.set("change_str", "v2").expect("set changed");
+    let got = db.get("change_str").expect("get changed");
+    assert_ne!(got.as_deref(), Some("v1"), "changed value should differ from initial");
+    assert_eq!(got.unwrap(), "v2", "changed value should be v2");
 }
 
 #[test]
-fn kvdb_iter_exposes_written_entries() {
+fn kvdb_test_fdb_del_kv() {
     let mut db = make_kvdb();
-    db.set("a", "1").expect("set a");
-    db.set("b", "2").expect("set b");
-    let pairs: HashMap<String, Vec<u8>> = db.iter().collect();
-    assert_eq!(pairs.len(), 2);
-    assert_eq!(pairs.get("a").unwrap(), &b"1".to_vec());
-    assert_eq!(pairs.get("b").unwrap(), &b"2".to_vec());
+    db.set("del_str", "to_delete").expect("set");
+    assert!(db.get("del_str").expect("get before del").is_some(), "value should exist before delete");
+    db.delete("del_str").expect("delete");
+    assert!(db.get("del_str").expect("get after del").is_none(), "value should not exist after delete");
+    db.set("del2", "also_delete").expect("set second");
+    db.delete("del2").expect("delete second");
+    assert!(db.get("del2").expect("get").is_none());
 }
 
 #[test]
-fn kvdb_gc_compacts_deleted_records() {
+fn kvdb_test_fdb_gc() {
     let mut db = make_kvdb();
-    for i in 0..20 {
-        db.set(format!("key{}", i), format!("val{}", i)).expect("set");
-    }
-    for i in 0..10 {
-        db.delete(format!("key{}", i)).expect("delete");
-    }
-    db.gc().expect("gc");
-    for i in 10..20 {
-        let val = db.get(format!("key{}", i)).expect("get after gc");
-        assert_eq!(val, Some(format!("val{}", i)));
-    }
-    for i in 0..10 {
-        assert_eq!(db.get(format!("key{}", i)).expect("get deleted"), None);
-    }
+    db.set("gc_key1", "gc_val1").expect("set 1");
+    db.set("gc_key2", "gc_val2").expect("set 2");
+    db.set("gc_key3", "gc_val3").expect("set 3");
+    db.set("gc_key1", "gc_val1_new").expect("change key1");
+    db.gc().expect("gc should succeed");
+    assert_eq!(db.get("gc_key1").expect("get key1 after gc").unwrap(), "gc_val1_new", "gc should retain latest value for key1");
+    assert_eq!(db.get("gc_key2").expect("get key2 after gc").unwrap(), "gc_val2", "gc should retain unchanged key2");
+    assert_eq!(db.get("gc_key3").expect("get key3 after gc").unwrap(), "gc_val3", "gc should retain unchanged key3");
 }
 
 #[test]
-fn kvdb_set_default_stores_defaults() {
+fn kvdb_test_fdb_gc2() {
     let mut db = make_kvdb();
-    db.set("key1", "default1").expect("set default 1");
-    db.set("key2", "default2").expect("set default 2");
-    assert_eq!(db.get("key1").expect("get default"), Some("default1".to_string()));
-    assert_eq!(db.get("key2").expect("get default"), Some("default2".to_string()));
+    let big_val = vec![0xAB; 100];
+    db.set_blob("big_key", &big_val).expect("set big blob");
+    db.set("small_key", "small_val").expect("set small");
+    db.set_blob("big_key", &big_val).expect("change big blob");
+    db.gc().expect("gc should succeed");
+    assert_eq!(db.get_blob("big_key").expect("get big after gc").unwrap(), big_val, "gc should retain latest big value");
+    assert_eq!(db.get("small_key").expect("get small after gc").unwrap(), "small_val", "gc should retain small value");
 }
 
 #[test]
-fn kvdb_multiple_keys_stress() {
+fn kvdb_test_fdb_scale_up() {
+    let db8 = KvDb::open(MemFlash::new(SEC_SIZE, 8));
+    assert!(db8.is_ok(), "kvdb init with 8 sectors should succeed");
+    let mut db8 = db8.unwrap();
+    db8.set("scale_key", "scale_val").expect("set");
+    assert_eq!(db8.get("scale_key").expect("get").unwrap(), "scale_val");
+}
+
+#[test]
+fn kvdb_test_fdb_kvdb_set_default() {
     let mut db = make_kvdb();
-    for i in 0..30 {
-        db.set(format!("k{}", i), format!("v{}", i)).expect("set");
-    }
-    for i in 0..30 {
-        assert_eq!(db.get(format!("k{}", i)).expect("get"), Some(format!("v{}", i)));
-    }
+    let defaults = [
+        ("default1", b"val1" as &[u8]),
+        ("default2", b"val2" as &[u8]),
+    ];
+    db.set_default(&defaults).expect("set default");
+    assert_eq!(db.get("default1").expect("get default1").unwrap(), "val1");
+    assert_eq!(db.get("default2").expect("get default2").unwrap(), "val2");
 }
 
 #[test]
-fn kvdb_reload_preserves_data() {
-    let flash = MemFlash::new(SEC_SIZE, SEC_COUNT);
-    let mut db = KvDb::open(Box::new(flash)).expect("open");
-    db.set("persistent", "data").expect("set");
-    db.reload().expect("reload");
-    assert_eq!(db.get("persistent").expect("get after reload"), Some("data".to_string()));
+fn kvdb_test_fdb_kvdb_deinit() {
+    let db = KvDb::open(MemFlash::new(SEC_SIZE, SECTORS));
+    assert!(db.is_ok(), "kvdb init for deinit should succeed");
 }

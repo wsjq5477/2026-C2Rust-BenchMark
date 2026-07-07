@@ -1,4 +1,5 @@
-{"batch_id":"001","timestamp":"2026-07-06T19:05:00Z","module":"error","action":"rewrite","c_symbols":["FDB_NO_ERR","FDB_ERASE_ERR","FDB_READ_ERR","FDB_WRITE_ERR","FDB_KV_NAME_ERR","FDB_KV_NAME_EXIST","FDB_SAVED_FULL","FDB_INIT_FAILED"],"rust_types":["FdbError::NoErr","FdbError::EraseErr","FdbError::ReadErr","FdbError::WriteErr","FdbError::NameErr","FdbError::NameExist","FdbError::SavedFull","FdbError::InitFailed"]}
-{"batch_id":"002","timestamp":"2026-07-06T19:05:00Z","module":"flash","action":"rewrite","c_symbols":["_fdb_flash_read","_fdb_flash_write","_fdb_flash_erase"],"rust_types":["FlashStorage::read","FlashStorage::write","FlashStorage::erase","MemFlash","FileFlash"]}
-{"batch_id":"003","timestamp":"2026-07-06T19:06:00Z","module":"kvdb","action":"rewrite","c_symbols":["fdb_kvdb_init","fdb_kv_set","fdb_kv_get","fdb_kv_set_blob","fdb_kv_get_blob","fdb_kv_del","fdb_kv_iterate","fdb_kvdb_check"],"rust_types":["KvDb::open","KvDb::set","KvDb::get","KvDb::set_blob","KvDb::get_blob","KvDb::delete","KvDb::iter","KvDb::gc"]}
-{"batch_id":"004","timestamp":"2026-07-06T19:07:00Z","module":"tsdb","action":"rewrite","c_symbols":["fdb_tsdb_init","fdb_tsl_append","fdb_tsl_iter","fdb_tsl_iter_by_time","fdb_tsl_query_count","fdb_tsl_set_status","fdb_tsl_clean"],"rust_types":["TsDb::open","TsDb::append","TsDb::iter","TsDb::query_by_time","TsDb::count_by_time","TsDb::set_status","TsDb::clean"]}
+{"batch":1,"module":"error","action":"rewrite","description":"完整错误类型定义"}
+{"batch":1,"module":"flash","action":"rewrite","description":"FlashStorage trait重设计，MemFlash/FileFlash实现，1→0位翻转语义"}
+{"batch":2,"module":"kvdb","action":"rewrite","description":"扇区头/KV头/tombstone删除/GC/CRC32/索引重建"}
+{"batch":2,"module":"tsdb","action":"rewrite","description":"双栈扇区/TSL索引/时间查询/状态设置/清理"}
+{"batch":3,"module":"lib","action":"rewrite","description":"导出所有公共类型"}

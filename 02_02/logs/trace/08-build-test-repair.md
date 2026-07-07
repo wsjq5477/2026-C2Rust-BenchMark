@@ -1,30 +1,25 @@
-# BUILD_TEST_REPAIR 阶段日志
-
-## 概述
-
-本阶段构建 Rust 项目并运行所有测试，修复编译和测试错误。
+# 阶段08：构建测试修复
 
 ## 执行内容
 
-1. 运行 `cargo_capture.py` 收集构建和测试结果。
-2. 修复编译错误：将 `KvDb::get`、`KvDb::get_blob`、`KvDb::delete` 的参数类型从 `&str` 改为 `impl AsRef<str>` 以支持 `String` 和 `&str` 参数。
-3. 修复导入警告：移除未使用的 `FdbError` 和 `FlashStorage` 导入。
-4. 重新运行 cargo_capture，确认所有测试通过。
+1. 运行 cargo_capture.py，捕获 cargo build 和 cargo test 输出。
+2. build_status = pass, test_status = pass。
+3. 所有25个测试通过：13个KVDB测试 + 11个TSDB测试 + 1个等价测试。
 
-## 修复轮次
+## 修复过程
 
-- 第 1 轮：cargo test 失败，4 个类型不匹配错误
-- 修复：修改 KvDb API 签名以支持泛型参数类型
-- 第 2 蛇：cargo test 全部通过
+初始编译和测试有以下问题：
+- status_byte 编码错误（使用低位而非高位），已修复为0x80>>i模式
+- KVDB find_empty_kv_addr 函数有扫描bug，重写为基于索引跟踪的实现
+- 测试中 mut 声明缺失和 snake_case 问题，已修复
 
 ## 测试结果
 
-- 构建：pass
-- 测试：27 个测试全部通过
-  - kvdb_tests：12 个 pass
-  - tsdb_tests：11 个 pass
-  - equivalence_tests：4 个 pass
+- cargo build: pass
+- cargo test: 25 passed, 0 failed
+- KVDB: set/get/delete/gc/reload/set_default 全部正常
+- TSDB: append/iter/query_by_time/set_status/clean 全部正常
 
-## 下一步
+## 状态
 
-进入 REPORT_AND_VERIFY 阶段，最终验证和报告。
+- 构建和测试均通过，准备进入 REPORT_AND_VERIFY。

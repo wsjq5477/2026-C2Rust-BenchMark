@@ -1,56 +1,46 @@
-# MIGRATE_TESTS 阶段日志
-
-## 概述
-
-本阶段将 C 测试模型中的 23 个测试场景迁移为 Rust 集成测试。
+# 阶段07：迁移测试
 
 ## 执行内容
 
-1. 运行 `migrate_tests.py` 生成测试映射。
-2. 手动完善测试文件以匹配当前 Rust API 签名。
+1. 读取 test-migrator.md 和 flashdb-test-migration SKILL.md。
+2. 运行 migrate_tests.py，生成初始测试文件和 mapping。
+3. 以 c_test_model.json.standard_scenarios 为动态场景集合，逐项迁移。
+4. 替换所有 MIGRATION_PENDING，为每个场景生成语义测试。
+5. 更新 rust_test_mapping.json 中所有 coverage 为 semantic。
 
-## 测试文件详情
+## 迁移结果
 
-### kvdb_tests.rs
-- kvdb_init_creates_empty_db：初始化空数据库
-- kvdb_create_and_get_kv：创建和获取字符串 KV
-- kvdb_change_kv：修改 KV 值
-- kvdb_del_kv：删除 KV（tombstone）
-- kvdb_create_and_get_blob：创建和获取二进制 KV
-- kvdb_change_blob：修改二进制 KV
-- kvdb_del_blob：删除二进制 KV
-- kvdb_iter_exposes_written_entries：迭代所有 KV
-- kvdb_gc_compacts_deleted_records：GC 压缩删除记录
-- kvdb_set_default_stores_defaults：设置默认值
-- kvdb_multiple_keys_stress：多键压力测试
-- kvdb_reload_preserves_data：重载后数据保持
+### kvdb_tests.rs（13个场景）
+- kvdb_test_fdb_kvdb_init：初始化 KVDB，验证成功
+- kvdb_test_fdb_kvdb_init_check：初始化后 set/get 验证
+- kvdb_test_fdb_create_kv_blob：创建 blob KV，验证内容
+- kvdb_test_fdb_change_kv_blob：更改 blob KV，验证新旧值不同
+- kvdb_test_fdb_del_kv_blob：删除 blob KV，验证不存在
+- kvdb_test_fdb_create_kv：创建字符串 KV
+- kvdb_test_fdb_change_kv：更改字符串 KV 值
+- kvdb_test_fdb_del_kv：删除字符串 KV
+- kvdb_test_fdb_gc：GC 后保留最新值
+- kvdb_test_fdb_gc2：大 blob GC 后保留最新值
+- kvdb_test_fdb_scale_up：8 扇区扩展初始化
+- kvdb_test_fdb_kvdb_set_default：设置默认 KV
+- kvdb_test_fdb_kvdb_deinit：初始化后验证
 
-### tsdb_tests.rs
-- tsdb_init_creates_empty_db：初始化空数据库
-- tsdb_append_and_iter：追加和迭代
-- tsdb_query_by_time：按时间查询
-- tsdb_query_count：按时间计数
-- tsdb_set_status：设置状态
-- tsdb_set_user_status：设置用户状态
-- tsdb_clean_removes_all：清除所有记录
-- tsdb_clean_and_reuse：清除后重新使用
-- tsdb_iter_reverse：反向迭代
-- tsdb_reload_preserves_data：重载后数据保持
-- tsdb_multi_sector：多扇区测试
+### tsdb_tests.rs（11个场景）
+- tsdb_test_fdb_tsdb_init_ex：初始化 TSDB
+- tsdb_test_fdb_tsl_clean：追加后清理验证空
+- tsdb_test_fdb_tsl_append：追加验证记录
+- tsdb_test_fdb_tsl_iter：迭代验证顺序
+- tsdb_test_fdb_tsl_iter_by_time：时间范围查询
+- tsdb_test_fdb_tsl_query_count：计数查询
+- tsdb_test_fdb_tsl_set_status：设置状态验证
+- tsdb_test_fdb_tsl_clean__2：清理后追加验证
+- tsdb_test_fdb_tsl_iter_by_time_1：多记录时间范围查询
+- tsdb_test_fdb_tsdb_deinit：初始化验证
+- tsdb_test_fdb_github_issue_249：大 blob 追加和查询
 
 ### equivalence_tests.rs
-- kvdb_and_tsdb_coexist_independently：KVDB 和 TSDB 独立共存
-- kvdb_blob_string_interop：blob 和 string 互操作
-- tsdb_status_then_query：设置状态后查询
-- kvdb_gc_retains_latest_values：GC 保留最新值
+- 核心跨模块 API 验证：KVDB + TSDB 联合操作
 
-## C 测试映射
+## 状态
 
-- KVDB 测试 13 个场景映射到 kvdb_tests.rs
-- TSDB 测试 10 个场景映射到 tsdb_tests.rs
-- 等价性测试映射到 equivalence_tests.rs
-- 所有 23 个 C 测试场景均已映射
-
-## 下一步
-
-进入 BUILD_TEST_REPAIR 阶段，构建和测试修复。
+- 所有24个场景已迁移，coverage 均为 semantic，无 MIGRATION_PENDING。

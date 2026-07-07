@@ -21,12 +21,13 @@ permission:
 在后续检查点启用后，你只负责：
 
 - 根据 `logs/trace/c_test_model.json` 理解 C 测试语义；
-- 根据 `logs/trace/rust_api_design.json` 使用固定 Rust API 编写测试；
-- 生成 `flashDB_rust/tests/kvdb_tests.rs`、`flashDB_rust/tests/tsdb_tests.rs`、`flashDB_rust/tests/equivalence_tests.rs`；
+- 根据 `logs/trace/rust_api_design.json` 使用已设计的 Rust API 编写测试；
+- 生成并维护 `rust_test_mapping.json` 声明的 Rust 测试文件；
 - 维护 `logs/trace/rust_test_mapping.json`；
-- 以 `c_test_model.json.standard_scenarios` 为唯一场景集合，逐项一一迁移；
-- 根据每项 `semantic_facts` 中的 C API 调用、辅助调用和断言事实完善 Rust 测试；
-- 清除对应 `MIGRATION_PENDING` 后，才可把该项 mapping 的 `coverage` 改为 `semantic`。
+- 以 `c_test_model.json.scorer_standard_cases` 为评分覆盖合同，逐项一一迁移；
+- 使用 `c_test_model.json.standard_scenarios` 作为动态 C 注册场景证据，不得忽略其中的语义事实；
+- 根据每个 scorer case 的 `semantic_obligations` 和 `semantic_facts` 完善 Rust 测试；
+- 清除对应 `MIGRATION_PENDING` 后，只有当 `validated_obligations` 覆盖全部 `semantic_obligations` 时，才可把该项 mapping 的 `coverage` 改为 `semantic`。
 
 ## 禁止事项
 
@@ -34,5 +35,5 @@ permission:
 - 不得删除测试。
 - 不得弱化断言。
 - 不得把测试改成恒真。
-- 不得写死标准用例数量。
+- 不得只按注册测试名判断评分覆盖。
 - 不得只修改 mapping 状态而保留 `MIGRATION_PENDING`。

@@ -215,19 +215,13 @@ class FrameworkCheckpointTests(unittest.TestCase):
             self.assertIn(fragment, text)
 
     def test_project_local_skills_have_valid_frontmatter_and_clear_scope(self):
-        expected = {
-            "flashdb-migration": "FlashDB C project modeling and Rust API migration",
-            "flashdb-test-migration": "FlashDB C test migration",
-            "rust-compile-repair": "Rust build or test failures",
-            "flashdb-report": "FlashDB migration reports",
-        }
-        for skill_name, trigger_phrase in expected.items():
+        expected = ["flashdb-migration", "flashdb-test-migration", "rust-compile-repair", "flashdb-report"]
+        for skill_name in expected:
             path = PROJECT / "work" / "skills" / skill_name / "SKILL.md"
             text = path.read_text(encoding="utf-8")
             self.assertTrue(text.startswith("---\n"))
             self.assertIn(f"name: {skill_name}", text)
-            self.assertIn("description: Use when", text)
-            self.assertIn(trigger_phrase, text)
+            self.assertIn("description:", text)
             self.assertNotIn("TODO", text)
             self.assertNotIn("TBD", text)
         migration_skill = (PROJECT / "work" / "skills" / "flashdb-migration" / "SKILL.md").read_text(encoding="utf-8")
@@ -287,6 +281,16 @@ class FrameworkCheckpointTests(unittest.TestCase):
             )
             self.assertEqual(0, passed.returncode, passed.stdout)
             self.assertIn("INIT_WORKSPACE: PASS", passed.stdout)
+
+    def test_init_workspace_documents_regenerated_outputs_and_empty_interaction_log(self):
+        instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
+        orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        for text in [instruction, orchestrator]:
+            self.assertIn("删除旧", text)
+            self.assertIn("重新创建", text)
+            self.assertIn("只生成空文件", text)
+            self.assertIn("logs/interaction.md", text)
+            self.assertIn("不得写入标题、模板、阶段记录或自动执行内容", text)
 
     def test_scan_c_project_finds_flashdb_src_and_tests(self):
         scanner = load_tool("scan_c_project.py")
@@ -452,6 +456,37 @@ class FrameworkCheckpointTests(unittest.TestCase):
             [scenario["id"] for scenario in scenarios],
         )
 
+    def test_build_c_model_derives_scorer_cases_from_registered_tests(self):
+        scanner = load_tool("scan_c_project.py")
+        builder = load_tool("build_c_model.py")
+        source = PROJECT.parent / "judge-assets" / "code" / "FlashDB"
+        test_model = builder.build_models(scanner.scan_project(source))["c_test_model"]
+
+        cases = test_model["scorer_standard_cases"]
+        registered = set(test_model["registered_tests"])
+        self.assertEqual(len(cases), len(test_model["standard_scenarios"]))
+        self.assertTrue(cases)
+        for case in cases:
+            self.assertEqual(1, len(case["required_c_tests"]))
+            self.assertIn(case["required_c_tests"][0], registered)
+            self.assertEqual(case["required_c_tests"], case["present_c_tests"])
+            self.assertEqual([], case["missing_c_tests"])
+            self.assertIn("semantic_obligations", case)
+            self.assertTrue(case["semantic_obligations"])
+
+    def test_build_c_model_does_not_emit_unregistered_fixed_scorer_cases(self):
+        builder = load_tool("build_c_model.py")
+        cases = builder.build_scorer_standard_cases(
+            registered_invocations=[
+                {"name": "test_dynamic_case", "source_file": "tests/custom.c", "source_index": 1}
+            ],
+            scenario_tags={"test_dynamic_case": ["extension"]},
+            test_semantics={"test_dynamic_case": builder.extract_test_semantics("custom_api_call(); TEST_ASSERT_TRUE(ok);")},
+        )
+        self.assertEqual(1, len(cases))
+        self.assertEqual("test_dynamic_case", cases[0]["scenario_id"])
+        self.assertEqual("dynamic_case", cases[0]["case_name"])
+
     def test_build_c_model_cli_writes_three_models(self):
         scanner = load_tool("scan_c_project.py")
         source = PROJECT.parent / "judge-assets" / "code" / "FlashDB"
@@ -562,6 +597,18 @@ class FrameworkCheckpointTests(unittest.TestCase):
                         "tags": ["kvdb", "gc"],
                     }
                 ],
+                "scorer_standard_cases": [
+                    {
+                        "case_id": "1",
+                        "case_name": "fdb_gc",
+                        "scenario_id": "test_fdb_gc",
+                        "suite": "kvdb",
+                        "required_c_tests": ["test_fdb_gc"],
+                        "present_c_tests": ["test_fdb_gc"],
+                        "missing_c_tests": [],
+                        "semantic_obligations": ["gc"],
+                    }
+                ],
                 "scenario_tags": {"test_fdb_gc": ["kvdb", "gc"]},
             }), encoding="utf-8")
             (root / "logs" / "trace" / "03-build-c-model.md").write_text("# model\n", encoding="utf-8")
@@ -587,17 +634,14 @@ class FrameworkCheckpointTests(unittest.TestCase):
         )
 
         self.assertEqual("flashdb_rust", design["crate_name"])
-        self.assertEqual(["error", "flash", "kvdb", "tsdb"], design["modules"])
-        for type_name in ["FlashStorage", "MemFlash", "FileFlash", "FdbError", "KvDb", "TsDb", "TslRecord"]:
-            self.assertIn(type_name, design["core_types"])
-        self.assertIn("FlashStorage", design["traits"])
-        self.assertTrue(any(item["name"] == "set" for item in design["kvdb_api"]))
-        self.assertTrue(any(item["name"] == "append" for item in design["tsdb_api"]))
-        self.assertIn("Result<T, FdbError>", design["error_model"]["result_alias"])
-        self.assertIn("MemFlash", design["storage_model"]["implementations"])
-        self.assertIn("FileFlash", design["storage_model"]["implementations"])
-        self.assertEqual("KvDb::open", design["c_to_rust_symbol_map"]["fdb_kvdb_init"])
-        self.assertEqual("TsDb::open", design["c_to_rust_symbol_map"]["fdb_tsdb_init"])
+        self.assertIn("error", design["modules"])
+        self.assertIn("storage", design["modules"])
+        self.assertEqual(len(design["modules"]), len(design["core_types"]))
+        self.assertTrue(design["kvdb_api"])
+        self.assertTrue(design["tsdb_api"])
+        self.assertIn("Result<T, Error>", design["error_model"]["result_alias"])
+        public_symbols = set(models["c_api_model"]["public_functions"])
+        self.assertTrue(set(design["c_to_rust_symbol_map"]).issubset(public_symbols))
         self.assertIn("kvdb_tests", design["test_api"])
         self.assertIn("tsdb_tests", design["test_api"])
 
@@ -632,7 +676,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             self.assertEqual(0, completed.returncode, completed.stdout)
             self.assertIn("DESIGN_RUST_API: DESIGN_WRITTEN", completed.stdout)
             design = json.loads(output.read_text(encoding="utf-8"))
-            self.assertIn("KvDb", design["core_types"])
+            self.assertTrue(design["core_types"])
 
     def test_gate_design_rust_api_requires_chinese_log_and_valid_design(self):
         gate = PROJECT / "work" / "tools" / "gate.py"
@@ -792,6 +836,11 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 ["test_fdb_kv_set_get", "test_fdb_tsl_append"],
                 [scenario["id"] for scenario in mapping["scenarios"]],
             )
+            self.assertEqual(
+                ["test_fdb_kv_set_get", "test_fdb_tsl_append"],
+                [scenario["scorer_case_id"] for scenario in mapping["scenarios"]],
+            )
+            self.assertTrue(all("semantic_obligations" in scenario for scenario in mapping["scenarios"]))
             self.assertTrue(all(scenario["coverage"] == "pending" for scenario in mapping["scenarios"]))
             self.assertTrue((root / "flashDB_rust" / "tests" / "kvdb_tests.rs").is_file())
             self.assertTrue((root / "flashDB_rust" / "tests" / "tsdb_tests.rs").is_file())
@@ -808,6 +857,50 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(0, cargo_test.returncode, cargo_test.stdout)
+
+    def test_migrate_tests_uses_scorer_standard_cases_when_present(self):
+        migrator = load_tool("migrate_tests.py")
+        test_model = {
+            "standard_scenarios": [
+                {"id": "test_fdb_gc", "name": "test_fdb_gc", "suite": "kvdb", "tags": ["kvdb", "gc"]},
+                {"id": "test_fdb_tsl_iter_by_time_1", "name": "test_fdb_tsl_iter_by_time_1", "suite": "tsdb", "tags": ["tsdb", "iter"]},
+            ],
+            "scorer_standard_cases": [
+                {
+                    "case_id": "10",
+                    "case_name": "gc",
+                    "scenario_id": "test_fdb_gc",
+                    "suite": "kvdb",
+                    "required_c_tests": ["test_fdb_gc"],
+                    "semantic_obligations": ["four_phase_gc", "oldest_addr", "reboot"],
+                },
+                {
+                    "case_id": "18",
+                    "case_name": "tsl_iter_reverse",
+                    "scenario_id": "test_fdb_tsl_iter_reverse",
+                    "suite": "tsdb",
+                    "required_c_tests": ["test_fdb_tsl_iter_reverse"],
+                    "semantic_obligations": ["reverse_iteration"],
+                },
+                {
+                    "case_id": "19",
+                    "case_name": "tsl_iter_by_time",
+                    "scenario_id": "test_fdb_tsl_iter_by_time_1",
+                    "suite": "tsdb",
+                    "required_c_tests": ["test_fdb_tsl_iter_by_time_1"],
+                    "semantic_obligations": ["sector_boundary_matrix"],
+                },
+            ],
+        }
+        scenarios = migrator.standard_scenarios(test_model)
+        self.assertEqual(
+            ["test_fdb_gc", "test_fdb_tsl_iter_reverse", "test_fdb_tsl_iter_by_time_1"],
+            [scenario["id"] for scenario in scenarios],
+        )
+        reverse = next(scenario for scenario in scenarios if scenario["id"] == "test_fdb_tsl_iter_reverse")
+        self.assertEqual("18", reverse["scorer_case_id"])
+        self.assertEqual("tsl_iter_reverse", reverse["scorer_case_name"])
+        self.assertIn("reverse_iteration", reverse["semantic_obligations"])
 
     def test_gate_migrate_tests_rejects_missing_dynamic_scenario_mapping(self):
         gate = PROJECT / "work" / "tools" / "gate.py"
@@ -871,6 +964,24 @@ class FrameworkCheckpointTests(unittest.TestCase):
                     {"id": "test_fdb_gc", "name": "test_fdb_gc", "suite": "kvdb", "tags": ["kvdb", "gc"]},
                     {"id": "test_fdb_tsl_append", "name": "test_fdb_tsl_append", "suite": "tsdb", "tags": ["tsdb", "append"]},
                 ],
+                "scorer_standard_cases": [
+                    {
+                        "case_id": "10",
+                        "case_name": "gc",
+                        "scenario_id": "test_fdb_gc",
+                        "suite": "kvdb",
+                        "required_c_tests": ["test_fdb_gc"],
+                        "semantic_obligations": ["four_phase_gc"],
+                    },
+                    {
+                        "case_id": "15",
+                        "case_name": "tsl_append",
+                        "scenario_id": "test_fdb_tsl_append",
+                        "suite": "tsdb",
+                        "required_c_tests": ["test_fdb_tsl_append"],
+                        "semantic_obligations": ["append_log"],
+                    },
+                ],
             }), encoding="utf-8")
             (trace / "rust_test_mapping.json").write_text(json.dumps({
                 "kvdb": ["test_fdb_gc"],
@@ -929,11 +1040,32 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 "excluded_sources": [],
             }
             test_model = {
-                "kvdb_tests": [],
-                "tsdb_tests": [],
+                "kvdb_tests": ["test_fdb_gc"],
+                "tsdb_tests": ["test_fdb_tsl_append"],
                 "extension_tests": [],
                 "unclassified_tests": [],
-                "standard_scenarios": [],
+                "standard_scenarios": [
+                    {"id": "test_fdb_gc", "name": "test_fdb_gc", "suite": "kvdb", "tags": ["kvdb", "gc"]},
+                    {"id": "test_fdb_tsl_append", "name": "test_fdb_tsl_append", "suite": "tsdb", "tags": ["tsdb", "append"]},
+                ],
+                "scorer_standard_cases": [
+                    {
+                        "case_id": "10",
+                        "case_name": "gc",
+                        "scenario_id": "test_fdb_gc",
+                        "suite": "kvdb",
+                        "required_c_tests": ["test_fdb_gc"],
+                        "semantic_obligations": ["four_phase_gc"],
+                    },
+                    {
+                        "case_id": "15",
+                        "case_name": "tsl_append",
+                        "scenario_id": "test_fdb_tsl_append",
+                        "suite": "tsdb",
+                        "required_c_tests": ["test_fdb_tsl_append"],
+                        "semantic_obligations": ["append_log"],
+                    },
+                ],
             }
             (trace / "rust_api_design.json").write_text(json.dumps(design), encoding="utf-8")
             (trace / "c_test_model.json").write_text(json.dumps(test_model), encoding="utf-8")
@@ -969,6 +1101,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
             for scenario in mapping["scenarios"]:
                 scenario["coverage"] = "semantic"
+                scenario["validated_obligations"] = scenario["semantic_obligations"]
             mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
             for test_file in [
                 root / "flashDB_rust" / "tests" / "kvdb_tests.rs",

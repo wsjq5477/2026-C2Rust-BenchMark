@@ -21,7 +21,6 @@ CONTROL_WORDS = {
     "defined",
 }
 
-
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
@@ -231,6 +230,95 @@ def build_standard_scenarios(
     return scenarios
 
 
+def empty_semantic_facts() -> dict[str, Any]:
+    return {
+        "called_functions": [],
+        "observed_c_symbols": [],
+        "helper_calls": [],
+        "assertion_macros": [],
+        "assertion_count": 0,
+    }
+
+
+def merge_semantic_facts(names: list[str], test_semantics: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    merged = empty_semantic_facts()
+    for name in names:
+        facts = test_semantics.get(name)
+        if not isinstance(facts, dict):
+            continue
+        for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros"]:
+            values = facts.get(key)
+            if isinstance(values, list):
+                merged[key].extend(item for item in values if isinstance(item, str))
+        count = facts.get("assertion_count")
+        if isinstance(count, int):
+            merged["assertion_count"] += count
+    for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros"]:
+        merged[key] = sorted(dict.fromkeys(merged[key]))
+    return merged
+
+
+def scorer_case_name(test_name: str) -> str:
+    name = re.sub(r"^test_", "", test_name)
+    name = re.sub(r"^fdb_", "", name)
+    name = re.sub(r"_+", "_", name).strip("_")
+    return name or test_name
+
+
+def semantic_obligations_from_facts(tags: list[str], facts: dict[str, Any]) -> list[str]:
+    obligations: list[str] = []
+    obligations.extend(tag for tag in tags if tag not in {"kvdb", "tsdb"})
+
+    observed = facts.get("observed_c_symbols")
+    if isinstance(observed, list):
+        obligations.extend(f"calls:{symbol}" for symbol in observed if isinstance(symbol, str))
+
+    helpers = facts.get("helper_calls")
+    if isinstance(helpers, list):
+        obligations.extend(f"helper:{helper}" for helper in helpers if isinstance(helper, str))
+
+    assertions = facts.get("assertion_macros")
+    if isinstance(assertions, list) and assertions:
+        obligations.append("assertion_intent")
+    if isinstance(facts.get("assertion_count"), int) and facts["assertion_count"] > 0:
+        obligations.append("assertion_count")
+
+    return sorted(dict.fromkeys(obligations or ["registered_scenario"]))
+
+
+def build_scorer_standard_cases(
+    registered_invocations: list[dict[str, Any]],
+    scenario_tags: dict[str, list[str]],
+    test_semantics: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    occurrences: dict[str, int] = {}
+    for index, invocation in enumerate(registered_invocations, start=1):
+        name = str(invocation["name"])
+        occurrences[name] = occurrences.get(name, 0) + 1
+        scenario_id = name if occurrences[name] == 1 else f"{name}__{occurrences[name]}"
+        tags = scenario_tags.get(name, tag_test(name))
+        facts = merge_semantic_facts([name], test_semantics)
+        cases.append(
+            {
+                "case_id": str(index),
+                "case_name": scorer_case_name(name),
+                "scenario_id": scenario_id,
+                "suite": scenario_suite(name, tags),
+                "required_c_tests": [name],
+                "order": index,
+                "source": "registered_c_tests",
+                "present_c_tests": [name],
+                "missing_c_tests": [],
+                "semantic_facts": facts,
+                "semantic_obligations": semantic_obligations_from_facts(tags, facts),
+                "tags": tags,
+                "source_file": invocation.get("source_file"),
+            }
+        )
+    return cases
+
+
 def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     root = Path(manifest["source_root"]).resolve()
     source_files = list(manifest.get("core_sources", []))
@@ -312,6 +400,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     kvdb_tests = sorted([name for name in registered_tests if "kvdb" in tag_test(name)])
     tsdb_tests = sorted([name for name in registered_tests if "tsdb" in tag_test(name)])
     standard_scenarios = build_standard_scenarios(registered_invocations, scenario_tags, test_semantics)
+    scorer_standard_cases = build_scorer_standard_cases(registered_invocations, scenario_tags, test_semantics)
 
     c_project_model = {
         "source_root": str(root),
@@ -351,6 +440,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         "registered_tests": registered_tests,
         "registered_test_invocations": registered_invocations,
         "standard_scenarios": standard_scenarios,
+        "scorer_standard_cases": scorer_standard_cases,
         "test_semantics": test_semantics,
         "kvdb_tests": kvdb_tests,
         "tsdb_tests": tsdb_tests,

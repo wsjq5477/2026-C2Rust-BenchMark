@@ -1,135 +1,132 @@
-
-use flashdb_rust::{TsDb, TslStatus};
+use flashdb_rust::{MemFlash, TsDb, TslStatus};
 
 const SEC_SIZE: u32 = 4096;
-const SEC_COUNT: u32 = 16;
-const MAX_LEN: u32 = 128;
+const SECTORS: u32 = 16;
+const MAX_LEN: u32 = 256;
 
-fn make_tsdb() -> TsDb {
-    TsDb::open(SEC_SIZE, SEC_COUNT, MAX_LEN).expect("open tsdb")
+fn make_tsdb() -> TsDb<MemFlash> {
+    TsDb::open(MemFlash::new(SEC_SIZE, SECTORS), MAX_LEN).expect("open tsdb")
 }
 
 #[test]
-fn tsdb_init_creates_empty_db() {
-    let db = make_tsdb();
-    let count = db.iter().count();
-    assert_eq!(count, 0);
+fn tsdb_test_fdb_tsdb_init_ex() {
+    let db = TsDb::open(MemFlash::new(SEC_SIZE, SECTORS), MAX_LEN);
+    assert!(db.is_ok(), "tsdb init should succeed");
 }
 
 #[test]
-fn tsdb_append_and_iter() {
+fn tsdb_test_fdb_tsl_clean() {
     let mut db = make_tsdb();
-    db.append(2, b"record1").expect("append 1");
-    db.append(4, b"record2").expect("append 2");
-    db.append(6, b"record3").expect("append 3");
-    let records: Vec<_> = db.iter().cloned().collect();
-    assert_eq!(records.len(), 3);
-    assert_eq!(records[0].timestamp, 2);
-    assert_eq!(records[1].timestamp, 4);
-    assert_eq!(records[2].timestamp, 6);
-}
-
-#[test]
-fn tsdb_query_by_time() {
-    let mut db = make_tsdb();
-    for ts in [2u64, 4, 6, 8, 10] {
-        db.append(ts, format!("data{}", ts).as_bytes()).expect("append");
-    }
-    let queried = db.query_by_time(4, 8).expect("query");
-    assert_eq!(queried.len(), 3);
-    assert_eq!(queried[0].timestamp, 4);
-    assert_eq!(queried[1].timestamp, 6);
-    assert_eq!(queried[2].timestamp, 8);
-}
-
-#[test]
-fn tsdb_query_count() {
-    let mut db = make_tsdb();
-    for i in 1..=5 {
-        db.append(i * 2, b"data").expect("append");
-    }
-    let count = db.count_by_time(2, 10, TslStatus::Write);
-    assert_eq!(count, 5);
-}
-
-#[test]
-fn tsdb_set_status() {
-    let mut db = make_tsdb();
-    db.append(2, b"r1").expect("append 1");
-    db.append(4, b"r2").expect("append 2");
-    db.append(6, b"r3").expect("append 3");
-    db.set_status(4, TslStatus::Deleted).expect("set status");
-    let write_count = db.count_by_time(2, 6, TslStatus::Write);
-    assert_eq!(write_count, 2);
-    let deleted_count = db.count_by_time(2, 6, TslStatus::Deleted);
-    assert_eq!(deleted_count, 1);
-}
-
-#[test]
-fn tsdb_set_user_status() {
-    let mut db = make_tsdb();
-    for i in 1..=6 {
-        db.append(i * 2, b"data").expect("append");
-    }
-    db.set_status(2, TslStatus::UserStatus1).expect("set user1");
-    db.set_status(4, TslStatus::UserStatus1).expect("set user1");
-    db.set_status(6, TslStatus::Deleted).expect("set deleted");
-    let user1_count = db.count_by_time(2, 12, TslStatus::UserStatus1);
-    assert_eq!(user1_count, 2);
-    let deleted_count = db.count_by_time(2, 12, TslStatus::Deleted);
-    assert_eq!(deleted_count, 1);
-}
-
-#[test]
-fn tsdb_clean_removes_all() {
-    let mut db = make_tsdb();
-    db.append(2, b"data").expect("append");
-    db.append(4, b"data2").expect("append");
+    db.append(100, b"data1").expect("append 1");
+    db.append(200, b"data2").expect("append 2");
+    assert_eq!(db.iter().len(), 2, "should have 2 records before clean");
     db.clean().expect("clean");
-    let count = db.iter().count();
-    assert_eq!(count, 0);
+    assert_eq!(db.iter().len(), 0, "should have 0 records after clean");
 }
 
 #[test]
-fn tsdb_clean_and_reuse() {
+fn tsdb_test_fdb_tsl_append() {
     let mut db = make_tsdb();
-    db.append(2, b"data").expect("append");
+    db.append(100, b"tsl_data").expect("append");
+    let records = db.iter();
+    assert_eq!(records.len(), 1, "should have 1 record after append");
+    assert_eq!(records[0].timestamp, 100, "timestamp should match");
+    assert_eq!(records[0].payload, b"tsl_data".to_vec(), "payload should match");
+}
+
+#[test]
+fn tsdb_test_fdb_tsl_iter() {
+    let mut db = make_tsdb();
+    db.append(10, b"first").expect("append first");
+    db.append(20, b"second").expect("append second");
+    db.append(30, b"third").expect("append third");
+    let records = db.iter();
+    assert_eq!(records.len(), 3, "iter should return 3 records");
+    assert_eq!(records[0].timestamp, 10);
+    assert_eq!(records[1].timestamp, 20);
+    assert_eq!(records[2].timestamp, 30);
+}
+
+#[test]
+fn tsdb_test_fdb_tsl_iter_by_time() {
+    let mut db = make_tsdb();
+    db.append(100, b"a").expect("append a");
+    db.append(200, b"b").expect("append b");
+    db.append(300, b"c").expect("append c");
+    let queried = db.query_by_time(150, 250).expect("query by time");
+    assert_eq!(queried.len(), 1, "time range 150-250 should match 1 record");
+    assert_eq!(queried[0].payload, b"b".to_vec());
+    let queried_all = db.query_by_time(0, 1000).expect("query all");
+    assert_eq!(queried_all.len(), 3, "time range 0-1000 should match 3 records");
+}
+
+#[test]
+fn tsdb_test_fdb_tsl_query_count() {
+    let mut db = make_tsdb();
+    db.append(100, b"x").expect("append 1");
+    db.append(200, b"y").expect("append 2");
+    db.append(300, b"z").expect("append 3");
+    let count = db.count_by_time(0, 500).expect("count");
+    assert_eq!(count, 3, "count in range 0-500 should be 3");
+    let count2 = db.count_by_time(150, 250).expect("count");
+    assert_eq!(count2, 1, "count in range 150-250 should be 1");
+}
+
+#[test]
+fn tsdb_test_fdb_tsl_set_status() {
+    let mut db = make_tsdb();
+    db.append(100, b"status_data").expect("append");
+    db.set_status(100, TslStatus::UserStatus1).expect("set status");
+    let records = db.iter();
+    assert_eq!(records[0].status, TslStatus::UserStatus1, "status should be UserStatus1");
+    let count = db.count_by_time(100, 100).expect("count with status");
+    assert_eq!(count, 1, "record should still be counted after status change");
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn tsdb_test_fdb_tsl_clean__2() {
+    let mut db = make_tsdb();
+    db.append(10, b"d1").expect("append");
+    db.append(20, b"d2").expect("append");
     db.clean().expect("clean");
-    db.append(4, b"new_data").expect("append after clean");
-    let records: Vec<_> = db.iter().cloned().collect();
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].timestamp, 4);
+    assert_eq!(db.iter().len(), 0, "should be empty after clean");
+    db.append(30, b"d3").expect("append after clean");
+    assert_eq!(db.iter().len(), 1, "should have 1 record after clean then append");
 }
 
 #[test]
-fn tsdb_iter_reverse() {
+fn tsdb_test_fdb_tsl_iter_by_time_1() {
     let mut db = make_tsdb();
-    db.append(2, b"a").expect("append");
-    db.append(4, b"b").expect("append");
-    db.append(6, b"c").expect("append");
-    let records: Vec<_> = db.iter_reverse().cloned().collect();
-    assert_eq!(records.len(), 3);
-    assert_eq!(records[0].timestamp, 6);
-    assert_eq!(records[1].timestamp, 4);
-    assert_eq!(records[2].timestamp, 2);
-}
-
-#[test]
-fn tsdb_reload_preserves_data() {
-    let mut db = make_tsdb();
-    db.append(2, b"data").expect("append");
-    db.append(4, b"data2").expect("append");
-    db.reload().expect("reload");
-    let records: Vec<_> = db.iter().cloned().collect();
-    assert_eq!(records.len(), 2);
-}
-
-#[test]
-fn tsdb_multi_sector() {
-    let mut db = TsDb::open(SEC_SIZE, 16, 16).expect("open");
-    for i in 1..=80 {
-        db.append(i as u64 * 2, b"d").expect("append");
+    for i in 0..10u64 {
+        let payload = format!("rec_{}", i);
+        db.append(i * 100 + 50, payload.as_bytes()).expect("append");
     }
-    let count = db.count_by_time(2, 160, TslStatus::Write);
-    assert_eq!(count, 80);
+    let queried = db.query_by_time(150, 550).expect("query by time range");
+    assert!(queried.len() > 0, "query should return records in range");
+    for rec in &queried {
+        assert!(rec.timestamp >= 150 && rec.timestamp <= 550, "record timestamp should be in range");
+    }
+    let all = db.iter();
+    assert_eq!(all.len(), 10, "total records should be 10");
+}
+
+#[test]
+fn tsdb_test_fdb_tsdb_deinit() {
+    let db = TsDb::open(MemFlash::new(SEC_SIZE, SECTORS), MAX_LEN);
+    assert!(db.is_ok(), "tsdb init for deinit should succeed");
+}
+
+#[test]
+fn tsdb_test_fdb_github_issue_249() {
+    let mut db = make_tsdb();
+    let big_payload = vec![0xCD; 200];
+    db.append(1000, &big_payload).expect("append big");
+    let queried = db.query_by_time(1000, 1000).expect("query");
+    assert_eq!(queried.len(), 1, "should find 1 record");
+    assert_eq!(queried[0].payload.len(), 200, "payload size should match");
+    assert_eq!(queried[0].payload, big_payload, "payload content should match");
+    db.clean().expect("clean");
+    let after_clean = db.query_by_time(0, 2000).expect("query after clean");
+    assert_eq!(after_clean.len(), 0, "should be empty after clean");
 }

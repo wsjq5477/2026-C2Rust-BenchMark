@@ -55,13 +55,18 @@ permission:
 
 ## INIT_WORKSPACE
 
-创建或确认：
+删除旧目录后重新创建：
 
 - `result/`
 - `result/issues/`
 - `logs/`
 - `logs/trace/`
+
+只生成空文件：
+
 - `logs/interaction.md`
+
+`logs/interaction.md` 不得写入标题、模板、阶段记录或自动执行内容。
 
 写入：
 
@@ -145,10 +150,7 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 
 - `flashDB_rust/Cargo.toml`
 - `flashDB_rust/src/lib.rs`
-- `flashDB_rust/src/error.rs`
-- `flashDB_rust/src/flash.rs`
-- `flashDB_rust/src/kvdb.rs`
-- `flashDB_rust/src/tsdb.rs`
+- `rust_api_design.json.modules` 声明的源码模块
 - `flashDB_rust/tests/`
 - 中文 `logs/trace/05-generate-rust-scaffold.md`
 
@@ -158,11 +160,7 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 
 实现或完善：
 
-- `flashDB_rust/src/error.rs`
-- `flashDB_rust/src/flash.rs`
-- `flashDB_rust/src/kvdb.rs`
-- `flashDB_rust/src/tsdb.rs`
-- `rust_api_design.json.modules` 声明的支持/扩展模块
+- `rust_api_design.json.modules` 声明的核心、支持和扩展模块
 
 写入：
 
@@ -196,13 +194,11 @@ python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --
 
 写入：
 
-- `flashDB_rust/tests/kvdb_tests.rs`
-- `flashDB_rust/tests/tsdb_tests.rs`
-- `flashDB_rust/tests/equivalence_tests.rs`
+- `rust_test_mapping.json` 声明的 Rust 测试文件
 - `logs/trace/rust_test_mapping.json`
 - 中文 `logs/trace/07-migrate-tests.md`
 
-`migrate_tests.py` 只生成逐场景 baseline，并标记 `MIGRATION_PENDING` / `coverage: pending`。主控或 `test-migrator` 必须根据 `c_test_model.json.standard_scenarios[*].semantic_facts` 完成每个场景，清除 pending 标记并更新为 `coverage: semantic`，然后运行：
+`migrate_tests.py` 只按 `c_test_model.json.scorer_standard_cases` 生成评分 case baseline，并标记 `MIGRATION_PENDING` / `coverage: pending`。主控或 `test-migrator` 必须根据每个 case 的 `semantic_obligations`、`semantic_facts` 和 `standard_scenarios` 证据完成 Rust 测试，清除 pending 标记，并在 mapping 中填充覆盖全部义务的 `validated_obligations` 后才可更新为 `coverage: semantic`，然后运行：
 
 ```bash
 python3 work/tools/gate.py --stage MIGRATE_TESTS

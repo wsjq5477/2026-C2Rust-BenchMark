@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -33,27 +34,41 @@ def available_symbols(api_model: dict[str, Any]) -> set[str]:
     return {item for item in symbols if isinstance(item, str)}
 
 
-def present(candidates: list[str], symbols: set[str]) -> list[str]:
-    """Keep only symbols seen in the C model, preserving canonical order."""
+def as_string_list(data: dict[str, Any], key: str) -> list[str]:
+    value = data.get(key, [])
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
-    return [name for name in candidates if name in symbols]
+
+def rust_ident_from_c_symbol(symbol: str) -> str:
+    name = re.sub(r"^fdb_", "", symbol)
+    name = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
+    if not name:
+        name = "api"
+    if name[0].isdigit():
+        name = f"api_{name}"
+    return name
 
 
-def api_item(
-    name: str,
-    rust_symbol: str,
-    c_symbols: list[str],
-    returns: str,
-    notes: str,
-    symbols: set[str],
-) -> dict[str, Any]:
-    return {
-        "name": name,
-        "rust": rust_symbol,
-        "c_symbols": present(c_symbols, symbols),
-        "returns": returns,
-        "notes": notes,
-    }
+def type_name_from_module(module: str) -> str:
+    parts = [part for part in re.split(r"[^A-Za-z0-9]+", module) if part]
+    return "".join(part[:1].upper() + part[1:] for part in parts) or "Api"
+
+
+def api_items_from_symbols(module: str, c_symbols: list[str]) -> list[dict[str, Any]]:
+    type_name = type_name_from_module(module)
+    items: list[dict[str, Any]] = []
+    for symbol in sorted(dict.fromkeys(c_symbols)):
+        method = rust_ident_from_c_symbol(symbol)
+        items.append(
+            {
+                "name": method,
+                "rust": f"{type_name}::{method}",
+                "c_symbols": [symbol],
+                "returns": "Result<(), Error>",
+                "notes": "Derived from current C public API evidence.",
+            }
+        )
+    return items
 
 
 def count_list(data: dict[str, Any], key: str) -> int:
@@ -66,204 +81,53 @@ def design_api(
     c_api_model: dict[str, Any],
     c_test_model: dict[str, Any],
 ) -> dict[str, Any]:
-    symbols = available_symbols(c_api_model)
     kvdb_tests = c_test_model.get("kvdb_tests", [])
     tsdb_tests = c_test_model.get("tsdb_tests", [])
     standard_scenarios = c_test_model.get("standard_scenarios", [])
+    scorer_standard_cases = c_test_model.get("scorer_standard_cases", [])
     if not isinstance(kvdb_tests, list):
         kvdb_tests = []
     if not isinstance(tsdb_tests, list):
         tsdb_tests = []
     if not isinstance(standard_scenarios, list):
         standard_scenarios = []
+    if not isinstance(scorer_standard_cases, list):
+        scorer_standard_cases = []
 
-    kvdb_api = [
-        api_item(
-            "open",
-            "KvDb::open",
-            ["fdb_kvdb_init"],
-            "Result<KvDb, FdbError>",
-            "Create a KV database over a FlashStorage implementation.",
-            symbols,
-        ),
-        api_item(
-            "set",
-            "KvDb::set",
-            ["fdb_kv_set"],
-            "Result<(), FdbError>",
-            "Store a string value through append-style records.",
-            symbols,
-        ),
-        api_item(
-            "get",
-            "KvDb::get",
-            ["fdb_kv_get"],
-            "Result<Option<String>, FdbError>",
-            "Read the latest non-deleted string value.",
-            symbols,
-        ),
-        api_item(
-            "set_blob",
-            "KvDb::set_blob",
-            ["fdb_kv_set_blob", "fdb_kv_to_blob"],
-            "Result<(), FdbError>",
-            "Store binary payloads without exposing C buffers.",
-            symbols,
-        ),
-        api_item(
-            "get_blob",
-            "KvDb::get_blob",
-            ["fdb_kv_get_blob", "fdb_kv_get_obj"],
-            "Result<Option<Vec<u8>>, FdbError>",
-            "Return owned bytes so callers do not manage C lifetimes.",
-            symbols,
-        ),
-        api_item(
-            "delete",
-            "KvDb::delete",
-            ["fdb_kv_del"],
-            "Result<(), FdbError>",
-            "Represent deletion as a tombstone record.",
-            symbols,
-        ),
-        api_item(
-            "iterate",
-            "KvDb::iter",
-            ["fdb_kv_iterator_init", "fdb_kv_iterate"],
-            "Result<impl Iterator<Item = (String, Vec<u8>)>, FdbError>",
-            "Expose iteration as a safe Rust iterator.",
-            symbols,
-        ),
-        api_item(
-            "reload",
-            "KvDb::reload",
-            [],
-            "Result<(), FdbError>",
-            "Rebuild the runtime index by scanning storage.",
-            symbols,
-        ),
-        api_item(
-            "gc",
-            "KvDb::gc",
-            ["fdb_kvdb_check"],
-            "Result<(), FdbError>",
-            "Compact obsolete records while retaining latest valid values.",
-            symbols,
-        ),
-    ]
+    kvdb_symbols = as_string_list(c_api_model, "kvdb_symbols")
+    tsdb_symbols = as_string_list(c_api_model, "tsdb_symbols")
+    modules = ["error", "storage"]
+    if kvdb_symbols:
+        modules.append("kvdb")
+    if tsdb_symbols:
+        modules.append("tsdb")
 
-    tsdb_api = [
-        api_item(
-            "open",
-            "TsDb::open",
-            ["fdb_tsdb_init"],
-            "Result<TsDb, FdbError>",
-            "Create a time-series database over a FlashStorage implementation.",
-            symbols,
-        ),
-        api_item(
-            "append",
-            "TsDb::append",
-            ["fdb_tsl_append", "fdb_tsl_append_with_ts"],
-            "Result<(), FdbError>",
-            "Append a time-series log record, with optional explicit timestamp.",
-            symbols,
-        ),
-        api_item(
-            "iter",
-            "TsDb::iter",
-            ["fdb_tsl_iter", "fdb_tsl_iter_reverse"],
-            "Result<impl Iterator<Item = TslRecord>, FdbError>",
-            "Expose forward and reverse traversal without callbacks.",
-            symbols,
-        ),
-        api_item(
-            "query_by_time",
-            "TsDb::query_by_time",
-            ["fdb_tsl_iter_by_time", "fdb_tsl_query_count"],
-            "Result<Vec<TslRecord>, FdbError>",
-            "Return matching records for a timestamp range.",
-            symbols,
-        ),
-        api_item(
-            "set_status",
-            "TsDb::set_status",
-            ["fdb_tsl_set_status"],
-            "Result<(), FdbError>",
-            "Update a record status through a typed enum boundary.",
-            symbols,
-        ),
-        api_item(
-            "clean",
-            "TsDb::clean",
-            ["fdb_tsl_clean"],
-            "Result<(), FdbError>",
-            "Remove stale log sectors according to FlashDB semantics.",
-            symbols,
-        ),
-        api_item(
-            "reload",
-            "TsDb::reload",
-            [],
-            "Result<(), FdbError>",
-            "Rebuild TSDB state by scanning storage.",
-            symbols,
-        ),
-    ]
-
+    kvdb_api = api_items_from_symbols("kvdb", kvdb_symbols)
+    tsdb_api = api_items_from_symbols("tsdb", tsdb_symbols)
     c_to_rust_symbol_map = {
-        "fdb_kvdb_init": "KvDb::open",
-        "fdb_kvdb_deinit": "drop(KvDb)",
-        "fdb_kv_set": "KvDb::set",
-        "fdb_kv_get": "KvDb::get",
-        "fdb_kv_set_blob": "KvDb::set_blob",
-        "fdb_kv_get_blob": "KvDb::get_blob",
-        "fdb_kv_get_obj": "KvDb::get_blob",
-        "fdb_kv_del": "KvDb::delete",
-        "fdb_kv_iterator_init": "KvDb::iter",
-        "fdb_kv_iterate": "KvDb::iter",
-        "fdb_kvdb_check": "KvDb::gc",
-        "fdb_tsdb_init": "TsDb::open",
-        "fdb_tsdb_deinit": "drop(TsDb)",
-        "fdb_tsl_append": "TsDb::append",
-        "fdb_tsl_append_with_ts": "TsDb::append",
-        "fdb_tsl_iter": "TsDb::iter",
-        "fdb_tsl_iter_reverse": "TsDb::iter_reverse",
-        "fdb_tsl_iter_by_time": "TsDb::query_by_time",
-        "fdb_tsl_query_count": "TsDb::count_by_time",
-        "fdb_tsl_set_status": "TsDb::set_status",
-        "fdb_tsl_clean": "TsDb::clean",
-        "fdb_tsl_to_blob": "TslRecord::payload",
+        item["c_symbols"][0]: item["rust"]
+        for item in kvdb_api + tsdb_api
+        if isinstance(item.get("c_symbols"), list) and item["c_symbols"]
     }
+    core_types = [type_name_from_module(module) for module in modules]
 
     return {
         "stage": "DESIGN_RUST_API",
         "crate_name": "flashdb_rust",
-        "modules": ["error", "flash", "kvdb", "tsdb"],
-        "core_types": [
-            "FlashStorage",
-            "MemFlash",
-            "FileFlash",
-            "FdbError",
-            "KvDb",
-            "TsDb",
-            "TslRecord",
-        ],
-        "traits": ["FlashStorage"],
+        "modules": modules,
+        "core_types": core_types,
+        "traits": [],
         "error_model": {
-            "type": "FdbError",
-            "result_alias": "Result<T, FdbError>",
-            "c_success": "FDB_NO_ERR",
-            "strategy": "Map C status and validation failures into typed Rust Result values.",
+            "type": "Error",
+            "result_alias": "Result<T, Error>",
+            "strategy": "Map C status and validation failures observed in the current API model into typed Rust Result values.",
         },
         "storage_model": {
-            "trait": "FlashStorage",
-            "implementations": ["MemFlash", "FileFlash"],
+            "implementations": [],
             "semantics": [
                 "record_append",
-                "tombstone_delete",
                 "reload_scan",
-                "gc_retain_latest",
+                "retain_valid_records",
             ],
         },
         "kvdb_api": kvdb_api,
@@ -272,17 +136,15 @@ def design_api(
             "kvdb_tests": kvdb_tests,
             "tsdb_tests": tsdb_tests,
             "standard_scenarios": standard_scenarios,
-            "rust_test_files": ["kvdb_tests.rs", "tsdb_tests.rs", "equivalence_tests.rs"],
-            "migration_strategy": "Translate C registered tests into Rust integration tests against the safe API.",
+            "scorer_standard_cases": scorer_standard_cases,
+            "rust_test_files": [],
+            "migration_strategy": "Translate dynamically derived scorer-facing cases into Rust integration tests against the designed safe API, using registered C tests as evidence.",
         },
         "c_to_rust_symbol_map": c_to_rust_symbol_map,
         "semantic_requirements": [
-            "KVDB deletion must be persisted as tombstone behavior, not immediate erase.",
-            "KVDB reload must scan storage and rebuild the latest-value index.",
-            "KVDB garbage collection must retain the newest valid record for each key.",
-            "TSDB append must preserve timestamp ordering facts used by query-by-time tests.",
-            "TSDB iteration must avoid callback-style unsafe ownership in the public API.",
-            "FlashStorage is the boundary for memory-backed and file-backed test storage.",
+            "Preserve externally observable behavior from current C tests.",
+            "Use safe Rust boundaries for public APIs.",
+            "Keep source-to-Rust evidence in stage artifacts.",
         ],
         "source_evidence": {
             "source_files": count_list(c_project_model, "source_files"),

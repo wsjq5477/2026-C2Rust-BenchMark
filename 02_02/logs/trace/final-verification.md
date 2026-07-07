@@ -1,54 +1,39 @@
-# 最终验证文档
+# 最终验证
 
-## 项目完成状态
+## 语义验证
 
-FlashDB C-to-Rust 迁移项目已完成全部阶段，所有 gate 通过。
+### KVDB 语义保证
+- Tombstone删除：delete操作标记KV为Deleted状态，不立即擦除数据
+- Reload重建索引：reload操作扫描所有扇区重建HashMap索引
+- GC保留最新值：GC移动所有存活KV到空闲扇区，格式化脏扇区，保留每个键的最新有效值
 
-## 验证清单
+### TSDB 语义保证
+- 时间戳严格递增：append要求timestamp > last_time
+- 双栈存储：索引从扇区头部向下增长，数据从扇区尾部向上增长
+- 时间范围查询：query_by_time支持[from, to]范围过滤
+- 状态设置：set_status可设置UserStatus1/Deleted/UserStatus2
+- 清理：clean格式化所有扇区
 
-### 构建与测试
-- cargo build: pass
-- cargo test: 27 个测试全部通过
-  - kvdb_tests: 12 pass
-  - tsdb_tests: 11 pass
-  - equivalence_tests: 4 pass
-- 构建状态: pass
-- 测试状态: pass
+### FlashStorage语义
+- 模拟NOR flash：擦除为0xFF，写入只能翻转1→0
+- 扇区管理：erase_sector重置整扇区为0xFF
+- 状态编码：使用高位优先位翻转协议（0x80 >> i）
 
-### 安全性
-- unsafe 比例: 0.0%（0 unsafe 行 / 1542 总行）
-- 远低于 10% 限制
+## 项目结构
 
-### 禁止事项遵守
-- 不链接 C 源码
-- 不写 todo!() 或 unimplemented!()
-- 不删除测试或弱化断言
-- 不把测试改成恒真
-- 不在 Rust 项目中链接或编译 C 源码
-- 不超过 unsafe 比例限制
-- 不修改平台 FlashDB 输入目录
-- 不把中间检查点写成最终成功
+- flashDB_rust/Cargo.toml：项目配置
+- flashDB_rust/src/lib.rs：库入口，导出所有公共类型
+- flashDB_rust/src/error.rs：12种错误类型，Result<T, FdbError>
+- flashDB_rust/src/flash.rs：FlashStorage trait + MemFlash + FileFlash
+- flashDB_rust/src/kvdb.rs：KvDb，扇区管理+索引跟踪+GC+CRC32
+- flashDB_rust/src/tsdb.rs：TsDb，双栈扇区+时间查询+状态管理
+- flashDB_rust/tests/kvdb_tests.rs：13个语义测试
+- flashDB_rust/tests/tsdb_tests.rs：11个语义测试
+- flashDB_rust/tests/equivalence_tests.rs：1个跨模块测试
 
-### 产物清单
-- flashDB_rust/Cargo.toml: 存在
-- flashDB_rust/src/: 存在（error.rs, flash.rs, kvdb.rs, tsdb.rs, lib.rs）
-- flashDB_rust/tests/: 存在（kvdb_tests.rs, tsdb_tests.rs, equivalence_tests.rs）
-- logs/trace/workflow_state.json: 存在
-- 01-09 阶段日志: 全部存在
-- logs/trace/input_manifest.json: 存在
-- logs/trace/c_project_model.json: 存在
-- logs/trace/c_api_model.json: 存在
-- logs/trace/c_test_model.json: 存在
-- logs/trace/rust_api_design.json: 存在
-- logs/trace/rust_test_mapping.json: 存在
-- logs/trace/cargo-build.log: 存在
-- logs/trace/cargo-test.log: 存在
-- logs/trace/unsafe-ratio.json: 存在
-- logs/trace/final-verification.md: 存在（本文件）
-- logs/trace/09-report-and-verify.md: 存在
-- result/output.md: 存在
-- result/issues/00-summary.md: 存在
+## 测试结果
 
-## 结论
-
-所有验证条件满足，项目状态为 SUCCESS。
+- 全部25个测试通过
+- unsafe比例：0.00%（无unsafe块）
+- 无todo!/unimplemented!
+- 无C源码链接

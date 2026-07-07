@@ -28,6 +28,6 @@ STATUS: SUCCESS
 
 ## Tests
 
-- mapped_scenarios: `23`
+- mapped_scenarios: `24`
 - extension_tests: `0`
 - unmapped_tests_or_symbols: `0`

@@ -1,37 +1,891 @@
 {
   "extension": [],
   "kvdb": [
-    "test_fdb_change_kv",
-    "test_fdb_change_kv_blob",
-    "test_fdb_create_kv",
-    "test_fdb_create_kv_blob",
-    "test_fdb_del_kv",
-    "test_fdb_del_kv_blob",
-    "test_fdb_gc",
-    "test_fdb_gc2",
-    "test_fdb_kvdb_deinit",
     "test_fdb_kvdb_init",
     "test_fdb_kvdb_init_check",
+    "test_fdb_create_kv_blob",
+    "test_fdb_change_kv_blob",
+    "test_fdb_del_kv_blob",
+    "test_fdb_create_kv",
+    "test_fdb_change_kv",
+    "test_fdb_del_kv",
+    "test_fdb_gc",
+    "test_fdb_gc2",
+    "test_fdb_scale_up",
     "test_fdb_kvdb_set_default",
-    "test_fdb_scale_up"
+    "test_fdb_kvdb_deinit"
+  ],
+  "scenarios": [
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_kvdb_init",
+      "name": "test_fdb_kvdb_init",
+      "parent_test": "test_fdb_kvdb_init",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_kvdb_init",
+      "semantic_facts": {
+        "assertion_count": 0,
+        "assertion_macros": [],
+        "called_functions": [
+          "test_fdb_kvdb_init_by_sector_num"
+        ],
+        "helper_calls": [
+          "test_fdb_kvdb_init_by_sector_num"
+        ],
+        "observed_c_symbols": []
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "init",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_kvdb_init_check",
+      "name": "test_fdb_kvdb_init_check",
+      "parent_test": "test_fdb_kvdb_init_check",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_kvdb_init_check",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "FDB_ALIGN_DOWN",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": []
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "init",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_create_kv_blob",
+      "name": "test_fdb_create_kv_blob",
+      "parent_test": "test_fdb_create_kv_blob",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_create_kv_blob",
+      "semantic_facts": {
+        "assertion_count": 7,
+        "assertion_macros": [
+          "test_assert_buf_equal",
+          "test_assert_int_equal",
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_get_blob",
+          "fdb_kv_get_obj",
+          "fdb_kv_set_blob",
+          "fdb_kv_to_blob",
+          "test_assert_buf_equal",
+          "test_assert_int_equal",
+          "test_assert_true",
+          "test_tick_get"
+        ],
+        "helper_calls": [
+          "test_tick_get"
+        ],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_get_blob",
+          "fdb_kv_get_obj",
+          "fdb_kv_set_blob",
+          "fdb_kv_to_blob"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "create",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_change_kv_blob",
+      "name": "test_fdb_change_kv_blob",
+      "parent_test": "test_fdb_change_kv_blob",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_change_kv_blob",
+      "semantic_facts": {
+        "assertion_count": 7,
+        "assertion_macros": [
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_blob_make",
+          "fdb_kv_get_blob",
+          "fdb_kv_set_blob",
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_true",
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "helper_calls": [
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_kv_get_blob",
+          "fdb_kv_set_blob"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "change",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_del_kv_blob",
+      "name": "test_fdb_del_kv_blob",
+      "parent_test": "test_fdb_del_kv_blob",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_del_kv_blob",
+      "semantic_facts": {
+        "assertion_count": 6,
+        "assertion_macros": [
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_blob_make",
+          "fdb_kv_get_blob",
+          "fdb_kv_set_blob",
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_true",
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "helper_calls": [
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_kv_get_blob",
+          "fdb_kv_set_blob"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "del",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_create_kv",
+      "name": "test_fdb_create_kv",
+      "parent_test": "test_fdb_create_kv",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_create_kv",
+      "semantic_facts": {
+        "assertion_count": 3,
+        "assertion_macros": [
+          "test_assert_int_equal",
+          "test_assert_not_null",
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "atoi",
+          "fdb_kv_get",
+          "fdb_kv_set",
+          "snprintf",
+          "test_assert_int_equal",
+          "test_assert_not_null",
+          "test_assert_true",
+          "test_tick_get"
+        ],
+        "helper_calls": [
+          "test_tick_get"
+        ],
+        "observed_c_symbols": [
+          "fdb_kv_get",
+          "fdb_kv_set"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "create",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_change_kv",
+      "name": "test_fdb_change_kv",
+      "parent_test": "test_fdb_change_kv",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_change_kv",
+      "semantic_facts": {
+        "assertion_count": 5,
+        "assertion_macros": [
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_not_null",
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "atoi",
+          "fdb_kv_get",
+          "fdb_kv_set",
+          "snprintf",
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_not_null",
+          "test_assert_true",
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "helper_calls": [
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "observed_c_symbols": [
+          "fdb_kv_get",
+          "fdb_kv_set"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "change",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_del_kv",
+      "name": "test_fdb_del_kv",
+      "parent_test": "test_fdb_del_kv",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_del_kv",
+      "semantic_facts": {
+        "assertion_count": 6,
+        "assertion_macros": [
+          "test_assert_int_not_equal",
+          "test_assert_not_null",
+          "test_assert_null",
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "FDB_ALIGN_DOWN",
+          "atoi",
+          "fdb_kv_del",
+          "fdb_kv_get",
+          "fdb_reboot",
+          "test_assert_int_not_equal",
+          "test_assert_not_null",
+          "test_assert_null",
+          "test_assert_true",
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "helper_calls": [
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "observed_c_symbols": [
+          "fdb_kv_del",
+          "fdb_kv_get",
+          "fdb_reboot"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "del",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_gc",
+      "name": "test_fdb_gc",
+      "parent_test": "test_fdb_gc",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_gc",
+      "semantic_facts": {
+        "assertion_count": 8,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "FDB_ALIGN_DOWN",
+          "FDB_ARRAY_SIZE",
+          "fdb_kv_set_default",
+          "fdb_reboot",
+          "test_assert_true",
+          "test_fdb_by_kvs"
+        ],
+        "helper_calls": [
+          "test_fdb_by_kvs"
+        ],
+        "observed_c_symbols": [
+          "fdb_kv_set_default",
+          "fdb_reboot"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "gc",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_gc2",
+      "name": "test_fdb_gc2",
+      "parent_test": "test_fdb_gc2",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_gc2",
+      "semantic_facts": {
+        "assertion_count": 8,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "FDB_ALIGN_DOWN",
+          "FDB_ARRAY_SIZE",
+          "fdb_kv_set_default",
+          "fdb_reboot",
+          "test_assert_true",
+          "test_fdb_by_kvs"
+        ],
+        "helper_calls": [
+          "test_fdb_by_kvs"
+        ],
+        "observed_c_symbols": [
+          "fdb_kv_set_default",
+          "fdb_reboot"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "gc",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_scale_up",
+      "name": "test_fdb_scale_up",
+      "parent_test": "test_fdb_scale_up",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_scale_up",
+      "semantic_facts": {
+        "assertion_count": 0,
+        "assertion_macros": [],
+        "called_functions": [
+          "FDB_ARRAY_SIZE",
+          "fdb_kv_set_default",
+          "test_check_fdb_by_kvs",
+          "test_fdb_kvdb_deinit",
+          "test_fdb_kvdb_init_by_8_sectors",
+          "test_save_fdb_by_kvs"
+        ],
+        "helper_calls": [
+          "test_check_fdb_by_kvs",
+          "test_fdb_kvdb_deinit",
+          "test_fdb_kvdb_init_by_8_sectors",
+          "test_save_fdb_by_kvs"
+        ],
+        "observed_c_symbols": [
+          "fdb_kv_set_default"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_kvdb_set_default",
+      "name": "test_fdb_kvdb_set_default",
+      "parent_test": "test_fdb_kvdb_set_default",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_kvdb_set_default",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_kv_set_default",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_kv_set_default"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "kvdb",
+        "set"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_kvdb_deinit",
+      "name": "test_fdb_kvdb_deinit",
+      "parent_test": "test_fdb_kvdb_deinit",
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_kvdb_deinit",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_kvdb_deinit",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_kvdb_deinit"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "deinit",
+        "init",
+        "kvdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_tsdb_init_ex",
+      "name": "test_fdb_tsdb_init_ex",
+      "parent_test": "test_fdb_tsdb_init_ex",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsdb_init_ex",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "access",
+          "fdb_tsdb_control",
+          "fdb_tsdb_init",
+          "memset",
+          "mkdir",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_tsdb_control",
+          "fdb_tsdb_init"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "init",
+        "tsdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_tsl_clean",
+      "name": "test_fdb_tsl_clean",
+      "parent_test": "test_fdb_tsl_clean",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_clean",
+      "semantic_facts": {
+        "assertion_count": 2,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_reboot",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "clean",
+        "tsdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_tsl_append",
+      "name": "test_fdb_tsl_append",
+      "parent_test": "test_fdb_tsl_append",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_append",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_blob_make",
+          "fdb_tsl_append",
+          "snprintf",
+          "strnlen",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_tsl_append"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "append",
+        "tsdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_tsl_iter",
+      "name": "test_fdb_tsl_iter",
+      "parent_test": "test_fdb_tsl_iter",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_iter",
+      "semantic_facts": {
+        "assertion_count": 0,
+        "assertion_macros": [],
+        "called_functions": [
+          "fdb_reboot",
+          "fdb_tsl_iter"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsl_iter"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "iter",
+        "tsdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_tsl_iter_by_time",
+      "name": "test_fdb_tsl_iter_by_time",
+      "parent_test": "test_fdb_tsl_iter_by_time",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_iter_by_time",
+      "semantic_facts": {
+        "assertion_count": 0,
+        "assertion_macros": [],
+        "called_functions": [
+          "fdb_reboot",
+          "fdb_tsl_iter_by_time"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsl_iter_by_time"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "iter",
+        "tsdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_tsl_query_count",
+      "name": "test_fdb_tsl_query_count",
+      "parent_test": "test_fdb_tsl_query_count",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_query_count",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_reboot",
+          "fdb_tsl_query_count",
+          "printf",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsl_query_count"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "query",
+        "tsdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_tsl_set_status",
+      "name": "test_fdb_tsl_set_status",
+      "parent_test": "test_fdb_tsl_set_status",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_set_status",
+      "semantic_facts": {
+        "assertion_count": 2,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_reboot",
+          "fdb_tsl_iter_by_time",
+          "fdb_tsl_query_count",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsl_iter_by_time",
+          "fdb_tsl_query_count"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "set",
+        "status",
+        "tsdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_tsl_clean__2",
+      "name": "test_fdb_tsl_clean",
+      "parent_test": "test_fdb_tsl_clean",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_clean__2",
+      "semantic_facts": {
+        "assertion_count": 2,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_reboot",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "clean",
+        "tsdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_tsl_iter_by_time_1",
+      "name": "test_fdb_tsl_iter_by_time_1",
+      "parent_test": "test_fdb_tsl_iter_by_time_1",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_iter_by_time_1",
+      "semantic_facts": {
+        "assertion_count": 3,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_blob_make",
+          "fdb_reboot",
+          "fdb_tsl_append",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter_by_time",
+          "test_assert_true",
+          "test_fdb_tsl_sector_bound_test",
+          "test_tsdb_data_by_time"
+        ],
+        "helper_calls": [
+          "test_fdb_tsl_sector_bound_test",
+          "test_tsdb_data_by_time"
+        ],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_reboot",
+          "fdb_tsl_append",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter_by_time"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "iter",
+        "tsdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_tsdb_deinit",
+      "name": "test_fdb_tsdb_deinit",
+      "parent_test": "test_fdb_tsdb_deinit",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsdb_deinit",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "fdb_tsdb_deinit",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_tsdb_deinit"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "deinit",
+        "init",
+        "tsdb"
+      ]
+    },
+    {
+      "coverage": "semantic",
+      "id": "test_fdb_github_issue_249",
+      "name": "test_fdb_github_issue_249",
+      "parent_test": "test_fdb_github_issue_249",
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_github_issue_249",
+      "semantic_facts": {
+        "assertion_count": 11,
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "called_functions": [
+          "access",
+          "fdb_blob_make",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_append",
+          "fdb_tsl_clean",
+          "fdb_tsl_query_count",
+          "free",
+          "malloc",
+          "memset",
+          "mkdir",
+          "test_assert_true"
+        ],
+        "helper_calls": [],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_append",
+          "fdb_tsl_clean",
+          "fdb_tsl_query_count"
+        ]
+      },
+      "source": "registered",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "tsdb"
+      ]
+    }
   ],
   "source_to_rust": {
     "equivalence": "flashDB_rust/tests/equivalence_tests.rs",
     "kvdb": "flashDB_rust/tests/kvdb_tests.rs",
     "tsdb": "flashDB_rust/tests/tsdb_tests.rs"
   },
-  "total_scenarios": 23,
+  "total_scenarios": 24,
   "tsdb": [
-    "test_fdb_github_issue_249",
-    "test_fdb_tsdb_deinit",
     "test_fdb_tsdb_init_ex",
-    "test_fdb_tsl_append",
     "test_fdb_tsl_clean",
+    "test_fdb_tsl_append",
     "test_fdb_tsl_iter",
     "test_fdb_tsl_iter_by_time",
-    "test_fdb_tsl_iter_by_time_1",
     "test_fdb_tsl_query_count",
-    "test_fdb_tsl_set_status"
+    "test_fdb_tsl_set_status",
+    "test_fdb_tsl_clean__2",
+    "test_fdb_tsl_iter_by_time_1",
+    "test_fdb_tsdb_deinit",
+    "test_fdb_github_issue_249"
   ],
   "unmapped": []
 }

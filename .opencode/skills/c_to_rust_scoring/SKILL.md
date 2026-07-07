@@ -547,6 +547,7 @@ cargo bench 2>&1 | tee rust_benchmark_output.txt
 - `pass_rate` = passed / total（0.0 ~ 1.0）
 - 若 `build_success = false` → pass_rate = 0.0
 - 超时测试 = `passed: false`（不计入 passed）
+- 注意：基线分数满分60分，最终得分为60 * `pass_rate`
 - **方案 B 特有规则**：用例一致性校验结果直接反映在 `results` 中 — 缺失/错配/逻辑不一致的标准 C 用例对应 `case_id` 直接标记 `passed: false`，reason: `测试用例与C原测试用例不一致 — {具体原因}`。此规则优先级高于 `cargo test` 运行结果。
 - **性能基线评分**：基于 `benchmark` 各指标 ratio 计算综合性能分 `perf_score`（0.0~1.0），取所有指标 ratio 的几何平均值（memory 取倒数，越低越好）。`summary.benchmark` 字段为一句自然语言总结。
 

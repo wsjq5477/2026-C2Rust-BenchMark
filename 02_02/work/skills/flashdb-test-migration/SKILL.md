@@ -1,38 +1,38 @@
 ---
 name: flashdb-test-migration
-description: Use when FlashDB C test migration is required to create Rust tests with equivalent KVDB and TSDB coverage.
+description: 用于迁移 FlashDB C 测试，生成具备等价 KVDB 和 TSDB 覆盖的 Rust 测试。
 ---
 
-# FlashDB Test Migration
+# FlashDB 测试迁移
 
-## Scope
+## 适用范围
 
-Use this Skill only after the orchestrator enters `MIGRATE_TESTS`.
+仅当 orchestrator 进入 `MIGRATE_TESTS` 后使用此 Skill。
 
-## MIGRATE_TESTS contract
+## MIGRATE_TESTS 契约
 
-- read `logs/trace/c_test_model.json`;
-- read `logs/trace/rust_api_design.json`;
-- follow `work/knowledge/flashdb-test-map.md`;
-- use `c_test_model.json.standard_scenarios` as the dynamic source of truth;
-- generate Rust tests under `flashDB_rust/tests/`;
-- keep assertions meaningful;
-- write `logs/trace/rust_test_mapping.json`.
+- 读取 `logs/trace/c_test_model.json`；
+- 读取 `logs/trace/rust_api_design.json`；
+- 遵循 `work/knowledge/flashdb-test-map.md`；
+- 使用 `c_test_model.json.scorer_standard_cases` 作为评分覆盖契约；
+- 使用 `c_test_model.json.standard_scenarios` 作为动态 C 注册证据；
+- 在 `flashDB_rust/tests/` 下生成 Rust 测试；
+- 保持断言有实际语义；
+- 写入 `logs/trace/rust_test_mapping.json`。
 
-Required outputs:
+必需产出：
 
-- `flashDB_rust/tests/kvdb_tests.rs`;
-- `flashDB_rust/tests/tsdb_tests.rs`;
-- `flashDB_rust/tests/equivalence_tests.rs`;
+- `rust_test_mapping.json` 中声明的 Rust 测试文件；
 - `logs/trace/07-migrate-tests.md`.
 
-Accuracy rules:
+准确性规则：
 
-- derive tests from C test facts and the fixed Rust API;
-- preserve a one-to-one scenario ID mapping between C and Rust;
-- use each scenario's `semantic_facts` to preserve called APIs, helper behavior, and assertion intent;
-- replace every generated `MIGRATION_PENDING` baseline before setting `coverage` to `semantic`;
-- do not use the core implementation as the only source of truth;
-- do not delete scenarios or replace semantic checks with constant truth assertions;
-- new FlashDB tests must be migrated, mapped to `extension`, or placed in `unmapped` with a reason.
-- the stage gate must fail while any extracted C scenario is missing, pending, duplicated, extra, or unmapped.
+- 测试必须从 C 测试事实和已固定的 Rust API 推导；
+- 保持 scorer-standard cases 与 Rust 测试之间的一对一映射；
+- 使用每个 scorer case 的 `semantic_obligations` 和 `semantic_facts` 保留被调用 API、helper 行为和断言意图；
+- 在将 `coverage` 设为 `semantic` 前，必须替换每个生成的 `MIGRATION_PENDING` baseline；
+- 只有 Rust 测试实际覆盖的 obligations 才能写入 `validated_obligations`；
+- 不得把核心实现作为唯一真相来源；
+- 不得删除 scenarios，也不得用恒真断言替代语义检查；
+- 动态 scorer-facing 覆盖集合之外的新 FlashDB 测试必须作为证据、扩展覆盖或明确的 unmapped context 保留；
+- 只要任何 scorer-standard case 缺失、pending、重复、额外、unmapped，或在没有 validated obligations 的情况下标记为 semantic，stage gate 就必须失败。
