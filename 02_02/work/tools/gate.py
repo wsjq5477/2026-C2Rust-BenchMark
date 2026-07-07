@@ -38,8 +38,19 @@ REQUIRED_DESIGN_STATE_KEYS = REQUIRED_MODEL_STATE_KEYS | {
     "rust_api_design",
 }
 
+REQUIRED_C_CROSS_STATE_KEYS = REQUIRED_DESIGN_STATE_KEYS
+
 REQUIRED_TEST_STATE_KEYS = REQUIRED_DESIGN_STATE_KEYS | {
     "rust_test_mapping",
+}
+
+VALID_MATRIX_VALUES = {"baseline", "pass", "fail", "not_run", "not_supported", "pending"}
+VALID_DIAGNOSES = {
+    "rust_implementation_matches_c_baseline_for_scenario",
+    "rust_implementation_failed_c_baseline",
+    "c_cross_harness_not_supported",
+    "blocked_before_rust_test_migration",
+    "rust_test_migration_pending",
 }
 
 
@@ -537,6 +548,140 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
     return errors
 
 
+def check_validation_matrix(root: Path, *, allow_not_supported: bool = True) -> list[str]:
+    errors: list[str] = []
+    matrix, matrix_error = load_json(root / "logs" / "trace" / "validation-matrix.json")
+    if matrix_error:
+        return [f"validation-matrix.json: {matrix_error}"]
+
+    test_model, test_model_error = load_json(root / "logs" / "trace" / "c_test_model.json")
+    if test_model_error:
+        return [f"c_test_model.json: {test_model_error}"]
+
+    scorer_cases = test_model.get("scorer_standard_cases")
+    matrix_scenarios = matrix.get("scenarios")
+    if not isinstance(scorer_cases, list):
+        errors.append("c_test_model.json scorer_standard_cases must be a list")
+    if not isinstance(matrix_scenarios, list):
+        errors.append("validation-matrix.json scenarios must be a list")
+    if not isinstance(scorer_cases, list) or not isinstance(matrix_scenarios, list):
+        return errors
+
+    expected_scenario_ids = {
+        item.get("scenario_id")
+        for item in scorer_cases
+        if isinstance(item, dict) and isinstance(item.get("scenario_id"), str)
+    }
+    expected_case_ids = {
+        item.get("case_id")
+        for item in scorer_cases
+        if isinstance(item, dict) and isinstance(item.get("case_id"), str)
+    }
+    if len(expected_scenario_ids) != len(scorer_cases):
+        errors.append("c_test_model.json scorer_standard_cases scenario_id values must be present and unique")
+    if len(expected_case_ids) != len(scorer_cases):
+        errors.append("c_test_model.json scorer_standard_cases case_id values must be present and unique")
+    if errors:
+        return errors
+
+    if matrix.get("total_scenarios") != len(scorer_cases):
+        errors.append("validation-matrix.json total_scenarios must equal scorer-standard case count")
+
+    actual_scenario_ids = {
+        item.get("scenario_id")
+        for item in matrix_scenarios
+        if isinstance(item, dict) and isinstance(item.get("scenario_id"), str)
+    }
+    actual_case_ids = {
+        item.get("scorer_case_id")
+        for item in matrix_scenarios
+        if isinstance(item, dict) and isinstance(item.get("scorer_case_id"), str)
+    }
+    if len(actual_scenario_ids) != len(matrix_scenarios):
+        errors.append("validation-matrix.json scenario_id values must be present and unique")
+    if len(actual_case_ids) != len(matrix_scenarios):
+        errors.append("validation-matrix.json scorer_case_id values must be present and unique")
+
+    missing_scenarios = sorted(expected_scenario_ids - actual_scenario_ids)
+    extra_scenarios = sorted(actual_scenario_ids - expected_scenario_ids)
+    if missing_scenarios:
+        errors.append(f"validation-matrix.json missing scorer scenarios: {', '.join(missing_scenarios)}")
+    if extra_scenarios:
+        errors.append(f"validation-matrix.json contains unknown scorer scenarios: {', '.join(extra_scenarios)}")
+
+    missing_case_ids = sorted(expected_case_ids - actual_case_ids, key=lambda item: int(item) if item.isdigit() else item)
+    extra_case_ids = sorted(actual_case_ids - expected_case_ids, key=lambda item: int(item) if item.isdigit() else item)
+    if missing_case_ids:
+        errors.append(f"validation-matrix.json missing scorer cases: {', '.join(missing_case_ids)}")
+    if extra_case_ids:
+        errors.append(f"validation-matrix.json contains unknown scorer cases: {', '.join(extra_case_ids)}")
+
+    rust_impl_failures: list[str] = []
+    for item in matrix_scenarios:
+        if not isinstance(item, dict):
+            errors.append("validation-matrix.json scenarios entries must be objects")
+            continue
+        scenario_id = item.get("scenario_id")
+        if not isinstance(scenario_id, str):
+            scenario_id = "<unknown>"
+
+        has_blocking_value = False
+        for key in ["c_impl_c_test", "rust_impl_c_test", "c_impl_rust_test", "rust_impl_rust_test"]:
+            value = item.get(key)
+            if value not in VALID_MATRIX_VALUES:
+                errors.append(f"validation-matrix.json {key} has unknown value for scenario {scenario_id}: {value}")
+                continue
+            if value == "fail":
+                has_blocking_value = True
+            if value == "not_supported":
+                has_blocking_value = True
+                if not allow_not_supported:
+                    errors.append(f"validation-matrix.json not_supported is not allowed for scenario {scenario_id}")
+
+        if item.get("rust_impl_c_test") == "fail" and isinstance(scenario_id, str):
+            rust_impl_failures.append(scenario_id)
+
+        if has_blocking_value:
+            diagnosis = item.get("diagnosis")
+            log_path = item.get("log")
+            if not isinstance(diagnosis, str) or diagnosis not in VALID_DIAGNOSES:
+                errors.append(f"validation-matrix.json diagnosis must be a known value for scenario {scenario_id}")
+            if not isinstance(log_path, str) or not log_path:
+                errors.append(f"validation-matrix.json log must be present for scenario {scenario_id}")
+
+    if rust_impl_failures:
+        errors.append(
+            "Rust implementation failed C baseline scenarios: "
+            + ", ".join(sorted(rust_impl_failures))
+        )
+
+    return errors
+
+
+def check_verify_rust_with_c_tests(root: Path) -> list[str]:
+    errors = check_common_after_scaffold(root)
+    required_stages = [
+        "BOOTSTRAP",
+        "INIT_WORKSPACE",
+        "READ_C_PROJECT",
+        "BUILD_C_MODEL",
+        "DESIGN_RUST_API",
+        "GENERATE_RUST_SCAFFOLD",
+        "REWRITE_CORE_MODULES",
+        "VERIFY_RUST_WITH_C_TESTS",
+    ]
+    state, state_errors = require_state(root, REQUIRED_C_CROSS_STATE_KEYS, "VERIFY_RUST_WITH_C_TESTS", required_stages)
+    errors.extend(state_errors)
+    if state is None:
+        return errors
+    errors.extend(check_validation_matrix(root, allow_not_supported=True))
+    if not (root / "logs" / "trace" / "06-5-verify-rust-with-c-tests.md").exists():
+        errors.append("missing logs/trace/06-5-verify-rust-with-c-tests.md")
+    if list((root / "flashDB_rust" / "src").glob("*.c")):
+        errors.append("flashDB_rust/src must not contain C source files")
+    return errors
+
+
 def check_dynamic_test_mapping(root: Path) -> list[str]:
     errors: list[str] = []
     mapping, mapping_error = load_json(root / "logs" / "trace" / "rust_test_mapping.json")
@@ -789,6 +934,8 @@ def main(argv: list[str] | None = None) -> int:
         errors = check_generate_rust_scaffold(root)
     elif stage == "REWRITE_CORE_MODULES":
         errors = check_rewrite_core_modules(root)
+    elif stage == "VERIFY_RUST_WITH_C_TESTS":
+        errors = check_verify_rust_with_c_tests(root)
     elif stage == "MIGRATE_TESTS":
         errors = check_migrate_tests(root)
     elif stage == "BUILD_TEST_REPAIR":
