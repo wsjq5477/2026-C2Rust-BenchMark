@@ -54,12 +54,12 @@ VALID_DIAGNOSES = {
 }
 
 
-def is_trace_owned_log_path(log_path: str) -> bool:
+def is_c_cross_owned_log_path(log_path: str) -> bool:
     candidate = Path(log_path)
     if candidate.is_absolute():
         return False
     parts = candidate.parts
-    if len(parts) < 3 or parts[0] != "logs" or parts[1] != "trace":
+    if len(parts) < 4 or parts[0] != "logs" or parts[1] != "trace" or parts[2] != "c-cross":
         return False
     return ".." not in parts
 
@@ -577,16 +577,15 @@ def check_validation_matrix(root: Path, *, allow_not_supported: bool = True) -> 
     if not isinstance(scorer_cases, list) or not isinstance(matrix_scenarios, list):
         return errors
 
-    expected_scenario_ids = {
-        item.get("scenario_id")
+    expected_pair_by_scenario = {
+        item.get("scenario_id"): item.get("case_id")
         for item in scorer_cases
-        if isinstance(item, dict) and isinstance(item.get("scenario_id"), str)
+        if isinstance(item, dict)
+        and isinstance(item.get("scenario_id"), str)
+        and isinstance(item.get("case_id"), str)
     }
-    expected_case_ids = {
-        item.get("case_id")
-        for item in scorer_cases
-        if isinstance(item, dict) and isinstance(item.get("case_id"), str)
-    }
+    expected_scenario_ids = set(expected_pair_by_scenario)
+    expected_case_ids = set(expected_pair_by_scenario.values())
     if len(expected_scenario_ids) != len(scorer_cases):
         errors.append("c_test_model.json scorer_standard_cases scenario_id values must be present and unique")
     if len(expected_case_ids) != len(scorer_cases):
@@ -631,9 +630,16 @@ def check_validation_matrix(root: Path, *, allow_not_supported: bool = True) -> 
         if not isinstance(item, dict):
             errors.append("validation-matrix.json scenarios entries must be objects")
             continue
-        scenario_id = item.get("scenario_id")
-        if not isinstance(scenario_id, str):
-            scenario_id = "<unknown>"
+        scenario_id_value = item.get("scenario_id")
+        scenario_id = scenario_id_value if isinstance(scenario_id_value, str) else "<unknown>"
+        scorer_case_id = item.get("scorer_case_id")
+        if isinstance(scenario_id_value, str) and isinstance(scorer_case_id, str):
+            expected_case_id = expected_pair_by_scenario.get(scenario_id_value)
+            if expected_case_id is not None and scorer_case_id != expected_case_id:
+                errors.append(
+                    "validation-matrix.json scorer_case_id does not match scorer_standard_cases "
+                    f"for scenario {scenario_id}: expected {expected_case_id}, got {scorer_case_id}"
+                )
 
         has_blocking_value = False
         for key in ["c_impl_c_test", "rust_impl_c_test", "c_impl_rust_test", "rust_impl_rust_test"]:
@@ -658,9 +664,10 @@ def check_validation_matrix(root: Path, *, allow_not_supported: bool = True) -> 
                 errors.append(f"validation-matrix.json diagnosis must be a known value for scenario {scenario_id}")
             if not isinstance(log_path, str) or not log_path:
                 errors.append(f"validation-matrix.json log must be present for scenario {scenario_id}")
-            elif not is_trace_owned_log_path(log_path):
+            elif not is_c_cross_owned_log_path(log_path):
                 errors.append(
-                    f"validation-matrix.json log must stay under logs/trace/ for scenario {scenario_id}: {log_path}"
+                    "validation-matrix.json log must stay under logs/trace/c-cross/ "
+                    f"for scenario {scenario_id}: {log_path}"
                 )
 
     if rust_impl_failures:
