@@ -911,6 +911,7 @@ def check_report_and_verify(root: Path) -> list[str]:
         errors.append("workflow_state.json current_stage must be DONE for final report")
     if state.get("build_status") != "pass" or state.get("test_status") != "pass":
         errors.append("workflow_state.json build_status and test_status must be pass")
+    errors.extend(check_validation_matrix(root, allow_not_supported=True))
     errors.extend(check_dynamic_test_mapping(root))
 
     ratio, ratio_error = load_json(root / "logs" / "trace" / "unsafe-ratio.json")

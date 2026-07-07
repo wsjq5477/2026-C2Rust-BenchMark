@@ -21,6 +21,7 @@ flashDB_rust/
 logs/trace/workflow_state.json
 logs/trace/c_project_model.json
 logs/trace/rust_api_design.json
+logs/trace/validation-matrix.json
 logs/trace/rust_test_mapping.json
 logs/trace/cargo-build.log
 logs/trace/cargo-test.log
@@ -69,6 +70,7 @@ python3 work/tools/report_writer.py --out result/output.md --issues result/issue
 - Rust API 摘要；
 - FlashDB 真实输入扩展覆盖摘要，包括新增目录、新增 `.c/.h`、unknown/unmapped/excluded 数量；
 - 测试覆盖摘要；
+- C 测试交叉验证矩阵摘要；
 - cargo build/test/fmt/clippy 结果；
 - unsafe 比例；
 - 已知问题；
@@ -84,6 +86,7 @@ python3 work/tools/report_writer.py --out result/output.md --issues result/issue
 - `cargo test` 通过；
 - `cargo fmt --check` 通过；
 - `cargo clippy -- -D warnings` 通过；
+- `validation-matrix.json` 覆盖 scorer cases；
 - unsafe 比例低于 10%；
 - 最终项目不编译或链接 FlashDB C 源码；
 - `result/output.md` 存在；

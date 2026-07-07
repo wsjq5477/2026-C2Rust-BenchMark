@@ -29,9 +29,10 @@ permission:
 5. `DESIGN_RUST_API`
 6. `GENERATE_RUST_SCAFFOLD`
 7. `REWRITE_CORE_MODULES`
-8. `MIGRATE_TESTS`
-9. `BUILD_TEST_REPAIR`
-10. `REPORT_AND_VERIFY`
+8. `VERIFY_RUST_WITH_C_TESTS`
+9. `MIGRATE_TESTS`
+10. `BUILD_TEST_REPAIR`
+11. `REPORT_AND_VERIFY`
 
 最终只允许在 `REPORT_AND_VERIFY` gate 通过后写入 `STATUS: SUCCESS`。中间阶段不得伪装完成。
 
@@ -175,6 +176,31 @@ python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
 
 不得写 `todo!()`、`unimplemented!()`，不得把 C 源码放进 `flashDB_rust/src/`。
 
+## VERIFY_RUST_WITH_C_TESTS
+
+读取：
+
+- `logs/trace/c_test_model.json`
+- `logs/trace/c_api_model.json`
+- `logs/trace/rust_api_design.json`
+- `flashDB_rust/`
+
+运行：
+
+```bash
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace
+python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
+```
+
+写入：
+
+- `logs/trace/c-cross/cross-compile.log`
+- `logs/trace/c-cross/cross-test.log`
+- `logs/trace/validation-matrix.json`
+- 中文 `logs/trace/06-5-verify-rust-with-c-tests.md`
+
+本阶段使用原始 C 测试证据验证 Rust 实现。临时 C harness 只能写入 `logs/trace/c-cross/`，不得进入 `flashDB_rust/src/`，不得让最终 Rust 项目依赖 FlashDB C 实现。
+
 ## MIGRATE_TESTS
 
 读取：
@@ -184,7 +210,7 @@ python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
 - `logs/trace/c_test_model.json`
 - `logs/trace/rust_api_design.json`
 
-如果 opencode 原生 subagent 可用，优先使用 `test-migrator`；如果不可用，由主控按 Markdown fallback 执行同一契约。最终 gate 只认产物和测试结果。
+必须在 `VERIFY_RUST_WITH_C_TESTS` gate 通过后执行。如果 opencode 原生 subagent 可用，优先使用 `test-migrator`；如果不可用，由主控按 Markdown fallback 执行同一契约。最终 gate 只认产物和测试结果。
 
 运行：
 

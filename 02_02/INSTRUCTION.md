@@ -21,7 +21,7 @@ opencode 不能在会话中把当前 primary agent 自切换为另一个 primary
 
 ## 当前开发检查点
 
-当前实现并验证完整检查点：`BOOTSTRAP + INIT_WORKSPACE + READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API + GENERATE_RUST_SCAFFOLD + REWRITE_CORE_MODULES + MIGRATE_TESTS + BUILD_TEST_REPAIR + REPORT_AND_VERIFY`。
+当前实现并验证完整检查点：`BOOTSTRAP + INIT_WORKSPACE + READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API + GENERATE_RUST_SCAFFOLD + REWRITE_CORE_MODULES + VERIFY_RUST_WITH_C_TESTS + MIGRATE_TESTS + BUILD_TEST_REPAIR + REPORT_AND_VERIFY`。
 
 opencode 必须执行主控 Agent 文档中的完整流程。若会话启动时已经选中 `@flashdb-orchestrator` primary agent，则由它执行；否则由默认 Build agent 完整读取 `work/agents/flashdb-orchestrator.md` 后执行。
 
@@ -49,6 +49,8 @@ python3 work/tools/gate.py --stage DESIGN_RUST_API
 python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust
 python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace
+python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json
 python3 work/tools/gate.py --stage MIGRATE_TESTS
 python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace
@@ -116,18 +118,29 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 5. 更新 `workflow_state.json`，`current_stage` 为 `REWRITE_CORE_MODULES`。
 6. 运行 `python3 work/tools/gate.py --stage REWRITE_CORE_MODULES`。
 
+### VERIFY_RUST_WITH_C_TESTS
+
+1. 读取 `logs/trace/c_test_model.json`、`logs/trace/c_api_model.json`、`logs/trace/rust_api_design.json` 和 `flashDB_rust/`。
+2. 运行 `python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace`。
+3. 写入 `logs/trace/c-cross/cross-compile.log`、`logs/trace/c-cross/cross-test.log` 和 `logs/trace/validation-matrix.json`。
+4. 写入中文 `logs/trace/06-5-verify-rust-with-c-tests.md`。
+5. 更新 `workflow_state.json`，`current_stage` 为 `VERIFY_RUST_WITH_C_TESTS`。
+6. 运行 `python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS`。
+7. 本阶段只允许把临时 C harness 证据写入 `logs/trace/c-cross/`，不得把 C 源码放进 `flashDB_rust/src/`，不得让最终 Rust 项目依赖 FlashDB C 实现。
+
 ### MIGRATE_TESTS
 
-1. 读取 `work/agents/test-migrator.md` 和 `work/skills/flashdb-test-migration/SKILL.md`。
-2. 如果 opencode 原生 subagent 可用，优先用 `test-migrator`；如果不可用，主控按 Markdown fallback 执行同一契约。
-3. 运行 `python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json`。
-4. 以 `c_test_model.json.scorer_standard_cases` 为评分覆盖合同，逐项一一迁移；`standard_scenarios` 只作为动态 C 证据来源。
-5. 生成逐场景 baseline 后，根据每项 `semantic_obligations` 和 `semantic_facts` 完成 Rust 测试。
-6. 清除 `MIGRATION_PENDING` 后，只有 `validated_obligations` 覆盖全部 `semantic_obligations`，才可把对应 mapping 更新为 `coverage: semantic`。
-7. 生成 `flashDB_rust/tests/kvdb_tests.rs`、`flashDB_rust/tests/tsdb_tests.rs`、`flashDB_rust/tests/equivalence_tests.rs`。
-8. 写入中文 `logs/trace/07-migrate-tests.md`。
-9. 更新 `workflow_state.json`，记录 `rust_test_mapping`。
-10. 运行 `python3 work/tools/gate.py --stage MIGRATE_TESTS`；评分 case 集合不一致、pending、unmapped、重复或 semantic 义务未验证时必须失败。
+1. 必须在 `VERIFY_RUST_WITH_C_TESTS` gate 通过后执行。
+2. 读取 `work/agents/test-migrator.md` 和 `work/skills/flashdb-test-migration/SKILL.md`。
+3. 如果 opencode 原生 subagent 可用，优先用 `test-migrator`；如果不可用，主控按 Markdown fallback 执行同一契约。
+4. 运行 `python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json`。
+5. 以 `c_test_model.json.scorer_standard_cases` 为评分覆盖合同，逐项一一迁移；`standard_scenarios` 只作为动态 C 证据来源。
+6. 生成逐场景 baseline 后，根据每项 `semantic_obligations` 和 `semantic_facts` 完成 Rust 测试。
+7. 清除 `MIGRATION_PENDING` 后，只有 `validated_obligations` 覆盖全部 `semantic_obligations`，才可把对应 mapping 更新为 `coverage: semantic`。
+8. 生成 `flashDB_rust/tests/kvdb_tests.rs`、`flashDB_rust/tests/tsdb_tests.rs`、`flashDB_rust/tests/equivalence_tests.rs`。
+9. 写入中文 `logs/trace/07-migrate-tests.md`。
+10. 更新 `workflow_state.json`，记录 `rust_test_mapping`。
+11. 运行 `python3 work/tools/gate.py --stage MIGRATE_TESTS`；评分 case 集合不一致、pending、unmapped、重复或 semantic 义务未验证时必须失败。
 
 ### BUILD_TEST_REPAIR
 
@@ -154,6 +167,7 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 - 01 到 09 的中文阶段日志都存在；
 - `logs/trace/input_manifest.json`、`c_project_model.json`、`c_api_model.json`、`c_test_model.json` 存在；
 - `logs/trace/rust_api_design.json` 存在；
+- `logs/trace/validation-matrix.json` 存在；
 - `flashDB_rust/Cargo.toml`、`flashDB_rust/src/`、`flashDB_rust/tests/` 存在；
 - `logs/trace/rust_test_mapping.json` 存在；
 - `logs/trace/cargo-build.log`、`logs/trace/cargo-test.log` 存在且对应状态通过；

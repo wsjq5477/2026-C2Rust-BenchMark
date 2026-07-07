@@ -17,13 +17,29 @@ def load_json(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def validation_matrix_summary(matrix: dict[str, Any]) -> list[str]:
+    if not matrix:
+        return ["- C tests on Rust: `missing`", "- Validation matrix scenarios: `0`"]
+    summary = matrix.get("summary", {})
+    rust_impl = summary.get("rust_impl_c_test", {}) if isinstance(summary, dict) else {}
+    if not isinstance(rust_impl, dict):
+        rust_impl = {}
+    parts = [f"{key}={value}" for key, value in sorted(rust_impl.items())]
+    return [
+        f"- C tests on Rust: `{', '.join(parts) if parts else 'no summary'}`",
+        f"- Validation matrix scenarios: `{matrix.get('total_scenarios', 0)}`",
+    ]
+
+
 def write_report(root: Path, output: Path, issues: Path) -> None:
     trace = root / "logs" / "trace"
     state = load_json(trace / "workflow_state.json")
     cargo = load_json(trace / "cargo-results.json")
     ratio = load_json(trace / "unsafe-ratio.json")
     design = load_json(trace / "rust_api_design.json")
+    matrix = load_json(trace / "validation-matrix.json")
     mapping = load_json(trace / "rust_test_mapping.json")
+    matrix_lines = "\n".join(validation_matrix_summary(matrix))
 
     success = (
         state.get("current_stage") == "DONE"
@@ -68,6 +84,10 @@ STATUS: {status}
 - mapped_scenarios: `{mapping.get('total_scenarios', 'unknown')}`
 - extension_tests: `{len(mapping.get('extension', [])) if isinstance(mapping.get('extension'), list) else 'unknown'}`
 - unmapped_tests_or_symbols: `{len(mapping.get('unmapped', [])) if isinstance(mapping.get('unmapped'), list) else 'unknown'}`
+
+## Cross Validation Matrix
+
+{matrix_lines}
 """,
         encoding="utf-8",
     )

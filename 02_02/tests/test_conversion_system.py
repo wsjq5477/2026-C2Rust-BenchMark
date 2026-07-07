@@ -39,6 +39,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             PROJECT / "work" / "tools" / "build_c_model.py",
             PROJECT / "work" / "tools" / "design_rust_api.py",
             PROJECT / "work" / "tools" / "generate_rust_scaffold.py",
+            PROJECT / "work" / "tools" / "c_cross_validate.py",
             PROJECT / "work" / "tools" / "migrate_tests.py",
             PROJECT / "work" / "tools" / "cargo_capture.py",
             PROJECT / "work" / "tools" / "unsafe_ratio.py",
@@ -119,6 +120,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "DESIGN_RUST_API",
             "GENERATE_RUST_SCAFFOLD",
             "REWRITE_CORE_MODULES",
+            "VERIFY_RUST_WITH_C_TESTS",
             "MIGRATE_TESTS",
             "BUILD_TEST_REPAIR",
             "REPORT_AND_VERIFY",
@@ -128,6 +130,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "c_api_model.json",
             "c_test_model.json",
             "rust_api_design.json",
+            "validation-matrix.json",
             "rust_test_mapping.json",
             "final-verification.md",
             "flashDB_rust",
@@ -137,6 +140,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "python3 work/tools/build_c_model.py",
             "python3 work/tools/design_rust_api.py",
             "python3 work/tools/generate_rust_scaffold.py",
+            "python3 work/tools/c_cross_validate.py",
             "python3 work/tools/migrate_tests.py",
             "python3 work/tools/cargo_capture.py",
             "python3 work/tools/unsafe_ratio.py",
@@ -146,6 +150,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "python3 work/tools/gate.py --stage DESIGN_RUST_API",
             "python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD",
             "python3 work/tools/gate.py --stage REWRITE_CORE_MODULES",
+            "python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS",
             "python3 work/tools/gate.py --stage MIGRATE_TESTS",
             "python3 work/tools/gate.py --stage BUILD_TEST_REPAIR",
             "python3 work/tools/gate.py --stage REPORT_AND_VERIFY",
@@ -168,6 +173,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "DESIGN_RUST_API",
             "GENERATE_RUST_SCAFFOLD",
             "REWRITE_CORE_MODULES",
+            "VERIFY_RUST_WITH_C_TESTS",
             "MIGRATE_TESTS",
             "BUILD_TEST_REPAIR",
             "REPORT_AND_VERIFY",
@@ -183,6 +189,8 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "logs/trace/04-design-rust-api.md",
             "logs/trace/05-generate-rust-scaffold.md",
             "logs/trace/06-rewrite-core-modules.md",
+            "logs/trace/06-5-verify-rust-with-c-tests.md",
+            "logs/trace/validation-matrix.json",
             "logs/trace/rust_test_mapping.json",
             "logs/trace/07-migrate-tests.md",
             "logs/trace/cargo-build.log",
@@ -194,6 +202,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "python3 work/tools/build_c_model.py",
             "python3 work/tools/design_rust_api.py",
             "python3 work/tools/generate_rust_scaffold.py",
+            "python3 work/tools/c_cross_validate.py",
             "python3 work/tools/migrate_tests.py",
             "python3 work/tools/cargo_capture.py",
             "python3 work/tools/unsafe_ratio.py",
@@ -204,6 +213,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "python3 work/tools/gate.py --stage DESIGN_RUST_API",
             "python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD",
             "python3 work/tools/gate.py --stage REWRITE_CORE_MODULES",
+            "python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS",
             "python3 work/tools/gate.py --stage MIGRATE_TESTS",
             "python3 work/tools/gate.py --stage BUILD_TEST_REPAIR",
             "python3 work/tools/gate.py --stage REPORT_AND_VERIFY",
@@ -512,6 +522,44 @@ class FrameworkCheckpointTests(unittest.TestCase):
             self.assertIn("BUILD_C_MODEL: MODELS_WRITTEN", completed.stdout)
             for name in ["c_project_model.json", "c_api_model.json", "c_test_model.json"]:
                 self.assertTrue((root / name).is_file(), name)
+
+    def test_c_cross_validate_reports_malformed_scorer_cases(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            trace.mkdir(parents=True)
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "scorer_standard_cases": [
+                    {
+                        "case_id": "1",
+                        "case_name": "valid",
+                        "scenario_id": "test_valid",
+                        "suite": "kvdb",
+                    },
+                    "bad-entry",
+                    {
+                        "case_name": "missing_case_id",
+                        "scenario_id": "test_missing_case_id",
+                        "suite": "tsdb",
+                    },
+                ],
+            }), encoding="utf-8")
+
+            matrix = cross.build_matrix(root, trace)
+
+            self.assertEqual(3, matrix["total_scenarios"])
+            malformed = [
+                item
+                for item in matrix["scenarios"]
+                if str(item["scenario_id"]).startswith("malformed_case_")
+            ]
+            self.assertEqual(2, len(malformed))
+            for item in malformed:
+                self.assertEqual("not_supported", item["rust_impl_c_test"])
+                self.assertEqual("c_cross_harness_not_supported", item["diagnosis"])
+                self.assertIn("malformed scorer_standard_cases entry", item["reason"])
+                self.assertTrue(item["log"].startswith("logs/trace/c-cross/"))
 
     def test_gate_build_c_model_rejects_missing_models_and_accepts_valid_models(self):
         gate = PROJECT / "work" / "tools" / "gate.py"
@@ -924,6 +972,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
                     "DESIGN_RUST_API",
                     "GENERATE_RUST_SCAFFOLD",
                     "REWRITE_CORE_MODULES",
+                    "VERIFY_RUST_WITH_C_TESTS",
                     "MIGRATE_TESTS",
                 ],
                 "checkpoint": "MIGRATE_TESTS",
@@ -1142,6 +1191,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
                     "DESIGN_RUST_API",
                     "GENERATE_RUST_SCAFFOLD",
                     "REWRITE_CORE_MODULES",
+                    "VERIFY_RUST_WITH_C_TESTS",
                     "MIGRATE_TESTS",
                     "BUILD_TEST_REPAIR",
                     "REPORT_AND_VERIFY",
@@ -1170,12 +1220,45 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 "04-design-rust-api.md",
                 "05-generate-rust-scaffold.md",
                 "06-rewrite-core-modules.md",
+                "06-5-verify-rust-with-c-tests.md",
                 "07-migrate-tests.md",
                 "08-build-test-repair.md",
                 "09-report-and-verify.md",
                 "final-verification.md",
             ]:
                 (trace / name).write_text("# 阶段\n\n中文验证记录。\n", encoding="utf-8")
+            (trace / "validation-matrix.json").write_text(json.dumps({
+                "stage": "VERIFY_RUST_WITH_C_TESTS",
+                "policy": "advisory",
+                "total_scenarios": 2,
+                "summary": {"rust_impl_c_test": {"not_supported": 2}},
+                "scenarios": [
+                    {
+                        "scenario_id": "test_fdb_gc",
+                        "scorer_case_id": "10",
+                        "suite": "kvdb",
+                        "c_impl_c_test": "baseline",
+                        "rust_impl_c_test": "not_supported",
+                        "c_impl_rust_test": "not_run",
+                        "rust_impl_rust_test": "pending",
+                        "diagnosis": "c_cross_harness_not_supported",
+                        "reason": "fixture advisory matrix",
+                        "log": "logs/trace/c-cross/test_fdb_gc.log",
+                    },
+                    {
+                        "scenario_id": "test_fdb_tsl_append",
+                        "scorer_case_id": "15",
+                        "suite": "tsdb",
+                        "c_impl_c_test": "baseline",
+                        "rust_impl_c_test": "not_supported",
+                        "c_impl_rust_test": "not_run",
+                        "rust_impl_rust_test": "pending",
+                        "diagnosis": "c_cross_harness_not_supported",
+                        "reason": "fixture advisory matrix",
+                        "log": "logs/trace/c-cross/test_fdb_tsl_append.log",
+                    },
+                ],
+            }), encoding="utf-8")
 
             report_run = subprocess.run(
                 [
@@ -1193,7 +1276,10 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(0, report_run.returncode, report_run.stdout)
-            self.assertIn("STATUS: SUCCESS", (root / "result" / "output.md").read_text(encoding="utf-8"))
+            output_text = (root / "result" / "output.md").read_text(encoding="utf-8")
+            self.assertIn("STATUS: SUCCESS", output_text)
+            self.assertIn("Cross Validation Matrix", output_text)
+            self.assertIn("C tests on Rust", output_text)
 
             final_gate = subprocess.run(
                 [sys.executable, str(gate), "--stage", "REPORT_AND_VERIFY", "--root", str(root)],
