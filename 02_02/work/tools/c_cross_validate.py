@@ -32,12 +32,63 @@ def build_matrix(root: Path, out: Path) -> dict[str, Any]:
         raise ValueError("c_test_model.json scorer_standard_cases must be a list")
 
     scenarios = []
-    for case in cases:
+    for index, case in enumerate(cases):
         if not isinstance(case, dict):
+            scenario_id = f"malformed_case_{index}"
+            case_id = f"malformed_case_{index}"
+            log = c_cross / f"{scenario_id}.log"
+            log.write_text(
+                f"Malformed scorer_standard_cases entry at index {index}: expected object, got {type(case).__name__}.\n",
+                encoding="utf-8",
+            )
+            scenarios.append(
+                {
+                    "scenario_id": scenario_id,
+                    "scorer_case_id": case_id,
+                    "suite": "unknown",
+                    "c_impl_c_test": "baseline",
+                    "rust_impl_c_test": "not_supported",
+                    "c_impl_rust_test": "not_run",
+                    "rust_impl_rust_test": "pending",
+                    "diagnosis": "c_cross_harness_not_supported",
+                    "reason": f"malformed scorer_standard_cases entry at index {index}: expected object, got {type(case).__name__}",
+                    "log": _relative_log_path(log, root),
+                }
+            )
             continue
+
         scenario_id = case.get("scenario_id")
         case_id = case.get("case_id")
         if not isinstance(scenario_id, str) or not isinstance(case_id, str):
+            generated_id = f"malformed_case_{index}"
+            log = c_cross / f"{generated_id}.log"
+            missing_fields = []
+            if not isinstance(scenario_id, str):
+                missing_fields.append("scenario_id")
+            if not isinstance(case_id, str):
+                missing_fields.append("case_id")
+            log.write_text(
+                "Malformed scorer_standard_cases entry at index "
+                f"{index}: missing or non-string {', '.join(missing_fields)}.\n",
+                encoding="utf-8",
+            )
+            scenarios.append(
+                {
+                    "scenario_id": generated_id,
+                    "scorer_case_id": generated_id,
+                    "suite": case.get("suite", "unknown"),
+                    "c_impl_c_test": "baseline",
+                    "rust_impl_c_test": "not_supported",
+                    "c_impl_rust_test": "not_run",
+                    "rust_impl_rust_test": "pending",
+                    "diagnosis": "c_cross_harness_not_supported",
+                    "reason": (
+                        f"malformed scorer_standard_cases entry at index {index}: "
+                        f"missing or non-string {', '.join(missing_fields)}"
+                    ),
+                    "log": _relative_log_path(log, root),
+                }
+            )
             continue
 
         log = c_cross / f"{scenario_id}.log"
