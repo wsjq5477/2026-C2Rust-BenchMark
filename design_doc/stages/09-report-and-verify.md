@@ -23,6 +23,7 @@ logs/trace/c_project_model.json
 logs/trace/rust_api_design.json
 logs/trace/validation-matrix.json
 logs/trace/rust_test_mapping.json
+logs/trace/test-consistency.json
 logs/trace/cargo-build.log
 logs/trace/cargo-test.log
 ```
@@ -56,6 +57,14 @@ unsafe 统计：
 python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json
 ```
 
+测试语义预评分：
+
+```bash
+python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json
+```
+
+该检查必须在最终报告前通过，避免 `cargo test` 通过但 Rust 测试只覆盖 API 调用或浅层状态断言。
+
 报告生成：
 
 ```bash
@@ -87,6 +96,7 @@ python3 work/tools/report_writer.py --out result/output.md --issues result/issue
 - `cargo fmt --check` 通过；
 - `cargo clippy -- -D warnings` 通过；
 - `validation-matrix.json` 覆盖 scorer cases；
+- `test-consistency.json` 无 shallow assertion、assertion evidence 缺口或深语义 obligation 缺口；
 - unsafe 比例低于 10%；
 - 最终项目不编译或链接 FlashDB C 源码；
 - `result/output.md` 存在；

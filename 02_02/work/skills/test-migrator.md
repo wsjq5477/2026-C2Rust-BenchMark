@@ -26,8 +26,10 @@ permission:
 - 维护 `logs/trace/rust_test_mapping.json`；
 - 以 `c_test_model.json.scorer_standard_cases` 为评分覆盖合同，逐项一一迁移；
 - 使用 `c_test_model.json.standard_scenarios` 作为动态 C 注册场景证据，不得忽略其中的语义事实；
-- 根据每个 scorer case 的 `semantic_obligations` 和 `semantic_facts` 完善 Rust 测试；
-- 清除对应 `MIGRATION_PENDING` 后，只有当 `validated_obligations` 覆盖全部 `semantic_obligations` 时，才可把该项 mapping 的 `coverage` 改为 `semantic`。
+- 根据每个 scorer case 的 `semantic_obligations`、`semantic_facts.assertion_details`、`semantic_facts.data_shape` 和 `semantic_facts.scenario_features` 完善 Rust 测试；
+- 对 `verify_*`、`data_shape:*`、`scenario:*` obligations，必须写入能追溯 C 证据的 `assertion_evidence`；
+- 清除对应 `MIGRATION_PENDING` 后，只有当 `validated_obligations` 覆盖全部 `semantic_obligations` 且 `assertion_evidence` 证明关键断言时，才可把该项 mapping 的 `coverage` 改为 `semantic`。
+- coverage 分级：`api` 只代表调用覆盖；`assertion_semantic` 代表断言属性等价；`deep_semantic` 代表数据规模、布局和边界条件等价。不得把 `api` 级测试标记为 `semantic`。
 
 ## 禁止事项
 
@@ -35,5 +37,6 @@ permission:
 - 不得删除测试。
 - 不得弱化断言。
 - 不得把测试改成恒真。
+- 不得用 `is_ok()`、`is_some()`、`is_none()` 这类状态/存在性断言替代 C 测试中的属性断言。
 - 不得只按注册测试名判断评分覆盖。
 - 不得只修改 mapping 状态而保留 `MIGRATION_PENDING`。

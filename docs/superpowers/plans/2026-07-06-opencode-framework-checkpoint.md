@@ -16,8 +16,8 @@
 - Modify: `/home/nv_test/777/flashdb2rust/02_02/INSTRUCTION.md`
 - Modify: `/home/nv_test/777/flashdb2rust/02_02/tests/test_conversion_system.py`
 - Create: `/home/nv_test/777/flashdb2rust/02_02/work/agents/flashdb-orchestrator.md`
-- Create: `/home/nv_test/777/flashdb2rust/02_02/work/agents/test-migrator.md`
-- Create: `/home/nv_test/777/flashdb2rust/02_02/work/agents/repairer.md`
+- Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/test-migrator.md`
+- Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/repairer.md`
 - Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/flashdb-migration/SKILL.md`
 - Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/flashdb-test-migration/SKILL.md`
 - Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/rust-compile-repair/SKILL.md`

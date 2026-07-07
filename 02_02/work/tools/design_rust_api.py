@@ -76,6 +76,94 @@ def count_list(data: dict[str, Any], key: str) -> int:
     return len(value) if isinstance(value, list) else 0
 
 
+def all_semantic_obligations(c_test_model: dict[str, Any]) -> set[str]:
+    obligations: set[str] = set()
+    cases = c_test_model.get("scorer_standard_cases", [])
+    if isinstance(cases, list):
+        for case in cases:
+            if not isinstance(case, dict):
+                continue
+            values = case.get("semantic_obligations", [])
+            if isinstance(values, list):
+                obligations.update(item for item in values if isinstance(item, str))
+    return obligations
+
+
+def design_test_api(
+    kvdb_tests: list[Any],
+    tsdb_tests: list[Any],
+    standard_scenarios: list[Any],
+    scorer_standard_cases: list[Any],
+    obligations: set[str],
+) -> dict[str, Any]:
+    observables: list[dict[str, Any]] = []
+    controls: list[dict[str, Any]] = []
+
+    def add_observable(name: str, rust: str, reason: str) -> None:
+        if not any(item["name"] == name for item in observables):
+            observables.append(
+                {
+                    "name": name,
+                    "rust": rust,
+                    "test_observable": True,
+                    "reason": reason,
+                }
+            )
+
+    if "verify_addr_alignment" in obligations:
+        add_observable("oldest_addr", "Kvdb::oldest_addr", "Required to verify C oldest_addr alignment assertions.")
+    if "verify_init_state" in obligations:
+        add_observable("is_initialized", "Kvdb::is_initialized", "Required to verify C init_ok state assertions.")
+    if any(item.startswith("data_shape:cross_sector") or item.startswith("scenario:multi_status") for item in obligations):
+        add_observable("sector_status", "Kvdb::sector_status", "Required to inspect sector boundary and status behavior in tests.")
+    if "use_control_interface" in obligations:
+        controls.append(
+            {
+                "name": "control",
+                "rust": "Kvdb::control",
+                "test_observable": True,
+                "reason": "Required to preserve fdb_kvdb_control/fdb_tsdb_control setup from C tests.",
+            }
+        )
+
+    return {
+        "kvdb_tests": kvdb_tests,
+        "tsdb_tests": tsdb_tests,
+        "standard_scenarios": standard_scenarios,
+        "scorer_standard_cases": scorer_standard_cases,
+        "rust_test_files": [],
+        "observables": observables,
+        "controls": controls,
+        "coverage_levels": {
+            "api": "Rust test calls the API covered by the C scenario.",
+            "assertion_semantic": "Rust assertions verify the same property class as C assertions.",
+            "deep_semantic": "Rust test preserves C data shape, layout, and boundary conditions.",
+        },
+        "migration_strategy": "Translate dynamically derived scorer-facing cases into Rust integration tests against the designed safe API, using registered C tests as evidence.",
+    }
+
+
+def design_storage_constraints(c_project_model: dict[str, Any], c_api_model: dict[str, Any]) -> dict[str, Any]:
+    macros = c_api_model.get("macros", [])
+    source_files = c_project_model.get("source_files", [])
+    macro_set = {item for item in macros if isinstance(item, str)} if isinstance(macros, list) else set()
+    file_sources = [item for item in source_files if isinstance(item, str) and "file" in item.lower()] if isinstance(source_files, list) else []
+    file_sector_mode = "FDB_USING_FILE_POSIX_MODE" in macro_set or bool(file_sources)
+    if file_sector_mode:
+        return {
+            "backend": "file_sector_mode",
+            "sector_file_pattern": "{dir}/{name}.fdb.{index}",
+            "fd_cache_required": True,
+            "requires_reload_scan": True,
+        }
+    return {
+        "backend": "memory_or_custom",
+        "sector_file_pattern": "",
+        "fd_cache_required": False,
+        "requires_reload_scan": True,
+    }
+
+
 def design_api(
     c_project_model: dict[str, Any],
     c_api_model: dict[str, Any],
@@ -104,6 +192,7 @@ def design_api(
 
     kvdb_api = api_items_from_symbols("kvdb", kvdb_symbols)
     tsdb_api = api_items_from_symbols("tsdb", tsdb_symbols)
+    obligations = all_semantic_obligations(c_test_model)
     c_to_rust_symbol_map = {
         item["c_symbols"][0]: item["rust"]
         for item in kvdb_api + tsdb_api
@@ -130,16 +219,10 @@ def design_api(
                 "retain_valid_records",
             ],
         },
+        "storage_constraints": design_storage_constraints(c_project_model, c_api_model),
         "kvdb_api": kvdb_api,
         "tsdb_api": tsdb_api,
-        "test_api": {
-            "kvdb_tests": kvdb_tests,
-            "tsdb_tests": tsdb_tests,
-            "standard_scenarios": standard_scenarios,
-            "scorer_standard_cases": scorer_standard_cases,
-            "rust_test_files": [],
-            "migration_strategy": "Translate dynamically derived scorer-facing cases into Rust integration tests against the designed safe API, using registered C tests as evidence.",
-        },
+        "test_api": design_test_api(kvdb_tests, tsdb_tests, standard_scenarios, scorer_standard_cases, obligations),
         "c_to_rust_symbol_map": c_to_rust_symbol_map,
         "semantic_requirements": [
             "Preserve externally observable behavior from current C tests.",

@@ -78,6 +78,12 @@ logs/trace/rust_test_mapping.json
 
 没有 C 测试、C 模型、规格或可计算事实支撑的期望值，不得标记为 `coverage: semantic`。这类测试必须保持 `coverage: pending` 或写入待补证据记录，不能把拍脑袋的 Rust 断言作为后续修实现的依据。
 
+覆盖分级：
+
+- L1/API 调用覆盖：Rust 测试调用了 C scenario 对应 API，但不能标记为 `coverage: semantic`；
+- L2/断言意图覆盖：Rust 断言验证了 C assert 的同类属性，可作为普通 semantic；
+- L3/数据规模和布局覆盖：Rust 测试保留 C 的 KV/TSL 数量、blob 大小、sector 边界、状态组合和重启恢复，高风险 `data_shape:*` / `scenario:*` case 必须达到此级别。
+
 目标覆盖：
 
 - KVDB：13 个标准场景；
@@ -92,6 +98,7 @@ logs/trace/rust_test_mapping.json
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 # opencode 调用 test-migrator subagent 生成 Rust tests
 python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json
+python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json
 python3 work/tools/gate.py --stage MIGRATE_TESTS
 ```
 
@@ -108,6 +115,7 @@ python3 work/tools/gate.py --stage MIGRATE_TESTS
 - Rust 测试文件包含非恒真断言；
 - `coverage: semantic` 的测试必须有对应 `assertion_evidence` 或等价的 `validated_obligations`；
 - 关键 expected value 必须能追溯到 C 测试、C 模型、规格或可计算事实；
+- `test-consistency.json` 必须通过；若发现 `missing_assertion_evidence`、`rust_assertion_count_below_threshold`、`missing_direct_verify_obligation` 或 `shallow_assertion_dominance`，本阶段失败并回到测试迁移；
 - 不删除 core 文件；
 - `workflow_state.json.current_stage == MIGRATE_TESTS`。
 

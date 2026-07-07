@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -59,6 +60,56 @@ VALID_TEST_TRIAGE_CLASSIFICATIONS = {
     "harness_suspect",
     "insufficient_evidence",
 }
+
+
+def collect_obligations(test_model: dict[str, Any]) -> set[str]:
+    obligations: set[str] = set()
+    cases = test_model.get("scorer_standard_cases")
+    if isinstance(cases, list):
+        for case in cases:
+            if not isinstance(case, dict):
+                continue
+            values = case.get("semantic_obligations")
+            if isinstance(values, list):
+                obligations.update(item for item in values if isinstance(item, str))
+    return obligations
+
+
+def names_from_contract_items(items: Any) -> set[str]:
+    if not isinstance(items, list):
+        return set()
+    names: set[str] = set()
+    for item in items:
+        if isinstance(item, dict) and isinstance(item.get("name"), str):
+            names.add(item["name"])
+        elif isinstance(item, str):
+            names.add(item)
+    return names
+
+
+def check_design_test_contracts(design: dict[str, Any], test_model: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    obligations = collect_obligations(test_model)
+    test_api = design.get("test_api")
+    if not isinstance(test_api, dict):
+        return ["rust_api_design.json test_api must be an object"]
+    observables = names_from_contract_items(test_api.get("observables"))
+    controls = names_from_contract_items(test_api.get("controls"))
+
+    if "verify_addr_alignment" in obligations and "oldest_addr" not in observables:
+        errors.append("rust_api_design.json test_api missing observable oldest_addr for verify_addr_alignment")
+    if "verify_init_state" in obligations and "is_initialized" not in observables:
+        errors.append("rust_api_design.json test_api missing observable is_initialized for verify_init_state")
+    if any(item.startswith("data_shape:cross_sector") or item == "scenario:multi_status_filter" for item in obligations):
+        if "sector_status" not in observables:
+            errors.append("rust_api_design.json test_api missing observable sector_status for sector/status obligations")
+    if "use_control_interface" in obligations and "control" not in controls:
+        errors.append("rust_api_design.json test_api missing control interface for use_control_interface")
+    if any(item.startswith("data_shape:cross_sector") for item in obligations):
+        storage_constraints = design.get("storage_constraints")
+        if not isinstance(storage_constraints, dict) or storage_constraints.get("backend") != "file_sector_mode":
+            errors.append("rust_api_design.json storage_constraints.backend must be file_sector_mode for cross-sector obligations")
+    return errors
 
 
 def is_c_cross_owned_log_path(log_path: str) -> bool:
@@ -490,11 +541,21 @@ def check_design_rust_api(root: Path) -> list[str]:
         if not isinstance(storage_model, dict) or not isinstance(implementations, list):
             errors.append("rust_api_design.json storage_model.implementations must be a list")
 
+        storage_constraints = design.get("storage_constraints")
+        if storage_constraints is not None and not isinstance(storage_constraints, dict):
+            errors.append("rust_api_design.json storage_constraints must be an object when present")
+
         symbol_map = design.get("c_to_rust_symbol_map")
         if not isinstance(symbol_map, dict):
             errors.append("rust_api_design.json c_to_rust_symbol_map must be an object")
         elif not all(isinstance(key, str) and isinstance(value, str) for key, value in symbol_map.items()):
             errors.append("rust_api_design.json c_to_rust_symbol_map keys and values must be strings")
+
+        test_model, test_model_error = load_json(root / "logs" / "trace" / "c_test_model.json")
+        if test_model_error:
+            errors.append(f"c_test_model.json: {test_model_error}")
+        else:
+            errors.extend(check_design_test_contracts(design, test_model))
 
     stage_log = root / "logs" / "trace" / "04-design-rust-api.md"
     try:
@@ -851,6 +912,28 @@ def check_dynamic_test_mapping(root: Path) -> list[str]:
     return errors
 
 
+def check_test_consistency(root: Path) -> list[str]:
+    tool_path = Path(__file__).resolve().with_name("test_consistency_check.py")
+    spec = importlib.util.spec_from_file_location("test_consistency_check", tool_path)
+    if spec is None or spec.loader is None:
+        return ["test_consistency_check.py could not be loaded"]
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    report = module.analyze_consistency(root)
+    report_path = root / "logs" / "trace" / "test-consistency.json"
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if report.get("status") != "pass":
+        issues = report.get("issues", [])
+        rendered = []
+        if isinstance(issues, list):
+            for issue in issues[:10]:
+                if isinstance(issue, dict):
+                    rendered.append(f"{issue.get('scenario_id')}: {issue.get('code')}")
+        detail = "; ".join(rendered) if rendered else "unknown consistency issue"
+        return [f"test consistency failed: {detail}"]
+    return []
+
+
 def check_migrate_tests(root: Path) -> list[str]:
     errors = check_common_after_scaffold(root)
     required_stages = [
@@ -870,6 +953,7 @@ def check_migrate_tests(root: Path) -> list[str]:
         return errors
 
     errors.extend(check_dynamic_test_mapping(root))
+    errors.extend(check_test_consistency(root))
 
     if not (root / "logs" / "trace" / "07-migrate-tests.md").exists():
         errors.append("missing logs/trace/07-migrate-tests.md")
@@ -970,6 +1054,7 @@ def check_report_and_verify(root: Path) -> list[str]:
         errors.append("workflow_state.json build_status and test_status must be pass")
     errors.extend(check_validation_matrix(root, allow_not_supported=True))
     errors.extend(check_dynamic_test_mapping(root))
+    errors.extend(check_test_consistency(root))
 
     ratio, ratio_error = load_json(root / "logs" / "trace" / "unsafe-ratio.json")
     if ratio_error:
