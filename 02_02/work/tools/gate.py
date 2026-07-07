@@ -162,7 +162,7 @@ def check_common_after_scaffold(root: Path) -> list[str]:
 
 
 def check_no_c_sources_in_src(root: Path) -> list[str]:
-    if list((root / "flashDB_rust" / "src").glob("*.c")):
+    if list((root / "flashDB_rust" / "src").rglob("*.c")):
         return ["flashDB_rust/src must not contain C source files"]
     return []
 
