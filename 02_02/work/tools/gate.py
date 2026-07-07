@@ -161,6 +161,12 @@ def check_common_after_scaffold(root: Path) -> list[str]:
     return errors
 
 
+def check_no_c_sources_in_src(root: Path) -> list[str]:
+    if list((root / "flashDB_rust" / "src").glob("*.c")):
+        return ["flashDB_rust/src must not contain C source files"]
+    return []
+
+
 def require_state(
     root: Path,
     required_keys: set[str],
@@ -551,8 +557,7 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
             elif "todo!()" in path.read_text(encoding="utf-8", errors="ignore") or "unimplemented!()" in path.read_text(encoding="utf-8", errors="ignore"):
                 errors.append(f"flashDB_rust/{rel_path} must not contain todo!() or unimplemented!()")
 
-    if list((project / "src").glob("*.c")):
-        errors.append("flashDB_rust/src must not contain C source files")
+    errors.extend(check_no_c_sources_in_src(root))
     if not (root / "logs" / "trace" / "06-rewrite-core-modules.md").exists():
         errors.append("missing logs/trace/06-rewrite-core-modules.md")
     return errors
@@ -698,8 +703,7 @@ def check_verify_rust_with_c_tests(root: Path) -> list[str]:
     errors.extend(check_validation_matrix(root, allow_not_supported=True))
     if not (root / "logs" / "trace" / "06-5-verify-rust-with-c-tests.md").exists():
         errors.append("missing logs/trace/06-5-verify-rust-with-c-tests.md")
-    if list((root / "flashDB_rust" / "src").glob("*.c")):
-        errors.append("flashDB_rust/src must not contain C source files")
+    errors.extend(check_no_c_sources_in_src(root))
     return errors
 
 
@@ -880,6 +884,7 @@ def check_build_test_repair(root: Path) -> list[str]:
     for name in ["cargo-build.log", "cargo-test.log", "08-build-test-repair.md"]:
         if not (root / "logs" / "trace" / name).exists():
             errors.append(f"missing logs/trace/{name}")
+    errors.extend(check_no_c_sources_in_src(root))
     return errors
 
 
@@ -932,8 +937,7 @@ def check_report_and_verify(root: Path) -> list[str]:
     if not issues.exists():
         errors.append("missing result/issues/00-summary.md")
 
-    if list((root / "flashDB_rust").rglob("*.c")):
-        errors.append("final Rust project must not contain C source files")
+    errors.extend(check_no_c_sources_in_src(root))
     return errors
 
 
