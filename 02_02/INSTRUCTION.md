@@ -54,6 +54,7 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json
 python3 work/tools/gate.py --stage MIGRATE_TESTS
 python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace
+python3 work/tools/test_failure_triage.py --root . --out logs/trace  # only required when cargo test failed
 python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json
 python3 work/tools/report_writer.py --root . --output result/output.md --issues result/issues/00-summary.md
@@ -145,10 +146,13 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 ### BUILD_TEST_REPAIR
 
 1. 运行 `python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace`。
-2. 如果 cargo 失败，读取 `work/agents/repairer.md` 和 `work/skills/rust-compile-repair/SKILL.md`，按最小补丁修复，最多 8 轮。
-3. 写入中文 `logs/trace/08-build-test-repair.md`。
-4. 更新 `workflow_state.json`，`build_status` 和 `test_status` 必须为 `pass`。
-5. 运行 `python3 work/tools/gate.py --stage BUILD_TEST_REPAIR`。
+2. 如果 `cargo test` 失败，必须先运行 `python3 work/tools/test_failure_triage.py --root . --out logs/trace`；`cargo_capture.py` 也会在 test 失败时自动生成同一 triage 记录。
+3. `test_failure_triage.py` 必须写入 `logs/trace/test-failure-triage.jsonl` 和 `workflow_state.json.test_failure_triage_required = true`。
+4. 之后才可调用 `test-triage` subagent 做补充分析；如果 subagent 不可用、超时或输出不合格，主控按工具输出和 `work/agents/test-triage.md` fallback 自行分类，不得等待人工确认。
+5. 读取 `work/agents/repairer.md` 和 `work/skills/rust-compile-repair/SKILL.md`，只在 triage 允许的 `allowed_edit_scope` 内按最小补丁修复，最多 8 轮。
+6. 写入中文 `logs/trace/08-build-test-repair.md`。
+7. 更新 `workflow_state.json`，`build_status` 和 `test_status` 必须为 `pass`。
+8. 运行 `python3 work/tools/gate.py --stage BUILD_TEST_REPAIR`。
 
 ### REPORT_AND_VERIFY
 

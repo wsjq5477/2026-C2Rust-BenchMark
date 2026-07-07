@@ -58,9 +58,25 @@ logs/trace/rust_test_mapping.json
   "extension": [],
   "unmapped": [],
   "total_scenarios": 24,
-  "source_to_rust": {}
+  "source_to_rust": {},
+  "assertion_evidence": []
 }
 ```
+
+每个关键断言必须能追溯期望值来源。`assertion_evidence` 至少记录：
+
+```json
+{
+  "rust_test": "kvdb_test_fdb_create_kv_blob",
+  "assertion": "value_len == 21",
+  "expected": 21,
+  "source": "c_test_model.scorer_standard_cases[kvdb_create_kv_blob]",
+  "evidence": "input blob bytes are derived from hello_world_blob_data",
+  "validated_obligation": "blob read returns the bytes written by blob create"
+}
+```
+
+没有 C 测试、C 模型、规格或可计算事实支撑的期望值，不得标记为 `coverage: semantic`。这类测试必须保持 `coverage: pending` 或写入待补证据记录，不能把拍脑袋的 Rust 断言作为后续修实现的依据。
 
 目标覆盖：
 
@@ -90,6 +106,8 @@ python3 work/tools/gate.py --stage MIGRATE_TESTS
 - 映射覆盖 24 个标准场景；
 - 新增 C 测试不能静默丢弃，必须进入 `extension`、`unmapped` 或带理由的排除记录；
 - Rust 测试文件包含非恒真断言；
+- `coverage: semantic` 的测试必须有对应 `assertion_evidence` 或等价的 `validated_obligations`；
+- 关键 expected value 必须能追溯到 C 测试、C 模型、规格或可计算事实；
 - 不删除 core 文件；
 - `workflow_state.json.current_stage == MIGRATE_TESTS`。
 

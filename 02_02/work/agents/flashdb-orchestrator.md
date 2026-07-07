@@ -7,6 +7,7 @@ permission:
   task:
     "*": deny
     test-migrator: allow
+    test-triage: allow
     repairer: allow
 ---
 
@@ -236,6 +237,7 @@ python3 work/tools/gate.py --stage MIGRATE_TESTS
 
 ```bash
 python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace
+python3 work/tools/test_failure_triage.py --root . --out logs/trace  # only required when cargo test failed
 python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 ```
 
@@ -244,9 +246,28 @@ python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 - `logs/trace/cargo-build.log`
 - `logs/trace/cargo-test.log`
 - `logs/trace/cargo-results.json`
+- `logs/trace/test-failure-triage.jsonl`
 - 中文 `logs/trace/08-build-test-repair.md`
 
-若 cargo 失败，读取 `work/agents/repairer.md` 和 `work/skills/rust-compile-repair/SKILL.md`，按最小补丁修复。不得删除测试、弱化断言或整体重写。
+若 cargo 失败，主控必须先执行测试失败归因：
+
+1. 如果 `cargo-results.json.test_status == fail`，必须先运行 `python3 work/tools/test_failure_triage.py --root . --out logs/trace`；
+2. 确认 `logs/trace/test-failure-triage.jsonl` 存在，且 `workflow_state.json.test_failure_triage_required == true`；
+3. 可调用 `test-triage` subagent 做补充分析，传入 `cargo-test.log`、`rust_test_mapping.json`、`validation-matrix.json` 和 `c_test_model.json`；
+4. 校验 subagent 输出是否为短 JSON，且包含 `classification`、`allowed_edit_scope`、`allow_src_edit`、`evidence_paths`；
+5. 如果 subagent 不可用、超时或输出不合格，主控立刻使用 `test_failure_triage.py` 的 JSONL 结论，并按 `work/agents/test-triage.md` 中同一规则 fallback 自行分类；
+6. 只有分类允许后，才读取 `work/agents/repairer.md` 和 `work/skills/rust-compile-repair/SKILL.md` 做最小补丁。
+
+`test_failure_triage.py` 是硬前置工具；`test-triage` 是默认可用时的补充分析、自动降级组件，不是人工选择项。用户不参与选择，subagent 失败不得阻塞流程。主控必须持续推进，最终 cargo 命令、gate 和通过判定都由主控执行。
+
+分类权限：
+
+- `test_oracle_suspect`：只能改 tests、`rust_test_mapping.json` 或测试说明，禁止改 `flashDB_rust/src/`；
+- `rust_impl_suspect`：允许改 `flashDB_rust/src/`，必须记录 C evidence、spec evidence 或 validated obligation；
+- `harness_suspect`：优先改 tests、mock、facade、setup/teardown；
+- `insufficient_evidence`：最多补一轮证据，然后按失败类型保守推进，不能无限停住。
+
+不得删除测试、弱化断言、整体重写，或在未完成 triage 时直接修改核心实现。
 
 ## REPORT_AND_VERIFY
 

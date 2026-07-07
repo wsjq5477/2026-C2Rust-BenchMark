@@ -226,7 +226,7 @@ Markdown 报告必须包含：
 
 加分证据：
 
-- 没有写死 `/app/tasks/ICT-4222`、`02_02_赛博三鲜`、固定 judge 目录；
+- 没有写死评测环境路径（如 `/app/tasks/`）、C 源码固定文件名（如 `fdb_kvdb.c`、`fdb_tsdb.c`）、FlashDB 专属配置常量名（如 `FDB_KV_NAME_MAX`、`FDB_WRITE_GRAN`、`SECTOR_MAGIC_WORD`）、固定 judge 目录；
 - 没有针对 case 编号写分支；
 - 没有直接复用历史 `flashDB_rust`；
 - 能通过配置或扫描适配不同源码根目录；
@@ -234,7 +234,8 @@ Markdown 报告必须包含：
 
 扣分情形：
 
-- 写死题目路径、case 编号、测试名称；
+- 迁移工具逻辑中写死 C 源码文件名（如 `fdb_kvdb.c`、`fdb_tsdb.c`）或头文件路径（如 `flashdb.h`），而非扫描发现；
+- 迁移逻辑中写死 FlashDB 专属常量（如 `FDB_KV_NAME_MAX=64`、`"fdb_kvdb1"`、`"__ver_num__"`），而非从源码提取；
 - 对某些测试函数直接返回期望值；
 - 检测到已有 `flashDB_rust` 就跳过转换；
 - 依赖评测环境中的隐藏路径；
@@ -432,10 +433,25 @@ tests/
 
 ```text
 /app/tasks/
-ICT-
-assistant_judge_
-02_02_
-赛博三鲜
+fdb_kvdb.c
+fdb_tsdb.c
+fdb.c
+fdb_utils.c
+fdb_file.c
+flashdb.h
+fdb_def.h
+fdb_low_lvl.h
+fdb_kvdb1
+fdb_tsdb1
+__ver_num__
+SECTOR_MAGIC_WORD
+KV_MAGIC_WORD
+FDB_KV_NAME_MAX
+FDB_WRITE_GRAN
+FDB_BYTE_ERASED
+0x30424446
+0x3030564B
+0x304C5354
 flashDB_rust
 FlashDB_Rust
 case10
@@ -453,11 +469,17 @@ stub
 
 重点识别：
 
-- 是否把评测路径写死；
-- 是否把题目名称写死；
+- 是否把评测路径写死（如 `/app/tasks/`）；
+- 是否把 C 源码文件名写死（如 `fdb_kvdb.c`、`fdb_tsdb.c`）而非通过扫描发现；
+- 是否把 C 头文件路径写死（如 `flashdb.h`、`fdb_def.h`）而非通过依赖分析发现；
+- 是否把 FlashDB 专属配置常量名写死在迁移逻辑中（如 `FDB_KV_NAME_MAX`、`FDB_WRITE_GRAN`）而非从源码提取；
+- 是否把 FlashDB 专属 magic number 写死在迁移逻辑中（如 `0x30424446`、`0x3030564B`）而非从 C 源码读取；
+- 是否把 FlashDB 数据库名写死（如 `"fdb_kvdb1"`、`"fdb_tsdb1"`、`"__ver_num__"`）而非从测试代码提取；
 - 是否把 case 编号写死；
 - 是否检测到已有 Rust 工程后跳过转换；
 - 是否用 mock/stub 替代真实语义。
+
+注意：在转换后的 Rust 工程源码中出现 FlashDB 常量名（如 `SECTOR_MAGIC_WORD`、`FDB_BYTE_ERASED`）或 magic number（如 `0x30424446`）不一定扣分——这可能是对 C 源码语义的正确保留。需要扣分的是在迁移工具/脚本/Agent/Skill 的逻辑中写死这些值，而非从 C 工程动态发现。
 
 ### 9.3 检查泛用性证据
 
@@ -713,12 +735,14 @@ stub
 
 ### 12.3 硬编码命中要结合上下文
 
-搜索到 `flashDB_rust` 不一定扣分，因为它可能只是输出目录名称。
+搜索到 `flashDB_rust` 不一定扣分，因为它可能只是输出目录名称（比赛要求）。搜索到 `SECTOR_MAGIC_WORD`、`0x30424446`、`FDB_BYTE_ERASED` 等也不一定扣分，因为它们可能是转换后 Rust 工程对 C 源码语义的正确保留。
 
 需要扣分的是：
 
+- 迁移工具/脚本/Agent/Skill 的逻辑中写死 C 源码文件名或头文件路径（如 `fdb_kvdb.c`、`flashdb.h`），而非通过扫描发现；
+- 迁移逻辑中写死 FlashDB 配置常量名（如 `FDB_KV_NAME_MAX=64`），而非从 `fdb_def.h` / `fdb_cfg.h` 动态提取；
 - 发现已有 `flashDB_rust` 后直接复用；
-- 路径写死导致换题目不可运行；
+- 评测环境路径写死导致换题目不可运行；
 - case 编号写死；
 - 测试结果写死；
 - fallback 到原始 C 工程或原始测试函数。

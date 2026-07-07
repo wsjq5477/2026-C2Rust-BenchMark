@@ -26,6 +26,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             PROJECT / "INSTRUCTION.md",
             PROJECT / "work" / "agents" / "flashdb-orchestrator.md",
             PROJECT / "work" / "agents" / "test-migrator.md",
+            PROJECT / "work" / "agents" / "test-triage.md",
             PROJECT / "work" / "agents" / "repairer.md",
             PROJECT / "work" / "skills" / "flashdb-migration" / "SKILL.md",
             PROJECT / "work" / "skills" / "flashdb-test-migration" / "SKILL.md",
@@ -42,6 +43,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             PROJECT / "work" / "tools" / "c_cross_validate.py",
             PROJECT / "work" / "tools" / "migrate_tests.py",
             PROJECT / "work" / "tools" / "cargo_capture.py",
+            PROJECT / "work" / "tools" / "test_failure_triage.py",
             PROJECT / "work" / "tools" / "unsafe_ratio.py",
             PROJECT / "work" / "tools" / "report_writer.py",
             PROJECT / "result" / "output.md",
@@ -84,6 +86,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
         expected = {
             "flashdb-orchestrator.md": ("mode: primary", "description:"),
             "test-migrator.md": ("mode: subagent", "description:"),
+            "test-triage.md": ("mode: subagent", "description:"),
             "repairer.md": ("mode: subagent", "description:"),
         }
         for filename, fragments in expected.items():
@@ -143,6 +146,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "python3 work/tools/c_cross_validate.py",
             "python3 work/tools/migrate_tests.py",
             "python3 work/tools/cargo_capture.py",
+            "python3 work/tools/test_failure_triage.py",
             "python3 work/tools/unsafe_ratio.py",
             "python3 work/tools/report_writer.py",
             "python3 work/tools/gate.py --stage READ_C_PROJECT",
@@ -205,6 +209,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "python3 work/tools/c_cross_validate.py",
             "python3 work/tools/migrate_tests.py",
             "python3 work/tools/cargo_capture.py",
+            "python3 work/tools/test_failure_triage.py",
             "python3 work/tools/unsafe_ratio.py",
             "python3 work/tools/report_writer.py",
             "python3 work/tools/gate.py --stage INIT_WORKSPACE",
@@ -1289,6 +1294,72 @@ class FrameworkCheckpointTests(unittest.TestCase):
             )
             self.assertEqual(0, final_gate.returncode, final_gate.stdout)
             self.assertIn("REPORT_AND_VERIFY: PASS", final_gate.stdout)
+
+    def test_cargo_capture_test_failure_writes_triage_before_repair(self):
+        cargo_capture = PROJECT / "work" / "tools" / "cargo_capture.py"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            project = root / "flashDB_rust"
+            trace = root / "logs" / "trace"
+            (project / "src").mkdir(parents=True)
+            (project / "tests").mkdir()
+            trace.mkdir(parents=True)
+            (project / "Cargo.toml").write_text(
+                '[package]\nname = "flashdb_rust"\nversion = "0.1.0"\nedition = "2021"\n',
+                encoding="utf-8",
+            )
+            (project / "src" / "lib.rs").write_text("pub fn value_len() -> usize { 21 }\n", encoding="utf-8")
+            (project / "tests" / "kvdb_tests.rs").write_text(
+                "use flashdb_rust::value_len;\n"
+                "#[test]\n"
+                "fn kvdb_test_fdb_create_kv_blob() {\n"
+                "    assert_eq!(value_len(), 16);\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            (trace / "workflow_state.json").write_text(
+                json.dumps({
+                    "current_stage": "BUILD_TEST_REPAIR",
+                    "checkpoint": "BUILD_TEST_REPAIR",
+                    "test_failure_triage_required": False,
+                }),
+                encoding="utf-8",
+            )
+            (trace / "rust_test_mapping.json").write_text(
+                json.dumps({
+                    "scenarios": [
+                        {
+                            "rust_test": "kvdb_test_fdb_create_kv_blob",
+                            "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+                            "coverage": "semantic",
+                            "validated_obligations": ["blob read returns bytes written"],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+            (trace / "c_test_model.json").write_text(json.dumps({"scorer_standard_cases": []}), encoding="utf-8")
+            (trace / "validation-matrix.json").write_text(json.dumps({"scenarios": []}), encoding="utf-8")
+
+            cargo_run = subprocess.run(
+                [sys.executable, str(cargo_capture), "--project", str(project), "--out", str(trace)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+            self.assertNotEqual(0, cargo_run.returncode)
+            triage_path = trace / "test-failure-triage.jsonl"
+            self.assertTrue(triage_path.is_file(), cargo_run.stdout)
+            triage = [json.loads(line) for line in triage_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(1, len(triage))
+            self.assertEqual("kvdb_test_fdb_create_kv_blob", triage[0]["failed_test"])
+            self.assertEqual("assertion_mismatch", triage[0]["failure_kind"])
+            self.assertEqual("test_oracle_suspect", triage[0]["classification"])
+            self.assertFalse(triage[0]["allow_src_edit"])
+            self.assertIn("flashDB_rust/tests", triage[0]["allowed_edit_scope"])
+            state = json.loads((trace / "workflow_state.json").read_text(encoding="utf-8"))
+            self.assertTrue(state["test_failure_triage_required"])
 
 
 if __name__ == "__main__":

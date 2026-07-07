@@ -53,6 +53,13 @@ VALID_DIAGNOSES = {
     "rust_test_migration_pending",
 }
 
+VALID_TEST_TRIAGE_CLASSIFICATIONS = {
+    "test_oracle_suspect",
+    "rust_impl_suspect",
+    "harness_suspect",
+    "insufficient_evidence",
+}
+
 
 def is_c_cross_owned_log_path(log_path: str) -> bool:
     candidate = Path(log_path)
@@ -74,6 +81,25 @@ def load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(data, dict):
         return None, f"{path} must contain a JSON object"
     return data, None
+
+
+def load_jsonl(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return None, f"missing {path.name}"
+    rows: list[dict[str, Any]] = []
+    for line_no, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError as exc:
+            return None, f"invalid JSONL in {path}:{line_no}: {exc}"
+        if not isinstance(data, dict):
+            return None, f"{path}:{line_no} must contain a JSON object"
+        rows.append(data)
+    return rows, None
 
 
 def contains_cjk(text: str) -> bool:
@@ -884,7 +910,38 @@ def check_build_test_repair(root: Path) -> list[str]:
     for name in ["cargo-build.log", "cargo-test.log", "08-build-test-repair.md"]:
         if not (root / "logs" / "trace" / name).exists():
             errors.append(f"missing logs/trace/{name}")
+    errors.extend(check_test_failure_triage(root, state))
     errors.extend(check_no_c_sources_in_src(root))
+    return errors
+
+
+def check_test_failure_triage(root: Path, state: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    triage_path = root / "logs" / "trace" / "test-failure-triage.jsonl"
+    triage_required = bool(state.get("test_failure_triage_required"))
+    if not triage_required and not triage_path.exists():
+        return errors
+
+    rows, rows_error = load_jsonl(triage_path)
+    if rows_error:
+        return [f"test-failure-triage.jsonl: {rows_error}"]
+    if not rows:
+        return ["test-failure-triage.jsonl must contain at least one triage record when test failure triage is required"]
+
+    for index, row in enumerate(rows, start=1):
+        classification = row.get("classification")
+        if classification not in VALID_TEST_TRIAGE_CLASSIFICATIONS:
+            errors.append(f"test-failure-triage.jsonl record {index} has invalid classification")
+        evidence_paths = row.get("evidence_paths")
+        if not isinstance(evidence_paths, list) or not evidence_paths:
+            errors.append(f"test-failure-triage.jsonl record {index} must include evidence_paths")
+        allowed_edit_scope = row.get("allowed_edit_scope")
+        if not isinstance(allowed_edit_scope, list) or not allowed_edit_scope:
+            errors.append(f"test-failure-triage.jsonl record {index} must include allowed_edit_scope")
+        if not isinstance(row.get("allow_src_edit"), bool):
+            errors.append(f"test-failure-triage.jsonl record {index} must include boolean allow_src_edit")
+        if classification == "test_oracle_suspect" and row.get("allow_src_edit"):
+            errors.append("test_oracle_suspect triage records must not allow src edits")
     return errors
 
 
