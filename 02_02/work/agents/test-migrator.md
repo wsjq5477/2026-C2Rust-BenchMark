@@ -24,7 +24,9 @@ permission:
 - 根据 `logs/trace/rust_api_design.json` 使用固定 Rust API 编写测试；
 - 生成 `flashDB_rust/tests/kvdb_tests.rs`、`flashDB_rust/tests/tsdb_tests.rs`、`flashDB_rust/tests/equivalence_tests.rs`；
 - 维护 `logs/trace/rust_test_mapping.json`；
-- 覆盖 `work/knowledge/flashdb-test-map.md` 中的 24 个标准场景。
+- 以 `c_test_model.json.standard_scenarios` 为唯一场景集合，逐项一一迁移；
+- 根据每项 `semantic_facts` 中的 C API 调用、辅助调用和断言事实完善 Rust 测试；
+- 清除对应 `MIGRATION_PENDING` 后，才可把该项 mapping 的 `coverage` 改为 `semantic`。
 
 ## 禁止事项
 
@@ -32,3 +34,5 @@ permission:
 - 不得删除测试。
 - 不得弱化断言。
 - 不得把测试改成恒真。
+- 不得写死标准用例数量。
+- 不得只修改 mapping 状态而保留 `MIGRATION_PENDING`。

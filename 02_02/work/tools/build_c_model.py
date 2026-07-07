@@ -122,8 +122,49 @@ def extract_functions(text: str, file_name: str) -> list[dict[str, str]]:
 
 
 def extract_registered_tests(text: str) -> list[str]:
-    names = re.findall(r"\bTEST_RUN\s*\(\s*(" + IDENT + r")\s*\)", text)
-    return sorted(dict.fromkeys(names))
+    return re.findall(r"\bTEST_RUN\s*\(\s*(" + IDENT + r")\s*\)", text)
+
+
+def extract_function_bodies(text: str) -> dict[str, str]:
+    clean = strip_comments(text)
+    pattern = re.compile(r"\b(test_[A-Za-z0-9_]+)\s*\([^;{}]*\)\s*\{")
+    bodies: dict[str, str] = {}
+    for match in pattern.finditer(clean):
+        depth = 1
+        cursor = match.end()
+        while cursor < len(clean) and depth:
+            if clean[cursor] == "{":
+                depth += 1
+            elif clean[cursor] == "}":
+                depth -= 1
+            cursor += 1
+        if depth == 0:
+            bodies[match.group(1)] = clean[match.end() : cursor - 1]
+    return bodies
+
+
+def extract_test_semantics(body: str) -> dict[str, Any]:
+    calls = sorted(
+        dict.fromkeys(
+            name
+            for name in re.findall(r"\b(" + IDENT + r")\s*\(", body)
+            if name not in CONTROL_WORDS
+        )
+    )
+    assertions = sorted(name for name in calls if "assert" in name.lower())
+    observed_symbols = sorted(name for name in calls if name.startswith("fdb_"))
+    helper_calls = sorted(
+        name
+        for name in calls
+        if name.startswith("test_") and name not in assertions
+    )
+    return {
+        "called_functions": calls,
+        "observed_c_symbols": observed_symbols,
+        "helper_calls": helper_calls,
+        "assertion_macros": assertions,
+        "assertion_count": sum(len(re.findall(r"\b" + re.escape(name) + r"\s*\(", body)) for name in assertions),
+    }
 
 
 def tag_test(name: str) -> list[str]:
@@ -137,6 +178,57 @@ def tag_test(name: str) -> list[str]:
         if keyword in lower:
             tags.append(keyword)
     return sorted(dict.fromkeys(tags))
+
+
+def scenario_suite(name: str, tags: list[str]) -> str:
+    if "kvdb" in tags:
+        return "kvdb"
+    if "tsdb" in tags:
+        return "tsdb"
+    lower = name.lower()
+    if "kv" in lower or "gc" in lower or "scale" in lower:
+        return "kvdb"
+    if "tsl" in lower or "tsdb" in lower:
+        return "tsdb"
+    return "extension"
+
+
+def build_standard_scenarios(
+    registered_invocations: list[dict[str, Any]],
+    scenario_tags: dict[str, list[str]],
+    test_semantics: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    scenarios: list[dict[str, Any]] = []
+    occurrences: dict[str, int] = {}
+    for index, invocation in enumerate(registered_invocations, start=1):
+        name = str(invocation["name"])
+        occurrences[name] = occurrences.get(name, 0) + 1
+        scenario_id = name if occurrences[name] == 1 else f"{name}__{occurrences[name]}"
+        tags = scenario_tags.get(name, tag_test(name))
+        suite = scenario_suite(name, tags)
+        scenarios.append(
+            {
+                "id": scenario_id,
+                "name": name,
+                "parent_test": name,
+                "suite": suite,
+                "source": "registered",
+                "source_file": invocation.get("source_file"),
+                "order": index,
+                "tags": tags,
+                "semantic_facts": test_semantics.get(
+                    name,
+                    {
+                        "called_functions": [],
+                        "observed_c_symbols": [],
+                        "helper_calls": [],
+                        "assertion_macros": [],
+                        "assertion_count": 0,
+                    },
+                ),
+            }
+        )
+    return scenarios
 
 
 def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -193,23 +285,33 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
 
     test_functions: list[str] = []
     registered_tests: list[str] = []
+    registered_invocations: list[dict[str, Any]] = []
     scenario_tags: dict[str, list[str]] = {}
+    test_semantics: dict[str, dict[str, Any]] = {}
     for file_name in test_files:
         path = root / file_name
         if not path.is_file():
             continue
         text = read_text(path)
         funcs = [item["name"] for item in extract_functions(text, file_name) if item["name"].startswith("test_")]
+        bodies = extract_function_bodies(text)
         test_functions.extend(funcs)
         registered = extract_registered_tests(text)
         registered_tests.extend(registered)
+        registered_invocations.extend(
+            {"name": name, "source_file": file_name, "source_index": index}
+            for index, name in enumerate(registered, start=1)
+        )
         for name in funcs + registered:
             scenario_tags[name] = tag_test(name)
+        for name, body in bodies.items():
+            test_semantics[name] = extract_test_semantics(body)
 
     test_functions = sorted(dict.fromkeys(test_functions))
     registered_tests = sorted(dict.fromkeys(registered_tests))
     kvdb_tests = sorted([name for name in registered_tests if "kvdb" in tag_test(name)])
     tsdb_tests = sorted([name for name in registered_tests if "tsdb" in tag_test(name)])
+    standard_scenarios = build_standard_scenarios(registered_invocations, scenario_tags, test_semantics)
 
     c_project_model = {
         "source_root": str(root),
@@ -247,6 +349,9 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         "test_files": test_files,
         "test_functions": test_functions,
         "registered_tests": registered_tests,
+        "registered_test_invocations": registered_invocations,
+        "standard_scenarios": standard_scenarios,
+        "test_semantics": test_semantics,
         "kvdb_tests": kvdb_tests,
         "tsdb_tests": tsdb_tests,
         "scenario_tags": scenario_tags,

@@ -304,6 +304,31 @@ def check_build_c_model(root: Path) -> list[str]:
         errors.append("c_test_model.json kvdb_tests must be non-empty")
     if not test_model.get("tsdb_tests"):
         errors.append("c_test_model.json tsdb_tests must be non-empty")
+    scenarios = test_model.get("standard_scenarios")
+    if not isinstance(scenarios, list) or not scenarios:
+        errors.append("c_test_model.json standard_scenarios must be a non-empty list")
+    else:
+        scenario_ids = [
+            item.get("id")
+            for item in scenarios
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        ]
+        if len(scenario_ids) != len(scenarios):
+            errors.append("c_test_model.json every standard scenario must have a string id")
+        if len(set(scenario_ids)) != len(scenario_ids):
+            errors.append("c_test_model.json standard scenario ids must be unique")
+        registered = test_model.get("registered_tests")
+        scenario_parents = {
+            item.get("parent_test", item.get("name"))
+            for item in scenarios
+            if isinstance(item, dict)
+        }
+        registered_names = {item for item in registered if isinstance(item, str)} if isinstance(registered, list) else set()
+        missing_registered = sorted(registered_names - scenario_parents)
+        if missing_registered:
+            errors.append(
+                f"c_test_model.json standard_scenarios do not cover registered tests: {', '.join(missing_registered)}"
+            )
 
     stage_log = root / "logs" / "trace" / "03-build-c-model.md"
     if not stage_log.exists():
@@ -480,6 +505,71 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
     return errors
 
 
+def check_dynamic_test_mapping(root: Path) -> list[str]:
+    errors: list[str] = []
+    mapping, mapping_error = load_json(root / "logs" / "trace" / "rust_test_mapping.json")
+    if mapping_error:
+        return [f"rust_test_mapping.json: {mapping_error}"]
+    if "kvdb" not in mapping or "tsdb" not in mapping:
+        errors.append("rust_test_mapping.json must contain kvdb and tsdb sections")
+        return errors
+
+    test_model, test_model_error = load_json(root / "logs" / "trace" / "c_test_model.json")
+    if test_model_error:
+        return [f"c_test_model.json: {test_model_error}"]
+
+    c_scenarios = test_model.get("standard_scenarios")
+    rust_scenarios = mapping.get("scenarios")
+    if not isinstance(c_scenarios, list):
+        errors.append("c_test_model.json standard_scenarios must be a list")
+    if not isinstance(rust_scenarios, list):
+        errors.append("rust_test_mapping.json scenarios must be a list")
+    if not isinstance(c_scenarios, list) or not isinstance(rust_scenarios, list):
+        return errors
+
+    c_ids = {
+        item.get("id")
+        for item in c_scenarios
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    rust_ids = {
+        item.get("id")
+        for item in rust_scenarios
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    missing_ids = sorted(c_ids - rust_ids)
+    extra_ids = sorted(rust_ids - c_ids)
+    if missing_ids:
+        errors.append(f"missing Rust mappings for C scenarios: {', '.join(missing_ids)}")
+    if extra_ids:
+        errors.append(f"Rust mapping contains unknown C scenarios: {', '.join(extra_ids)}")
+    if len(rust_ids) != len(rust_scenarios):
+        errors.append("rust_test_mapping.json scenario ids must be present and unique")
+
+    incomplete = sorted(
+        str(item.get("id"))
+        for item in rust_scenarios
+        if isinstance(item, dict) and item.get("coverage") != "semantic"
+    )
+    if incomplete:
+        errors.append(f"Rust scenario mappings are not semantic: {', '.join(incomplete)}")
+    if mapping.get("total_scenarios") != len(c_ids):
+        errors.append("rust_test_mapping.json total_scenarios must equal extracted C scenario count")
+    unmapped = mapping.get("unmapped")
+    if isinstance(unmapped, list) and unmapped:
+        errors.append("rust_test_mapping.json unmapped must be empty for MIGRATE_TESTS")
+
+    project = root / "flashDB_rust"
+    pending_files = []
+    for rel_path in ["tests/kvdb_tests.rs", "tests/tsdb_tests.rs", "tests/equivalence_tests.rs"]:
+        path = project / rel_path
+        if path.exists() and "MIGRATION_PENDING" in path.read_text(encoding="utf-8", errors="ignore"):
+            pending_files.append(rel_path)
+    if pending_files:
+        errors.append(f"Rust tests still contain MIGRATION_PENDING markers: {', '.join(pending_files)}")
+    return errors
+
+
 def check_migrate_tests(root: Path) -> list[str]:
     errors = check_common_after_scaffold(root)
     required_stages = [
@@ -507,11 +597,7 @@ def check_migrate_tests(root: Path) -> list[str]:
             if "assert!" not in text and "assert_eq!" not in text:
                 errors.append(f"flashDB_rust/{rel_path} must contain assertions")
 
-    mapping, mapping_error = load_json(root / "logs" / "trace" / "rust_test_mapping.json")
-    if mapping_error:
-        errors.append(f"rust_test_mapping.json: {mapping_error}")
-    elif "kvdb" not in mapping or "tsdb" not in mapping:
-        errors.append("rust_test_mapping.json must contain kvdb and tsdb sections")
+    errors.extend(check_dynamic_test_mapping(root))
 
     if not (root / "logs" / "trace" / "07-migrate-tests.md").exists():
         errors.append("missing logs/trace/07-migrate-tests.md")
@@ -576,6 +662,7 @@ def check_report_and_verify(root: Path) -> list[str]:
         errors.append("workflow_state.json current_stage must be DONE for final report")
     if state.get("build_status") != "pass" or state.get("test_status") != "pass":
         errors.append("workflow_state.json build_status and test_status must be pass")
+    errors.extend(check_dynamic_test_mapping(root))
 
     ratio, ratio_error = load_json(root / "logs" / "trace" / "unsafe-ratio.json")
     if ratio_error:

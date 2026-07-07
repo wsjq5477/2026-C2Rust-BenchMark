@@ -32,13 +32,15 @@ This stage records facts only:
 - public C functions;
 - struct, typedef, enum, enum value, and macro names;
 - registered KVDB and TSDB test functions.
+- dynamic `standard_scenarios` derived from the current C test registry;
+- per-scenario static semantic facts: source file, C API calls, helper calls, and assertion macros.
 
 Boundary:
 
 - 不做 Clang AST；
 - 不做宏展开；
 - 不做完整调用图；
-- 不解析函数体业务语义；
+- 不做完整函数体业务语义解释，但允许抽取测试函数中的调用和断言事实；
 - 不做 Rust API 决策。
 
 Do not design `FlashStorage`, `KvDb`, `TsDb`, or any Rust public API in this stage.

@@ -1,0 +1,20 @@
+* text=auto
+
+*.c text
+*.cc text
+*.cpp text
+*.h text
+*.htm text
+*.html text
+*.in text
+*.ld text
+*.mak text
+*.mk text
+*.md text
+*.py text
+*.sh text
+*.txt text
+*.xml text
+Makefile text
+AUTHORS text
+COPYING text

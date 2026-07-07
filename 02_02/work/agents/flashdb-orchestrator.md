@@ -192,7 +192,6 @@ python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
 
 ```bash
 python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json
-python3 work/tools/gate.py --stage MIGRATE_TESTS
 ```
 
 写入：
@@ -202,6 +201,12 @@ python3 work/tools/gate.py --stage MIGRATE_TESTS
 - `flashDB_rust/tests/equivalence_tests.rs`
 - `logs/trace/rust_test_mapping.json`
 - 中文 `logs/trace/07-migrate-tests.md`
+
+`migrate_tests.py` 只生成逐场景 baseline，并标记 `MIGRATION_PENDING` / `coverage: pending`。主控或 `test-migrator` 必须根据 `c_test_model.json.standard_scenarios[*].semantic_facts` 完成每个场景，清除 pending 标记并更新为 `coverage: semantic`，然后运行：
+
+```bash
+python3 work/tools/gate.py --stage MIGRATE_TESTS
+```
 
 ## BUILD_TEST_REPAIR
 

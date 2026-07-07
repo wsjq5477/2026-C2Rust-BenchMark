@@ -404,6 +404,53 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertIn("test_fdb_tsl_iter_by_time", test_model["registered_tests"])
         self.assertIn("test_fdb_gc", test_model["kvdb_tests"])
         self.assertIn("test_fdb_tsl_iter_by_time", test_model["tsdb_tests"])
+        scenarios = test_model["standard_scenarios"]
+        scenario_ids = [scenario["id"] for scenario in scenarios]
+        self.assertEqual(len(scenarios), len(set(scenario_ids)))
+        self.assertEqual(len(test_model["registered_test_invocations"]), len(scenarios))
+        self.assertGreaterEqual(len(scenarios), len(test_model["registered_tests"]))
+        self.assertIn("test_fdb_gc", scenario_ids)
+        self.assertIn("test_fdb_tsl_iter_by_time", scenario_ids)
+        gc = next(scenario for scenario in scenarios if scenario["id"] == "test_fdb_gc")
+        self.assertEqual("kvdb", gc["suite"])
+        self.assertIn("gc", gc["tags"])
+        self.assertEqual("tests/fdb_kvdb_tc.c", gc["source_file"])
+        self.assertIsInstance(gc["semantic_facts"]["called_functions"], list)
+        self.assertIsInstance(gc["semantic_facts"]["observed_c_symbols"], list)
+
+    def test_build_c_model_extracts_test_semantic_facts_without_fixed_case_list(self):
+        builder = load_tool("build_c_model.py")
+        bodies = builder.extract_function_bodies(
+            """
+            static void test_dynamic_case(void) {
+                fdb_kv_set(&db, "k", "v");
+                test_helper();
+                TEST_ASSERT_EQUAL(FDB_NO_ERR, result);
+            }
+            """
+        )
+        self.assertEqual(["test_dynamic_case"], list(bodies))
+        facts = builder.extract_test_semantics(bodies["test_dynamic_case"])
+        self.assertIn("fdb_kv_set", facts["observed_c_symbols"])
+        self.assertIn("test_helper", facts["helper_calls"])
+        self.assertEqual(["TEST_ASSERT_EQUAL"], facts["assertion_macros"])
+        self.assertEqual(1, facts["assertion_count"])
+        invocations = builder.extract_registered_tests(
+            "TEST_RUN(test_dynamic_case); TEST_RUN(test_dynamic_case); TEST_RUN(test_other);"
+        )
+        self.assertEqual(["test_dynamic_case", "test_dynamic_case", "test_other"], invocations)
+        scenarios = builder.build_standard_scenarios(
+            [
+                {"name": name, "source_file": "tests/main.c", "source_index": index}
+                for index, name in enumerate(invocations, start=1)
+            ],
+            {},
+            {},
+        )
+        self.assertEqual(
+            ["test_dynamic_case", "test_dynamic_case__2", "test_other"],
+            [scenario["id"] for scenario in scenarios],
+        )
 
     def test_build_c_model_cli_writes_three_models(self):
         scanner = load_tool("scan_c_project.py")
@@ -506,6 +553,15 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 "registered_tests": ["test_fdb_gc"],
                 "kvdb_tests": ["test_fdb_gc"],
                 "tsdb_tests": ["test_fdb_tsl_iter_by_time"],
+                "standard_scenarios": [
+                    {
+                        "id": "test_fdb_gc",
+                        "name": "test_fdb_gc",
+                        "suite": "kvdb",
+                        "source": "registered",
+                        "tags": ["kvdb", "gc"],
+                    }
+                ],
                 "scenario_tags": {"test_fdb_gc": ["kvdb", "gc"]},
             }), encoding="utf-8")
             (root / "logs" / "trace" / "03-build-c-model.md").write_text("# model\n", encoding="utf-8")
@@ -675,6 +731,22 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 "tsdb_tests": ["test_fdb_tsl_append"],
                 "extension_tests": [],
                 "unclassified_tests": [],
+                "standard_scenarios": [
+                    {
+                        "id": "test_fdb_kv_set_get",
+                        "name": "test_fdb_kv_set_get",
+                        "suite": "kvdb",
+                        "source": "registered",
+                        "tags": ["kvdb", "set", "get"],
+                    },
+                    {
+                        "id": "test_fdb_tsl_append",
+                        "name": "test_fdb_tsl_append",
+                        "suite": "tsdb",
+                        "source": "registered",
+                        "tags": ["tsdb", "append"],
+                    },
+                ],
             }
             design_path = root / "rust_api_design.json"
             test_model_path = root / "c_test_model.json"
@@ -714,8 +786,19 @@ class FrameworkCheckpointTests(unittest.TestCase):
             mapping = json.loads((root / "rust_test_mapping.json").read_text(encoding="utf-8"))
             self.assertIn("kvdb", mapping)
             self.assertIn("tsdb", mapping)
+            self.assertEqual(2, mapping["total_scenarios"])
+            self.assertEqual([], mapping["unmapped"])
+            self.assertEqual(
+                ["test_fdb_kv_set_get", "test_fdb_tsl_append"],
+                [scenario["id"] for scenario in mapping["scenarios"]],
+            )
+            self.assertTrue(all(scenario["coverage"] == "pending" for scenario in mapping["scenarios"]))
             self.assertTrue((root / "flashDB_rust" / "tests" / "kvdb_tests.rs").is_file())
             self.assertTrue((root / "flashDB_rust" / "tests" / "tsdb_tests.rs").is_file())
+            self.assertIn(
+                "MIGRATION_PENDING",
+                (root / "flashDB_rust" / "tests" / "kvdb_tests.rs").read_text(encoding="utf-8"),
+            )
 
             cargo_test = subprocess.run(
                 ["cargo", "test", "--quiet"],
@@ -725,6 +808,96 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(0, cargo_test.returncode, cargo_test.stdout)
+
+    def test_gate_migrate_tests_rejects_missing_dynamic_scenario_mapping(self):
+        gate = PROJECT / "work" / "tools" / "gate.py"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            project = root / "flashDB_rust"
+            (root / "result" / "issues").mkdir(parents=True)
+            trace.mkdir(parents=True)
+            (root / "logs" / "interaction.md").write_text("", encoding="utf-8")
+            (project / "tests").mkdir(parents=True)
+            for rel_path in ["tests/kvdb_tests.rs", "tests/tsdb_tests.rs", "tests/equivalence_tests.rs"]:
+                (project / rel_path).write_text("#[test]\nfn sample() { assert!(true); }\n", encoding="utf-8")
+            state = {
+                "current_stage": "MIGRATE_TESTS",
+                "completed_stages": [
+                    "BOOTSTRAP",
+                    "INIT_WORKSPACE",
+                    "READ_C_PROJECT",
+                    "BUILD_C_MODEL",
+                    "DESIGN_RUST_API",
+                    "GENERATE_RUST_SCAFFOLD",
+                    "REWRITE_CORE_MODULES",
+                    "MIGRATE_TESTS",
+                ],
+                "checkpoint": "MIGRATE_TESTS",
+                "rust_project_path": "flashDB_rust",
+                "input_path_candidates": ["/app/code/judge-assets/02_02_c_to_rust/code/FlashDB"],
+                "input_path": "/tmp/fake/FlashDB",
+                "input_manifest": "logs/trace/input_manifest.json",
+                "c_project_model": "logs/trace/c_project_model.json",
+                "c_api_model": "logs/trace/c_api_model.json",
+                "c_test_model": "logs/trace/c_test_model.json",
+                "rust_api_design": "logs/trace/rust_api_design.json",
+                "rust_test_mapping": "logs/trace/rust_test_mapping.json",
+                "build_status": "not_started",
+                "test_status": "not_started",
+                "unsafe_ratio": None,
+                "repair_rounds": 0,
+                "blocked_issues": [],
+            }
+            (trace / "workflow_state.json").write_text(json.dumps(state), encoding="utf-8")
+            for name in [
+                "01-init-workspace.md",
+                "02-read-c-project.md",
+                "03-build-c-model.md",
+                "04-design-rust-api.md",
+                "05-generate-rust-scaffold.md",
+                "06-rewrite-core-modules.md",
+                "07-migrate-tests.md",
+                "input_manifest.json",
+                "c_project_model.json",
+                "c_api_model.json",
+                "rust_api_design.json",
+            ]:
+                (trace / name).write_text("{}" if name.endswith(".json") else "# 阶段\n", encoding="utf-8")
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "kvdb_tests": ["test_fdb_gc"],
+                "tsdb_tests": ["test_fdb_tsl_append"],
+                "standard_scenarios": [
+                    {"id": "test_fdb_gc", "name": "test_fdb_gc", "suite": "kvdb", "tags": ["kvdb", "gc"]},
+                    {"id": "test_fdb_tsl_append", "name": "test_fdb_tsl_append", "suite": "tsdb", "tags": ["tsdb", "append"]},
+                ],
+            }), encoding="utf-8")
+            (trace / "rust_test_mapping.json").write_text(json.dumps({
+                "kvdb": ["test_fdb_gc"],
+                "tsdb": [],
+                "extension": [],
+                "unmapped": [],
+                "total_scenarios": 1,
+                "scenarios": [
+                    {
+                        "id": "test_fdb_gc",
+                        "name": "test_fdb_gc",
+                        "suite": "kvdb",
+                        "rust_test": "kvdb_test_fdb_gc",
+                        "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+                        "coverage": "semantic",
+                    }
+                ],
+            }), encoding="utf-8")
+
+            missing = subprocess.run(
+                [sys.executable, str(gate), "--stage", "MIGRATE_TESTS", "--root", str(root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertNotEqual(0, missing.returncode)
+            self.assertIn("missing Rust mappings for C scenarios: test_fdb_tsl_append", missing.stdout)
 
     def test_cargo_capture_unsafe_ratio_report_and_final_gate(self):
         scaffold = PROJECT / "work" / "tools" / "generate_rust_scaffold.py"
@@ -755,7 +928,13 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 "unmapped_symbols": [],
                 "excluded_sources": [],
             }
-            test_model = {"kvdb_tests": [], "tsdb_tests": [], "extension_tests": [], "unclassified_tests": []}
+            test_model = {
+                "kvdb_tests": [],
+                "tsdb_tests": [],
+                "extension_tests": [],
+                "unclassified_tests": [],
+                "standard_scenarios": [],
+            }
             (trace / "rust_api_design.json").write_text(json.dumps(design), encoding="utf-8")
             (trace / "c_test_model.json").write_text(json.dumps(test_model), encoding="utf-8")
             for name in ["c_project_model.json", "c_api_model.json", "input_manifest.json"]:
@@ -786,6 +965,19 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 stderr=subprocess.STDOUT,
                 text=True,
             )
+            mapping_path = trace / "rust_test_mapping.json"
+            mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+            for scenario in mapping["scenarios"]:
+                scenario["coverage"] = "semantic"
+            mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
+            for test_file in [
+                root / "flashDB_rust" / "tests" / "kvdb_tests.rs",
+                root / "flashDB_rust" / "tests" / "tsdb_tests.rs",
+            ]:
+                test_file.write_text(
+                    test_file.read_text(encoding="utf-8").replace("    // MIGRATION_PENDING:", "    // Migrated:"),
+                    encoding="utf-8",
+                )
             cargo_run = subprocess.run(
                 [sys.executable, str(cargo_capture), "--project", str(root / "flashDB_rust"), "--out", str(trace)],
                 stdout=subprocess.PIPE,

@@ -69,10 +69,13 @@ def design_api(
     symbols = available_symbols(c_api_model)
     kvdb_tests = c_test_model.get("kvdb_tests", [])
     tsdb_tests = c_test_model.get("tsdb_tests", [])
+    standard_scenarios = c_test_model.get("standard_scenarios", [])
     if not isinstance(kvdb_tests, list):
         kvdb_tests = []
     if not isinstance(tsdb_tests, list):
         tsdb_tests = []
+    if not isinstance(standard_scenarios, list):
+        standard_scenarios = []
 
     kvdb_api = [
         api_item(
@@ -268,6 +271,7 @@ def design_api(
         "test_api": {
             "kvdb_tests": kvdb_tests,
             "tsdb_tests": tsdb_tests,
+            "standard_scenarios": standard_scenarios,
             "rust_test_files": ["kvdb_tests.rs", "tsdb_tests.rs", "equivalence_tests.rs"],
             "migration_strategy": "Translate C registered tests into Rust integration tests against the safe API.",
         },
