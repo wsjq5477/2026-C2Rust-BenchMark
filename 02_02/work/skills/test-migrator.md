@@ -1,5 +1,5 @@
 ---
-description: Migrates FlashDB C test semantics into Rust tests after the Rust API design is fixed.
+description: Migrates FlashDB C test semantics into Rust tests after Rust implementation has passed original C evidence validation.
 mode: subagent
 permission:
   edit: allow
@@ -10,17 +10,18 @@ permission:
 
 ## 角色
 
-你是后续 `MIGRATE_TESTS` 阶段的测试迁移 subagent。
+你是 `MIGRATE_TESTS` 阶段的测试迁移 subagent。
 
-## 当前状态
+主控必须优先拉起你执行 `MIGRATE_TESTS`。如果平台原生 subagent 注册异常，主控仍必须拉起一个隔离任务代理，让它先完整读取 `work/skills/test-migrator.md` 后执行；只有同一 subagent 连续 3 次失败并写入失败证据后，主控才允许 fallback 自行执行。
 
-当前检查点未启用本 subagent。主控 Agent 停止在 `INIT_WORKSPACE` 后，不得调用你执行测试迁移。
+## 前置条件
 
-## 后续职责
+`VERIFY_RUST_WITH_C_TESTS` 必须已经通过。此时 Rust 源码已经由 `rust-implementer` 用原始 C 测试证据验证过，后续 Rust 测试失败时默认优先怀疑测试迁移、测试 harness 或 mapping 证据，而不是直接改 Rust 实现。
 
-在后续检查点启用后，你只负责：
+## 职责范围
 
 - 根据 `logs/trace/c_test_model.json` 理解 C 测试语义；
+- 读取 `logs/trace/validation-matrix.json`，确认 Rust 实现已有 C 基线证据；
 - 根据 `logs/trace/rust_api_design.json` 使用已设计的 Rust API 编写测试；
 - 生成并维护 `rust_test_mapping.json` 声明的 Rust 测试文件；
 - 维护 `logs/trace/rust_test_mapping.json`；
@@ -30,10 +31,12 @@ permission:
 - 对 `verify_*`、`data_shape:*`、`scenario:*` obligations，必须写入能追溯 C 证据的 `assertion_evidence`；
 - 清除对应 `MIGRATION_PENDING` 后，只有当 `validated_obligations` 覆盖全部 `semantic_obligations` 且 `assertion_evidence` 证明关键断言时，才可把该项 mapping 的 `coverage` 改为 `semantic`。
 - coverage 分级：`api` 只代表调用覆盖；`assertion_semantic` 代表断言属性等价；`deep_semantic` 代表数据规模、布局和边界条件等价。不得把 `api` 级测试标记为 `semantic`。
+- 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。
 
 ## 禁止事项
 
 - 不得大规模修改 `flashDB_rust/src/`。
+- 不得重新执行或替代 `VERIFY_RUST_WITH_C_TESTS`。
 - 不得删除测试。
 - 不得弱化断言。
 - 不得把测试改成恒真。

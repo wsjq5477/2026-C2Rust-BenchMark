@@ -61,6 +61,13 @@ VALID_TEST_TRIAGE_CLASSIFICATIONS = {
     "insufficient_evidence",
 }
 
+REQUIRED_SUBAGENTS = {
+    "c-analyzer": ["READ_C_PROJECT", "BUILD_C_MODEL", "DESIGN_RUST_API"],
+    "rust-implementer": ["GENERATE_RUST_SCAFFOLD", "REWRITE_CORE_MODULES", "VERIFY_RUST_WITH_C_TESTS"],
+    "test-migrator": ["MIGRATE_TESTS"],
+    "repairer": ["BUILD_TEST_REPAIR"],
+}
+
 
 def collect_obligations(test_model: dict[str, Any]) -> set[str]:
     obligations: set[str] = set()
@@ -155,6 +162,65 @@ def load_jsonl(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:
 
 def contains_cjk(text: str) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
+def check_subagent_evidence(root: Path) -> list[str]:
+    errors: list[str] = []
+    trace = root / "logs" / "trace"
+    registry, registry_error = load_json(trace / "agent-registry.json")
+    if registry_error:
+        errors.append(f"agent-registry.json: {registry_error}")
+    else:
+        agents = registry.get("subagents")
+        if isinstance(agents, dict):
+            agent_items = agents
+        elif isinstance(agents, list):
+            agent_items = {
+                item.get("name"): item for item in agents if isinstance(item, dict) and isinstance(item.get("name"), str)
+            }
+        else:
+            agent_items = {}
+        for name, stages in REQUIRED_SUBAGENTS.items():
+            entry = agent_items.get(name)
+            if not isinstance(entry, dict):
+                errors.append(f"agent-registry.json missing subagent {name}")
+                continue
+            path = entry.get("path")
+            if path != f"work/skills/{name}.md":
+                errors.append(f"agent-registry.json {name} path must be work/skills/{name}.md")
+            if entry.get("mode") != "subagent":
+                errors.append(f"agent-registry.json {name} mode must be subagent")
+            entry_stages = entry.get("stages")
+            if not isinstance(entry_stages, list) or not set(stages).issubset(set(entry_stages)):
+                errors.append(f"agent-registry.json {name} stages must include {', '.join(stages)}")
+
+    rows, rows_error = load_jsonl(trace / "subagent-invocations.jsonl")
+    if rows_error:
+        errors.append(f"subagent-invocations.jsonl: {rows_error}")
+    else:
+        seen: set[str] = set()
+        allowed_modes = {"native", "isolated_proxy", "primary_fallback"}
+        for index, row in enumerate(rows, start=1):
+            agent = row.get("agent")
+            if agent in REQUIRED_SUBAGENTS:
+                seen.add(agent)
+            if row.get("mode") not in allowed_modes:
+                errors.append(f"subagent-invocations.jsonl record {index} has invalid mode")
+            if not isinstance(row.get("stage"), str) or not row.get("stage"):
+                errors.append(f"subagent-invocations.jsonl record {index} must include stage")
+            if not isinstance(row.get("status"), str) or not row.get("status"):
+                errors.append(f"subagent-invocations.jsonl record {index} must include status")
+            if row.get("mode") == "primary_fallback":
+                failures = row.get("consecutive_failures")
+                if not isinstance(failures, int) or failures < 3:
+                    errors.append("primary_fallback records must include consecutive_failures >= 3")
+                reason = row.get("fallback_to_primary_reason")
+                if not isinstance(reason, str) or not reason.strip():
+                    errors.append("primary_fallback records must include fallback_to_primary_reason")
+        missing = sorted(set(REQUIRED_SUBAGENTS) - seen)
+        if missing:
+            errors.append(f"subagent-invocations.jsonl missing records for: {', '.join(missing)}")
+    return errors
 
 
 def check_init_workspace(root: Path) -> list[str]:
@@ -787,7 +853,7 @@ def check_verify_rust_with_c_tests(root: Path) -> list[str]:
     errors.extend(state_errors)
     if state is None:
         return errors
-    errors.extend(check_validation_matrix(root, allow_not_supported=True))
+    errors.extend(check_validation_matrix(root, allow_not_supported=False))
     if not (root / "logs" / "trace" / "06-5-verify-rust-with-c-tests.md").exists():
         errors.append("missing logs/trace/06-5-verify-rust-with-c-tests.md")
     errors.extend(check_no_c_sources_in_src(root))
@@ -1055,6 +1121,7 @@ def check_report_and_verify(root: Path) -> list[str]:
     errors.extend(check_validation_matrix(root, allow_not_supported=True))
     errors.extend(check_dynamic_test_mapping(root))
     errors.extend(check_test_consistency(root))
+    errors.extend(check_subagent_evidence(root))
 
     ratio, ratio_error = load_json(root / "logs" / "trace" / "unsafe-ratio.json")
     if ratio_error:

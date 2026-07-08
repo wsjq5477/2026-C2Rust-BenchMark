@@ -22,15 +22,15 @@
 
 ## 分层原则
 
-1. **事实与决策分离**：`BUILD_C_MODEL` 只抽取 C 工程事实，`DESIGN_RUST_API` 才做 Rust API 决策。
+1. **C 事实与 API 设计同一上下文**：`READ_C_PROJECT`、`BUILD_C_MODEL`、`DESIGN_RUST_API` 由 `c-analyzer` 串行执行，避免重复读取 C 工程。
 2. **代码生成与语义实现分离**：`GENERATE_RUST_SCAFFOLD` 只生成项目骨架，`REWRITE_CORE_MODULES` 才实现业务逻辑。
-3. **C 测试基线先验证实现**：`VERIFY_RUST_WITH_C_TESTS` 在测试迁移前用原始 C 测试证据验证 Rust core，失败优先修实现或 C ABI facade。
+3. **C 测试基线属于实现完成条件**：`VERIFY_RUST_WITH_C_TESTS` 由 `rust-implementer` 执行，在测试迁移前用原始 C 测试证据验证 Rust core，失败优先修实现或 C ABI facade。
 4. **测试迁移独立验收**：`MIGRATE_TESTS` 只负责测试语义覆盖，不大规模修改 core。
 5. **修复闭环独立**：`BUILD_TEST_REPAIR` 用 cargo 错误栈最小修复，禁止删除测试或弱化断言。
 6. **报告只收口**：`REPORT_AND_VERIFY` 汇总证据，不补写缺失实现。
 7. **核心域是下限，不是上限**：KVDB/TSDB/FlashStorage 必须覆盖，但真实 FlashDB 新增文件、目录和符号也必须被记录、分类、映射或显式排除。
 8. **构建检查前移**：`GENERATE_RUST_SCAFFOLD` 后立即 `cargo check`，`REWRITE_CORE_MODULES` 每个实现批次后 `cargo check`，避免把骨架错误和核心实现错误堆到 `BUILD_TEST_REPAIR`。
-9. **主控判定、subagent 修复**：cargo 命令和 gate 由 `flashdb-orchestrator` 执行并归档；`repairer` 只在失败后做最小修复，修复后必须由主控复验。
+9. **主控判定、subagent 执行**：重阶段优先由 `c-analyzer`、`rust-implementer`、`test-migrator`、`repairer` 执行；主控只做调度、状态推进、gate 和最终报告。连续 3 次 subagent 失败后才允许主控 fallback。
 
 ## 统一产物约定
 
@@ -41,6 +41,8 @@ logs/trace/workflow_state.json
 logs/trace/<stage-log>.md
 result/output.md
 result/issues/00-summary.md
+logs/trace/agent-registry.json
+logs/trace/subagent-invocations.jsonl
 ```
 
 每个阶段成功后，`workflow_state.json.current_stage` 应等于当前阶段名，`completed_stages` 应包含从 `BOOTSTRAP` 到当前阶段的连续阶段。

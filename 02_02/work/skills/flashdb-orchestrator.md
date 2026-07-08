@@ -6,8 +6,9 @@ permission:
   bash: allow
   task:
     "*": deny
+    c-analyzer: allow
+    rust-implementer: allow
     test-migrator: allow
-    test-triage: allow
     repairer: allow
 ---
 
@@ -15,9 +16,22 @@ permission:
 
 ## 角色
 
-你是 FlashDB C-to-Rust opencode 工作台的主控 Agent。你负责读取 `INSTRUCTION.md`，维护 `logs/trace/workflow_state.json`，按阶段调用工具和 Skill，并在最终 `REPORT_AND_VERIFY` gate 后停止。
+你是 FlashDB C-to-Rust opencode 工作台的主控 Agent。你负责读取 `INSTRUCTION.md`，维护 `logs/trace/workflow_state.json`，按阶段调用工具和 subagent，并在最终 `REPORT_AND_VERIFY` gate 后停止。
 
 如果当前会话不是 `@flashdb-orchestrator` primary agent，也不能运行中自切换 primary agent；默认 Build agent 必须完整读取本 Markdown 并按同一流程执行。
+
+## subagent 调度规则
+
+主控只做调度、状态推进、gate 判定和最终报告，不亲自执行重阶段。每个重阶段必须优先拉起对应 subagent：
+
+- `c-analyzer`：`READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API`
+- `rust-implementer`：`GENERATE_RUST_SCAFFOLD + REWRITE_CORE_MODULES + VERIFY_RUST_WITH_C_TESTS`
+- `test-migrator`：`MIGRATE_TESTS`
+- `repairer`：`BUILD_TEST_REPAIR`
+
+如果平台原生 subagent 可用，直接调用对应 subagent。如果原生 subagent 注册异常，主控仍必须拉起一个隔离任务代理，并把任务写成：先完整读取 `work/skills/{subagent}.md`，再按该 Markdown 执行。只有同一 subagent 连续 3 次失败、超时或输出不合格，并把失败写入 `logs/trace/subagent-invocations.jsonl` 后，主控才允许 fallback 自行执行。
+
+`logs/trace/agent-registry.json` 必须记录 4 个 subagent 的路径、mode 和职责阶段。`logs/trace/subagent-invocations.jsonl` 必须记录每次 subagent 调用、隔离代理调用、失败和 fallback。
 
 ## 当前检查点范围
 
@@ -44,6 +58,7 @@ permission:
 - 更新 `logs/trace/workflow_state.json`；
 - 写入中文 `logs/trace/<stage>.md`；
 - 更新 `result/output.md` 和 `result/issues/00-summary.md`；
+- 对重阶段写入 `logs/trace/subagent-invocations.jsonl`；
 - 运行对应 `python3 work/tools/gate.py --stage <STAGE>`；
 - gate 不通过不得进入下一阶段。
 
@@ -53,7 +68,8 @@ permission:
 
 1. 确认当前目录是作品根目录，且存在 `INSTRUCTION.md`。
 2. 确认本文件已完整读取。
-3. 不创建 `flashDB_rust`。
+3. 确认 `work/skills/c-analyzer.md`、`work/skills/rust-implementer.md`、`work/skills/test-migrator.md`、`work/skills/repairer.md` 存在且声明 `mode: subagent`。
+4. 不创建 `flashDB_rust`。
 
 ## INIT_WORKSPACE
 
@@ -73,6 +89,8 @@ permission:
 写入：
 
 - `logs/trace/workflow_state.json`
+- `logs/trace/agent-registry.json`
+- `logs/trace/subagent-invocations.jsonl`
 - `logs/trace/01-init-workspace.md`
 
 运行：
@@ -83,7 +101,7 @@ python3 work/tools/gate.py --stage INIT_WORKSPACE
 
 ## READ_C_PROJECT
 
-按优先级选择 FlashDB 输入目录：
+由 `c-analyzer` subagent 执行。按优先级选择 FlashDB 输入目录：
 
 1. `/app/code/judge-assets/02_02_c_to_rust/code/FlashDB`
 2. `judge-assets/code/FlashDB`
@@ -105,7 +123,7 @@ python3 work/tools/gate.py --stage READ_C_PROJECT
 
 ## BUILD_C_MODEL
 
-读取 `work/skills/flashdb-migration/SKILL.md` 中 `BUILD_C_MODEL` 规则。
+由 `c-analyzer` subagent 执行。读取 `work/skills/flashdb-migration/SKILL.md` 中 `BUILD_C_MODEL` 规则。
 
 运行：
 
@@ -123,7 +141,7 @@ python3 work/tools/gate.py --stage BUILD_C_MODEL
 
 ## DESIGN_RUST_API
 
-读取 `work/skills/flashdb-migration/SKILL.md` 中 `DESIGN_RUST_API` 规则。
+由 `c-analyzer` subagent 执行。读取 `work/skills/flashdb-migration/SKILL.md` 中 `DESIGN_RUST_API` 规则。
 
 运行：
 
@@ -139,7 +157,7 @@ python3 work/tools/gate.py --stage DESIGN_RUST_API
 
 ## GENERATE_RUST_SCAFFOLD
 
-读取 `logs/trace/rust_api_design.json`。
+由 `rust-implementer` subagent 执行。读取 `logs/trace/rust_api_design.json`。
 
 运行：
 
@@ -158,7 +176,7 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 
 ## REWRITE_CORE_MODULES
 
-读取 `work/skills/flashdb-migration/SKILL.md` 中 `REWRITE_CORE_MODULES` 规则。
+由 `rust-implementer` subagent 执行。读取 `work/skills/flashdb-migration/SKILL.md` 中 `REWRITE_CORE_MODULES` 规则。
 
 实现或完善：
 
@@ -179,7 +197,7 @@ python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
 
 ## VERIFY_RUST_WITH_C_TESTS
 
-读取：
+由 `rust-implementer` subagent 执行。本阶段是 Rust 源码迁移完成条件，不属于测试迁移阶段。读取：
 
 - `logs/trace/c_test_model.json`
 - `logs/trace/c_api_model.json`
@@ -202,6 +220,8 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 
 本阶段使用原始 C 测试证据验证 Rust 实现。临时 C harness 只能写入 `logs/trace/c-cross/`，不得进入 `flashDB_rust/src/`，不得让最终 Rust 项目依赖 FlashDB C 实现。
 
+`c_cross_validate.py` 必须执行真实编译和运行：编译 Rust `staticlib`，编译原始 C 测试 runner（`tests/kvdb_main.c`、`tests/tsdb_main.c`），再把它们链接到 Rust C ABI facade。`validation-matrix.json.policy` 必须是 `strict`；任一 `fail` 或 `not_supported` 都阻断进入 `MIGRATE_TESTS`。
+
 ## MIGRATE_TESTS
 
 读取：
@@ -211,7 +231,7 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 - `logs/trace/c_test_model.json`
 - `logs/trace/rust_api_design.json`
 
-必须在 `VERIFY_RUST_WITH_C_TESTS` gate 通过后执行。如果 opencode 原生 subagent 可用，优先使用 `test-migrator`；如果不可用，由主控按 Markdown fallback 执行同一契约。最终 gate 只认产物和测试结果。
+必须在 `VERIFY_RUST_WITH_C_TESTS` gate 通过后由 `test-migrator` subagent 执行。如果原生 subagent 不可用，主控必须拉起隔离任务代理读取 `work/skills/test-migrator.md` 后执行；只有同一 subagent 连续 3 次失败后，主控才可 fallback 自行执行。最终 gate 只认产物和测试结果。
 
 运行：
 
@@ -250,16 +270,15 @@ python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 - `logs/trace/test-failure-triage.jsonl`
 - 中文 `logs/trace/08-build-test-repair.md`
 
-若 cargo 失败，主控必须先执行测试失败归因：
+由 `repairer` subagent 执行 first responder 修复循环。若 cargo 失败，必须先执行测试失败归因：
 
 1. 如果 `cargo-results.json.test_status == fail`，必须先运行 `python3 work/tools/test_failure_triage.py --root . --out logs/trace`；
 2. 确认 `logs/trace/test-failure-triage.jsonl` 存在，且 `workflow_state.json.test_failure_triage_required == true`；
-3. 可调用 `test-triage` subagent 做补充分析，传入 `cargo-test.log`、`rust_test_mapping.json`、`validation-matrix.json` 和 `c_test_model.json`；
-4. 校验 subagent 输出是否为短 JSON，且包含 `classification`、`allowed_edit_scope`、`allow_src_edit`、`evidence_paths`；
-5. 如果 subagent 不可用、超时或输出不合格，主控立刻使用 `test_failure_triage.py` 的 JSONL 结论，并按 `work/skills/test-triage.md` 中同一规则 fallback 自行分类；
-6. 只有分类允许后，才读取 `work/skills/repairer.md` 和 `work/skills/rust-compile-repair/SKILL.md` 做最小补丁。
+3. 读取 `work/skills/repairer.md` 和 `work/skills/rust-compile-repair/SKILL.md` 做 triage 后的最小补丁；
+4. 如果 `repairer` 判断问题属于 C 模型、Rust 实现或测试迁移的系统性缺陷，主控必须回派 `c-analyzer`、`rust-implementer` 或 `test-migrator`；
+5. 如果 `repairer` 不可用、超时或输出不合格，主控必须重新拉起隔离任务代理读取 `work/skills/repairer.md`；只有连续 3 次失败后才允许主控 fallback。
 
-`test_failure_triage.py` 是硬前置工具；`test-triage` 是默认可用时的补充分析、自动降级组件，不是人工选择项。用户不参与选择，subagent 失败不得阻塞流程。主控必须持续推进，最终 cargo 命令、gate 和通过判定都由主控执行。
+`test_failure_triage.py` 是硬前置工具；`repairer` 是默认 first responder，不是全能修复者。主控必须持续推进，最终 cargo 命令、gate 和通过判定都由主控执行。
 
 分类权限：
 
@@ -269,6 +288,8 @@ python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 - `insufficient_evidence`：最多补一轮证据，然后按失败类型保守推进，不能无限停住。
 
 不得删除测试、弱化断言、整体重写，或在未完成 triage 时直接修改核心实现。
+
+如果 `VERIFY_RUST_WITH_C_TESTS` 已通过而 Rust 测试失败，默认优先分类为 `test_oracle_suspect` 或 `harness_suspect`。只有测试预期有完整 C evidence 且与 `validation-matrix.json` 一致，才允许分类为 `rust_impl_suspect`。
 
 ## REPORT_AND_VERIFY
 
@@ -295,3 +316,4 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 ## 完成后停止
 
 `REPORT_AND_VERIFY: PASS` 后停止。不得继续修改平台输入，不得删除 trace，不得伪造 cargo 输出。
+`VERIFY_RUST_WITH_C_TESTS` 已经证明 Rust 源码具备 C 原始测试基线。若后续 Rust 测试失败，默认优先怀疑测试迁移、测试 harness 或 mapping 证据；只有 Rust 测试预期有完整 C evidence 且与 `validation-matrix.json` 一致，才允许把问题升级给 `rust-implementer`。

@@ -44,9 +44,9 @@ python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out log
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```
 
-第一版 `c_cross_validate.py` 允许 advisory 模式：暂不支持真实编译的 C harness 场景必须写成 `not_supported`，并为每个 scorer case 写入 `logs/trace/c-cross/*.log`。不得静默丢弃 scorer case，不得把 unsupported 当作 pass。
+`c_cross_validate.py` 必须执行真实 C harness：先编译 Rust `staticlib`，再用系统 C 编译器编译 `tests/kvdb_main.c` 和 `tests/tsdb_main.c`，把原始 C 测试 runner 链接到 Rust C ABI facade。临时 runner、二进制和运行目录只能写入 `logs/trace/c-cross/`。
 
-后续增强版本可以在 `--features c-abi-test` 下编译 Rust `staticlib`，再把原 C 测试链接到 Rust C ABI facade。该临时 harness 只能写入 `logs/trace/c-cross/`。
+第一版 runner 以 suite 为执行粒度：KVDB 原始测试 runner 通过则 KVDB scorer cases 通过，TSDB runner 通过则 TSDB scorer cases 通过；任一 suite 编译或运行失败，必须把该 suite 对应 scorer cases 写成 `fail`。不得把全量 unsupported 当作阶段通过。
 
 ## validation-matrix.json
 
@@ -55,11 +55,11 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```json
 {
   "stage": "VERIFY_RUST_WITH_C_TESTS",
-  "policy": "advisory",
+  "policy": "strict",
   "total_scenarios": 24,
   "summary": {
     "rust_impl_c_test": {
-      "not_supported": 24
+      "pass": 24
     }
   },
   "scenarios": []
@@ -91,7 +91,8 @@ log
 - `validation-matrix.json` 存在且合法；
 - matrix scenario 与 scorer case 一一对应；
 - `rust_impl_c_test == fail` 必须阻断后续阶段；
-- `not_supported` 必须包含 reason 和 `logs/trace/c-cross/` 下的 log；
+- `not_supported` 在本阶段 strict gate 中不允许通过；
+- `fail` 必须包含 reason 和 `logs/trace/c-cross/` 下的 log；
 - `flashDB_rust/src/` 下递归不存在 `.c` 文件。
 
 ## 失败归因
@@ -104,7 +105,7 @@ log
 
 - 不把 C 源码复制进 `flashDB_rust/src/`。
 - 不让最终 Rust 项目依赖 FlashDB C 实现。
-- 不把 `not_supported` 当作 `pass`。
+- 不把 `not_supported` 当作 `pass`；本阶段默认 strict。
 - 不替代 `MIGRATE_TESTS`，只在 Rust 测试迁移前提供 C 基线证据。
 
 ## 下一阶段交接

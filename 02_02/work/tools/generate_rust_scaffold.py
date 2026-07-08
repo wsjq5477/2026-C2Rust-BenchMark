@@ -54,9 +54,12 @@ edition = "2021"
 [lib]
 name = "flashdb_rust"
 path = "src/lib.rs"
+crate-type = ["rlib", "staticlib"]
 """,
     )
     lib_lines = [f"pub mod {name};" for name in modules]
+    if "c_abi" not in modules:
+        lib_lines.append("pub mod c_abi;")
     lib_lines.append("pub use error::{Error, Result};")
     write(project / "src" / "lib.rs", "\n".join(lib_lines))
 
@@ -100,6 +103,201 @@ pub fn {function_name}() -> bool {{
 }}
 """,
             )
+
+    write(
+        project / "src" / "c_abi.rs",
+        """
+//! Temporary C ABI facade used by VERIFY_RUST_WITH_C_TESTS.
+//!
+//! The functions are exported so original FlashDB C tests can link against the
+//! Rust crate. The rust-implementer stage must replace these stubs with calls
+//! into the safe Rust implementation before the C cross-validation gate passes.
+
+use std::ffi::{c_char, c_void};
+
+#[repr(C)]
+pub struct FdbBlobSaved {
+    pub meta_addr: u32,
+    pub addr: u32,
+    pub len: usize,
+}
+
+#[repr(C)]
+pub struct FdbBlob {
+    pub buf: *mut c_void,
+    pub size: usize,
+    pub saved: FdbBlobSaved,
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kvdb_init(
+    _db: *mut c_void,
+    _name: *const c_char,
+    _path: *const c_char,
+    _default_kv: *mut c_void,
+    _user_data: *mut c_void,
+) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kvdb_control(_db: *mut c_void, _cmd: i32, _arg: *mut c_void) {}
+
+#[no_mangle]
+pub extern "C" fn fdb_kvdb_check(_db: *mut c_void) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kvdb_deinit(_db: *mut c_void) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsdb_init(
+    _db: *mut c_void,
+    _name: *const c_char,
+    _path: *const c_char,
+    _get_time: *mut c_void,
+    _max_len: usize,
+    _user_data: *mut c_void,
+) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsdb_control(_db: *mut c_void, _cmd: i32, _arg: *mut c_void) {}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsdb_deinit(_db: *mut c_void) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_blob_make(blob: *mut FdbBlob, value_buf: *const c_void, buf_len: usize) -> *mut FdbBlob {
+    if !blob.is_null() {
+        unsafe {
+            (*blob).buf = value_buf as *mut c_void;
+            (*blob).size = buf_len;
+            (*blob).saved.len = buf_len;
+        }
+    }
+    blob
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_blob_read(_db: *mut c_void, _blob: *mut FdbBlob) -> usize {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_set(_db: *mut c_void, _key: *const c_char, _value: *const c_char) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_get(_db: *mut c_void, _key: *const c_char) -> *mut c_char {
+    std::ptr::null_mut()
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_set_blob(_db: *mut c_void, _key: *const c_char, _blob: *mut FdbBlob) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_get_blob(_db: *mut c_void, _key: *const c_char, _blob: *mut FdbBlob) -> usize {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_del(_db: *mut c_void, _key: *const c_char) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_get_obj(_db: *mut c_void, _key: *const c_char, _kv: *mut c_void) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_to_blob(_kv: *mut c_void, blob: *mut FdbBlob) -> *mut FdbBlob {
+    blob
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_set_default(_db: *mut c_void) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_print(_db: *mut c_void) {}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_iterator_init(_db: *mut c_void, itr: *mut c_void) -> *mut c_void {
+    itr
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_kv_iterate(_db: *mut c_void, _itr: *mut c_void) -> bool {
+    false
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsl_append(_db: *mut c_void, _blob: *mut FdbBlob) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsl_append_with_ts(_db: *mut c_void, _blob: *mut FdbBlob, _timestamp: i32) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsl_iter(_db: *mut c_void, _cb: *mut c_void, _cb_arg: *mut c_void) {}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsl_iter_reverse(_db: *mut c_void, _cb: *mut c_void, _cb_arg: *mut c_void) {}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsl_iter_by_time(
+    _db: *mut c_void,
+    _from: i32,
+    _to: i32,
+    _cb: *mut c_void,
+    _cb_arg: *mut c_void,
+) {
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsl_query_count(_db: *mut c_void, _from: i32, _to: i32, _status: i32) -> usize {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsl_max_blob_count(_db: *mut c_void) -> usize {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsl_set_status(_db: *mut c_void, _tsl: *mut c_void, _status: i32) -> i32 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsl_clean(_db: *mut c_void) {}
+
+#[no_mangle]
+pub extern "C" fn fdb_tsl_to_blob(_tsl: *mut c_void, blob: *mut FdbBlob) -> *mut FdbBlob {
+    blob
+}
+
+#[no_mangle]
+pub extern "C" fn fdb_calc_crc32(crc: u32, _buf: *const c_void, _size: usize) -> u32 {
+    crc
+}
+""",
+    )
 
     (project / "tests").mkdir(parents=True, exist_ok=True)
 

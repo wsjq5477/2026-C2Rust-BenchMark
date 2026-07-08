@@ -10,7 +10,6 @@
 
 ```text
 flashdb-orchestrator
-test-triage subagent
 repairer subagent
 rust-compile-repair Skill
 work/tools/cargo_capture.py
@@ -62,12 +61,12 @@ cargo build
 cargo test
 ```
 
-失败时先进入 `TEST_FAILURE_TRIAGE`。主控必须提取第一个失败 fingerprint，并默认调用 `test-triage` subagent 分析。`test-triage` 是默认使用、自动降级的组件：
+失败时先进入 `TEST_FAILURE_TRIAGE`。`repairer` 是 first responder，必须先读取或生成 triage 证据，再决定小修或回派。
 
-- 如果 opencode subagent 可用，主控必须调用 `test-triage`；
-- 如果 subagent 不可用、超时、输出不是合格 JSON，主控必须立刻按同一套规则 fallback 自行分类；
-- 用户不参与选择，流程不得等待人工确认；
-- subagent 只输出短结论，不负责运行最终 gate，也不拥有流程控制权。
+- 如果 opencode subagent 可用，主控必须调用 `repairer`；
+- 如果原生 subagent 注册异常，主控必须拉起隔离任务代理读取 `work/skills/repairer.md` 后执行；
+- 同一 subagent 连续 3 次失败、超时或输出不合格后，主控才允许 fallback 自行执行；
+- 用户不参与选择，流程不得等待人工确认。
 - 发生 `cargo test` 失败时，主控必须写入 `workflow_state.json.test_failure_triage_required = true`，并追加 `logs/trace/test-failure-triage.jsonl`。
 - `cargo test` 失败后必须先运行 `python3 work/tools/test_failure_triage.py --root . --out logs/trace`；`cargo_capture.py` 也会自动生成同一 triage 记录。
 
@@ -100,7 +99,7 @@ fallback 规则：
 
 同一个 fingerprint 连续出现 2 次后，禁止继续盲修 `flashDB_rust/src/`，必须切回 triage/fallback，并把结论追加到 `logs/trace/test-failure-triage.jsonl`。
 
-归因后再调用 `repairer`，最多 8 轮。每轮必须：
+`repairer` 最多 8 轮。每轮必须：
 
 1. 读取失败日志；
 2. 分类错误；
@@ -109,7 +108,13 @@ fallback 规则：
 5. 由主控 Agent 重跑失败命令；
 6. 写入 `result/issues/repair_trace.jsonl`。
 
-主控 Agent 必须亲自运行 cargo 命令并归档日志。`repairer` subagent 只负责提出和应用最小修复，不负责判定阶段通过。
+主控 Agent 必须亲自运行 cargo 命令并归档日志。`repairer` subagent 只负责 triage、小修或回派建议，不负责判定阶段通过。
+
+回派规则：
+
+- `c-analyzer`：C 模型、测试语义或 `rust_api_design.json` 源头错误；
+- `rust-implementer`：Rust 核心行为与 C 语义不一致，且测试预期有完整 C evidence；
+- `test-migrator`：`validation-matrix.json` 已通过但 Rust 测试预期、mapping 或 harness 可疑。
 
 ## 执行命令
 
@@ -146,6 +151,7 @@ python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 - 不把 05/06/07 中已经有局部检查的问题拖到本阶段集中处理。
 - 未经 triage 判定为 `rust_impl_suspect`，不得直接修改 `flashDB_rust/src/` 的核心语义。
 - `test_oracle_suspect` 只能修改 tests、mapping 或测试说明。
+- `VERIFY_RUST_WITH_C_TESTS` 已通过后，Rust 测试失败默认优先怀疑测试迁移或 harness；只有完整 C evidence 支持测试预期时，才允许改 Rust 源码。
 - `insufficient_evidence` 只能补一轮证据，不能让流程无限停住。
 
 ## 下一阶段交接
