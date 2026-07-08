@@ -483,7 +483,7 @@ def build_scorer_standard_cases(
         cases.append(
             {
                 "case_id": str(index),
-                "case_name": scorer_case_name(name),
+                "case_name": scorer_case_name(scenario_id),
                 "scenario_id": scenario_id,
                 "suite": scenario_suite(name, tags),
                 "required_c_tests": [name],

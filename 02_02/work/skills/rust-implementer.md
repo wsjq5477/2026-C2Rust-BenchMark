@@ -14,6 +14,8 @@ permission:
 
 主控必须优先拉起你执行这些阶段。如果平台原生 subagent 注册异常，主控仍必须拉起一个隔离任务代理，让它先完整读取 `work/skills/rust-implementer.md` 后执行；只有同一 subagent 连续 3 次失败并写入失败证据后，主控才允许 fallback 自行执行。
 
+如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
+
 ## 职责范围
 
 - 根据 `logs/trace/rust_api_design.json` 生成 `flashDB_rust/`。

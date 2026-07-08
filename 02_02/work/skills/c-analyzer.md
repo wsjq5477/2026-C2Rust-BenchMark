@@ -14,6 +14,8 @@ permission:
 
 主控必须优先拉起你执行这些阶段。如果平台原生 subagent 注册异常，主控仍必须拉起一个通用 subagent 作为隔离任务代理，让它先读取 `work/skills/c-analyzer.md` 后执行；只有同一 subagent 连续 3 次失败并写入失败证据后，主控才允许 fallback 自行执行。
 
+如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
+
 这三个阶段是 `C_ANALYSIS 阶段族`，必须在一次 subagent 任务内连续执行。主控不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。如果从中间 checkpoint 恢复，你必须从当前 checkpoint 继续执行剩余 C 分析阶段。
 
 ## 职责范围

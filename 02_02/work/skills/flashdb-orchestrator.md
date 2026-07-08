@@ -31,6 +31,8 @@ permission:
 
 如果平台原生 subagent 可用，直接调用对应 subagent。如果原生 subagent 注册异常，主控仍必须拉起一个通用 subagent 作为隔离任务代理，并把任务写成：先读取 `work/skills/{subagent}.md`，再按该 Markdown 执行。只有同一 subagent 连续 3 次失败、超时或输出不合格，并把失败写入 `logs/trace/subagent-invocations.jsonl` 后，主控才允许 fallback 自行执行。
 
+主控传给 subagent 的提示词必须是短调度单，只允许包含动态上下文：作品根目录、当前 checkpoint、目标阶段族、`$FLASHDB_SOURCE`、必须先读取 `work/skills/{subagent}.md`、需要读取的 trace/state 文件、停止条件和回写证据路径。如果调度提示与 subagent Markdown 冲突，以 subagent Markdown 为准。禁止在调度提示中复制或改写 subagent 的业务细节，禁止写入固定 API 清单、固定源码文件清单或实现策略。
+
 `READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API` 是 `C_ANALYSIS 阶段族`。主控必须一次拉起 `c-analyzer`，让它在同一个 subagent 任务内从当前 checkpoint 继续执行剩余 C 分析阶段；不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。如果 `READ_C_PROJECT` 已通过后用户要求继续 `BUILD_C_MODEL`，主控只能启动一次 `c-analyzer`，任务目标是从 `BUILD_C_MODEL` 继续到 `DESIGN_RUST_API` 或到用户指定的停止点。
 
 `logs/trace/agent-registry.json` 必须记录 4 个 subagent 的路径、mode 和职责阶段。`logs/trace/subagent-invocations.jsonl` 必须记录每次 subagent 调用、隔离代理调用、失败和 fallback。

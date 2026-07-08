@@ -14,6 +14,8 @@ permission:
 
 主控必须优先拉起你执行 `MIGRATE_TESTS`。如果平台原生 subagent 注册异常，主控仍必须拉起一个隔离任务代理，让它先完整读取 `work/skills/test-migrator.md` 后执行；只有同一 subagent 连续 3 次失败并写入失败证据后，主控才允许 fallback 自行执行。
 
+如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
+
 ## 前置条件
 
 `VERIFY_RUST_WITH_C_TESTS` 必须已经通过。此时 Rust 源码已经由 `rust-implementer` 用原始 C 测试证据验证过，后续 Rust 测试失败时默认优先怀疑测试迁移、测试 harness 或 mapping 证据，而不是直接改 Rust 实现。

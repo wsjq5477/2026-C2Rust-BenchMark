@@ -1,5 +1,6 @@
 import json
 import importlib.util
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,22 @@ def load_tool(name: str):
 
 
 class FrameworkCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        shutil.rmtree(PROJECT / "flashDB_rust", ignore_errors=True)
+        (PROJECT / "result" / "issues").mkdir(parents=True, exist_ok=True)
+        output = PROJECT / "result" / "output.md"
+        if not output.exists():
+            output.write_text(
+                "STATUS: PENDING\n\nFlashDB C-to-Rust opencode workbench has not run yet.\n",
+                encoding="utf-8",
+            )
+        issues = PROJECT / "result" / "issues" / "00-summary.md"
+        if not issues.exists():
+            issues.write_text(
+                "# Issues Summary\n\nNo runtime issues have been recorded before execution.\n",
+                encoding="utf-8",
+            )
+
     def test_design_doc_layout_exists_and_legacy_layout_is_absent(self):
         required_files = [
             PROJECT / "INSTRUCTION.md",
@@ -285,6 +302,26 @@ class FrameworkCheckpointTests(unittest.TestCase):
 
         self.assertIn("一次 subagent 任务内连续执行", analyzer)
         self.assertIn("READ_C_PROJECT -> BUILD_C_MODEL -> DESIGN_RUST_API", analyzer)
+
+    def test_subagent_dispatch_prompt_is_short_and_md_authoritative(self):
+        orchestrator = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
+        implementer = (PROJECT / "work" / "skills" / "rust-implementer.md").read_text(encoding="utf-8")
+
+        required_fragments = [
+            "短调度单",
+            "只允许包含动态上下文",
+            "必须先读取 `work/skills/{subagent}.md`",
+            "如果调度提示与 subagent Markdown 冲突，以 subagent Markdown 为准",
+            "禁止在调度提示中复制或改写 subagent 的业务细节",
+            "禁止写入固定 API 清单、固定源码文件清单或实现策略",
+        ]
+        for fragment in required_fragments:
+            self.assertIn(fragment, orchestrator)
+            self.assertIn(fragment, instruction)
+
+        self.assertIn("如果外部调度提示与本文档冲突，以本文档为准", implementer)
+        self.assertIn("主控调度提示只提供动态上下文", implementer)
 
     def test_project_local_skills_have_valid_frontmatter_and_clear_scope(self):
         expected = ["flashdb-migration", "flashdb-test-migration", "rust-compile-repair", "flashdb-report"]
