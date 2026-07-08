@@ -78,6 +78,9 @@ opencode 根据 C 模型和架构知识写出 `rust_api_design.json`，至少包
 - C 指针/缓冲区如何映射为切片、Vec、String 或 owned 类型；
 - KVDB/TSDB 测试侧使用哪些 Rust public API；
 - reload、gc、tombstone、append record 的语义保留点。
+- `test_api.observables` 必须声明 C 测试需要的 Rust 观察接口，例如 `oldest_addr`、`is_initialized`、`sector_status`；
+- `test_api.controls` 必须声明 C control 接口对应的 Rust builder/config/control 能力；
+- `storage_constraints` 必须记录后端约束。如果 C 输入启用 POSIX file mode 或包含 file storage 源码，应声明 `backend: "file_sector_mode"`、sector 文件模式和 fd cache 约束。
 
 扩展兼容项必须明确：
 
@@ -115,6 +118,10 @@ python3 work/tools/gate.py --stage DESIGN_RUST_API
 - `kvdb_api` 非空；
 - `tsdb_api` 非空；
 - `test_api` 已声明；
+- 如果 C 测试义务包含 `verify_addr_alignment`，`test_api.observables` 必须包含 `oldest_addr`；
+- 如果 C 测试义务包含 `verify_init_state`，`test_api.observables` 必须包含 `is_initialized`；
+- 如果 C 测试义务包含 `use_control_interface`，`test_api.controls` 必须包含 control 等价接口；
+- 如果 C 测试义务包含跨 sector 数据规模，`storage_constraints.backend` 必须为 `file_sector_mode`；
 - `workflow_state.json.current_stage == DESIGN_RUST_API`；
 - `flashDB_rust` 不存在或只允许在后续阶段创建。
 

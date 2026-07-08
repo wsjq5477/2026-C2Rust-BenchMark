@@ -4,7 +4,7 @@
 
 **Goal:** Build only the first verifiable checkpoint for the FlashDB C-to-Rust opencode workbench.
 
-**Architecture:** `02_02/INSTRUCTION.md` boots into `work/agents/flashdb-orchestrator.md`. The orchestrator executes only `BOOTSTRAP` and `INIT_WORKSPACE` for this checkpoint, validates them through `work/tools/gate.py`, writes `workflow_state.json`, and stops before reading FlashDB or generating `flashDB_rust`.
+**Architecture:** `02_02/INSTRUCTION.md` boots into `work/skills/flashdb-orchestrator.md`. The orchestrator executes only `BOOTSTRAP` and `INIT_WORKSPACE` for this checkpoint, validates them through `work/tools/gate.py`, writes `workflow_state.json`, and stops before reading FlashDB or generating `flashDB_rust`.
 
 **Tech Stack:** Markdown instructions, project-local Codex/OpenCode-style agents and skills, Python standard library tools, `unittest`.
 
@@ -15,9 +15,9 @@
 **Files:**
 - Modify: `/home/nv_test/777/flashdb2rust/02_02/INSTRUCTION.md`
 - Modify: `/home/nv_test/777/flashdb2rust/02_02/tests/test_conversion_system.py`
-- Create: `/home/nv_test/777/flashdb2rust/02_02/work/agents/flashdb-orchestrator.md`
-- Create: `/home/nv_test/777/flashdb2rust/02_02/work/agents/test-migrator.md`
-- Create: `/home/nv_test/777/flashdb2rust/02_02/work/agents/repairer.md`
+- Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/flashdb-orchestrator.md`
+- Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/test-migrator.md`
+- Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/repairer.md`
 - Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/flashdb-migration/SKILL.md`
 - Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/flashdb-test-migration/SKILL.md`
 - Create: `/home/nv_test/777/flashdb2rust/02_02/work/skills/rust-compile-repair/SKILL.md`

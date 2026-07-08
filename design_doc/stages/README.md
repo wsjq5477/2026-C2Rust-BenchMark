@@ -15,7 +15,8 @@
 | 4 | DESIGN_RUST_API | [04-design-rust-api.md](04-design-rust-api.md) | `rust_api_design.json` |
 | 5 | GENERATE_RUST_SCAFFOLD | [05-generate-rust-scaffold.md](05-generate-rust-scaffold.md) | `flashDB_rust/Cargo.toml` / `src/` / scaffold `cargo check` |
 | 6 | REWRITE_CORE_MODULES | [06-rewrite-core-modules.md](06-rewrite-core-modules.md) | Rust core modules / per-batch `cargo check` |
-| 7 | MIGRATE_TESTS | [07-migrate-tests.md](07-migrate-tests.md) | Rust integration tests / `rust_test_mapping.json` / migrated `cargo test` log |
+| 6.5 | VERIFY_RUST_WITH_C_TESTS | [06-5-verify-rust-with-c-tests.md](06-5-verify-rust-with-c-tests.md) | `validation-matrix.json` / C tests on Rust evidence |
+| 7 | MIGRATE_TESTS | [07-migrate-tests.md](07-migrate-tests.md) | Rust integration tests / `rust_test_mapping.json` |
 | 8 | BUILD_TEST_REPAIR | [08-build-test-repair.md](08-build-test-repair.md) | cargo logs / repair trace |
 | 9 | REPORT_AND_VERIFY | [09-report-and-verify.md](09-report-and-verify.md) | `result/output.md` / final verification |
 
@@ -23,12 +24,13 @@
 
 1. **事实与决策分离**：`BUILD_C_MODEL` 只抽取 C 工程事实，`DESIGN_RUST_API` 才做 Rust API 决策。
 2. **代码生成与语义实现分离**：`GENERATE_RUST_SCAFFOLD` 只生成项目骨架，`REWRITE_CORE_MODULES` 才实现业务逻辑。
-3. **测试迁移独立验收**：`MIGRATE_TESTS` 只负责测试语义覆盖，不大规模修改 core。
-4. **修复闭环独立**：`BUILD_TEST_REPAIR` 用 cargo 错误栈最小修复，禁止删除测试或弱化断言。
-5. **报告只收口**：`REPORT_AND_VERIFY` 汇总证据，不补写缺失实现。
-6. **核心域是下限，不是上限**：KVDB/TSDB/FlashStorage 必须覆盖，但真实 FlashDB 新增文件、目录和符号也必须被记录、分类、映射或显式排除。
-7. **构建检查前移**：`GENERATE_RUST_SCAFFOLD` 后立即 `cargo check`，`REWRITE_CORE_MODULES` 每个实现批次后 `cargo check`，避免把骨架错误和核心实现错误堆到 `BUILD_TEST_REPAIR`。
-8. **主控判定、subagent 修复**：cargo 命令和 gate 由 `flashdb-orchestrator` 执行并归档；`repairer` 只在失败后做最小修复，修复后必须由主控复验。
+3. **C 测试基线先验证实现**：`VERIFY_RUST_WITH_C_TESTS` 在测试迁移前用原始 C 测试证据验证 Rust core，失败优先修实现或 C ABI facade。
+4. **测试迁移独立验收**：`MIGRATE_TESTS` 只负责测试语义覆盖，不大规模修改 core。
+5. **修复闭环独立**：`BUILD_TEST_REPAIR` 用 cargo 错误栈最小修复，禁止删除测试或弱化断言。
+6. **报告只收口**：`REPORT_AND_VERIFY` 汇总证据，不补写缺失实现。
+7. **核心域是下限，不是上限**：KVDB/TSDB/FlashStorage 必须覆盖，但真实 FlashDB 新增文件、目录和符号也必须被记录、分类、映射或显式排除。
+8. **构建检查前移**：`GENERATE_RUST_SCAFFOLD` 后立即 `cargo check`，`REWRITE_CORE_MODULES` 每个实现批次后 `cargo check`，避免把骨架错误和核心实现错误堆到 `BUILD_TEST_REPAIR`。
+9. **主控判定、subagent 修复**：cargo 命令和 gate 由 `flashdb-orchestrator` 执行并归档；`repairer` 只在失败后做最小修复，修复后必须由主控复验。
 
 ## 统一产物约定
 

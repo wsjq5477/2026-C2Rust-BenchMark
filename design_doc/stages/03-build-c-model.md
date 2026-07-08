@@ -190,6 +190,16 @@ fdb_tsdb_init
 
 测试函数可通过 `test_` 前缀、测试注册表、文件名和 main 调用关系识别。新增测试文件如果不属于 KVDB/TSDB，必须进入 `extension_tests` 或 `unclassified_tests`，并在阶段日志中说明后续处理策略。
 
+`semantic_facts` 不得只记录“调用了什么函数”和“有几个 assert”。每个 scorer case 在可提取时必须保留深语义事实：
+
+- `assertion_details` / `assertion_targets`：assert 宏验证的表达式和目标字段，例如 `oldest_addr`、`init_ok`、状态计数；
+- `control_usage`：`fdb_kvdb_control` / `fdb_tsdb_control` 的控制命令；
+- `data_shape`：KV 写入数量、blob 大小/sector 倍数、TSL append 数量；
+- `scenario_features`：反向迭代、按时间迭代、多状态过滤、大 blob、跨 sector、GC 压力等子场景；
+- `semantic_markers`：由事实推导出的 `verify_addr_alignment`、`use_control_interface`、`verify_persistence_after_reboot` 等义务。
+
+`semantic_obligations` 必须优先使用这些具体义务；`assertion_intent` 只能作为兜底事实，不能单独证明深语义覆盖。
+
 ## 执行命令
 
 ```bash
@@ -212,6 +222,7 @@ python3 work/tools/gate.py --stage BUILD_C_MODEL
 - `c_api_model.json` 包含 `fdb_kvdb_init` 和 `fdb_tsdb_init`；
 - 新增 `fdb_*` public 符号不能静默丢弃，必须进入 `public_functions`，并按情况进入核心域、扩展域或未映射清单；
 - `c_test_model.json.test_functions` 非空；
+- 高风险 scorer case 的 `semantic_obligations` 应包含可验证的 `verify_*`、`data_shape:*` 或 `scenario:*` 义务，而不是只停留在 `assertion_intent`；
 - `workflow_state.json.current_stage == BUILD_C_MODEL`；
 - `flashDB_rust` 不存在。
 

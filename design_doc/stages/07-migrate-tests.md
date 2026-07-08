@@ -4,7 +4,7 @@
 
 把 C 测试语义迁移为 Rust 测试，覆盖 KVDB 和 TSDB 主干场景。若真实 FlashDB 输入包含额外测试文件或扩展场景，本阶段必须记录并迁移、归入扩展测试，或明确说明排除原因。
 
-本阶段必须在 `REWRITE_CORE_MODULES` gate 通过后执行，因为测试需要依赖已经 `cargo check` 通过的真实 Rust API。`test-migrator` 可以使用 subagent，但只负责生成测试和映射；主控 Agent 负责运行并归档 `cargo test`。
+本阶段必须在 `VERIFY_RUST_WITH_C_TESTS` gate 通过后执行。此时 Rust 核心实现已经用原始 C 测试证据做过基线验证，本阶段只负责把 C 测试语义迁移为 Rust 测试并维护 `rust_test_mapping.json`。
 
 ## 执行主体
 
@@ -32,8 +32,6 @@ flashDB_rust/tests/kvdb_tests.rs
 flashDB_rust/tests/tsdb_tests.rs
 flashDB_rust/tests/equivalence_tests.rs
 logs/trace/rust_test_mapping.json
-logs/trace/cargo-test-after-migrate.log
-logs/trace/test-after-migrate.json
 logs/trace/07-migrate-tests.md
 logs/trace/workflow_state.json
 result/output.md
@@ -49,21 +47,7 @@ flashDB_rust/tests/
 logs/trace/rust_test_mapping.json
 ```
 
-主控 Agent 在 test-migrator 完成后必须运行：
-
-```bash
-cd flashDB_rust
-cargo test
-```
-
-并记录：
-
-```text
-logs/trace/cargo-test-after-migrate.log
-logs/trace/test-after-migrate.json
-```
-
-`MIGRATE_TESTS` 阶段不强制 `cargo test` 通过；它强制测试被生成、映射被记录、测试命令被执行并归档。若测试失败，进入 `BUILD_TEST_REPAIR` 做最终修复闭环。
+`MIGRATE_TESTS` 阶段不强制 `cargo test` 通过；它强制测试被生成、映射被记录、语义义务被验证。最终 cargo build/test 由 `BUILD_TEST_REPAIR` 归档并修复。
 
 `rust_test_mapping.json` 建议结构：
 
@@ -74,9 +58,31 @@ logs/trace/test-after-migrate.json
   "extension": [],
   "unmapped": [],
   "total_scenarios": 24,
-  "source_to_rust": {}
+  "source_to_rust": {},
+  "assertion_evidence": []
 }
 ```
+
+每个关键断言必须能追溯期望值来源。`assertion_evidence` 至少记录：
+
+```json
+{
+  "rust_test": "kvdb_test_fdb_create_kv_blob",
+  "assertion": "value_len == 21",
+  "expected": 21,
+  "source": "c_test_model.scorer_standard_cases[kvdb_create_kv_blob]",
+  "evidence": "input blob bytes are derived from hello_world_blob_data",
+  "validated_obligation": "blob read returns the bytes written by blob create"
+}
+```
+
+没有 C 测试、C 模型、规格或可计算事实支撑的期望值，不得标记为 `coverage: semantic`。这类测试必须保持 `coverage: pending` 或写入待补证据记录，不能把拍脑袋的 Rust 断言作为后续修实现的依据。
+
+覆盖分级：
+
+- L1/API 调用覆盖：Rust 测试调用了 C scenario 对应 API，但不能标记为 `coverage: semantic`；
+- L2/断言意图覆盖：Rust 断言验证了 C assert 的同类属性，可作为普通 semantic；
+- L3/数据规模和布局覆盖：Rust 测试保留 C 的 KV/TSL 数量、blob 大小、sector 边界、状态组合和重启恢复，高风险 `data_shape:*` / `scenario:*` case 必须达到此级别。
 
 目标覆盖：
 
@@ -89,10 +95,11 @@ logs/trace/test-after-migrate.json
 ## 执行命令
 
 ```bash
-python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
+python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 # opencode 调用 test-migrator subagent 生成 Rust tests
-cd flashDB_rust && cargo test
-python3 ../work/tools/gate.py --stage MIGRATE_TESTS --root ..
+python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json
+python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json
+python3 work/tools/gate.py --stage MIGRATE_TESTS
 ```
 
 ## Gate 检查
@@ -103,11 +110,12 @@ python3 ../work/tools/gate.py --stage MIGRATE_TESTS --root ..
 - `tsdb_tests.rs` 存在；
 - `equivalence_tests.rs` 存在；
 - `rust_test_mapping.json` 存在；
-- `cargo-test-after-migrate.log` 存在；
-- `test-after-migrate.json` 存在，记录 `cargo test` exit code；
 - 映射覆盖 24 个标准场景；
 - 新增 C 测试不能静默丢弃，必须进入 `extension`、`unmapped` 或带理由的排除记录；
 - Rust 测试文件包含非恒真断言；
+- `coverage: semantic` 的测试必须有对应 `assertion_evidence` 或等价的 `validated_obligations`；
+- 关键 expected value 必须能追溯到 C 测试、C 模型、规格或可计算事实；
+- `test-consistency.json` 必须通过；若发现 `missing_assertion_evidence`、`rust_assertion_count_below_threshold`、`missing_direct_verify_obligation` 或 `shallow_assertion_dominance`，本阶段失败并回到测试迁移；
 - 不删除 core 文件；
 - `workflow_state.json.current_stage == MIGRATE_TESTS`。
 
@@ -122,4 +130,4 @@ python3 ../work/tools/gate.py --stage MIGRATE_TESTS --root ..
 
 ## 下一阶段交接
 
-成功后进入 `BUILD_TEST_REPAIR`。下一阶段允许根据 cargo 错误栈做最小修复。
+成功后进入 `BUILD_TEST_REPAIR`。下一阶段运行并归档最终 cargo build/test，并允许根据错误栈做最小修复。

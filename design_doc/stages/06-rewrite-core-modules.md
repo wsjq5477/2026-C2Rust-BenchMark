@@ -126,4 +126,4 @@ python3 ../work/tools/gate.py --stage REWRITE_CORE_MODULES --root ..
 
 ## 下一阶段交接
 
-成功后进入 `MIGRATE_TESTS`。测试迁移以当前 public API 和 core 行为为准。
+成功后进入 `VERIFY_RUST_WITH_C_TESTS`。该阶段先用原始 C 测试证据验证 Rust core，再进入 Rust 测试迁移。

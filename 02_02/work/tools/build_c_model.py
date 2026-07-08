@@ -142,6 +142,104 @@ def extract_function_bodies(text: str) -> dict[str, str]:
     return bodies
 
 
+def extract_assertion_details(body: str) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+    pattern = re.compile(r"\b(?P<macro>(?:TEST_ASSERT|test_assert)[A-Za-z0-9_]*)\s*\((?P<expr>[^;]*)\)\s*;", re.S)
+    for match in pattern.finditer(body):
+        expr = re.sub(r"\s+", " ", match.group("expr")).strip()
+        tokens = sorted(
+            dict.fromkeys(
+                token
+                for token in re.findall(IDENT, expr)
+                if token not in CONTROL_WORDS
+            )
+        )
+        details.append(
+            {
+                "macro": match.group("macro"),
+                "expression": expr,
+                "targets": tokens,
+            }
+        )
+    return details
+
+
+def semantic_markers_from_body(body: str, assertion_targets: list[str]) -> list[str]:
+    markers: list[str] = []
+    lower = body.lower()
+    target_set = set(assertion_targets)
+    if {"addr", "oldest_addr"} & target_set or re.search(r"\boldest_addr\b[^;]*(?:%|sec_size|sector)", body):
+        markers.append("verify_addr_alignment")
+    if re.search(r"\bfdb_(?:kvdb|tsdb)_control\s*\(", body):
+        markers.append("use_control_interface")
+    if re.search(r"\bfdb_reboot\s*\(", body):
+        markers.append("verify_persistence_after_reboot")
+    elif re.search(r"\bfdb_(?:kvdb|tsdb)_deinit\s*\(", body) and re.search(r"\bfdb_(?:kvdb|tsdb)_init\s*\(", body):
+        markers.append("verify_persistence_after_reboot")
+    if "init_ok" in lower:
+        markers.append("verify_init_state")
+    return sorted(dict.fromkeys(markers))
+
+
+def data_shape_from_body(body: str) -> dict[str, Any]:
+    kv_set_count = len(re.findall(r"\bfdb_kv_set\s*\(", body))
+    blob_multiplier = 0
+    for table in re.finditer(r"\bstruct\s+test_kv\s+\w+\s*\[\s*\]\s*=\s*\{(?P<body>.*?)\}\s*;", body, flags=re.S):
+        kv_set_count = max(kv_set_count, len(re.findall(r"\{\s*\"kv", table.group("body"))))
+        for match in re.finditer(r"(?:\bTEST_KV_VALUE_LEN\b\s*[*]\s*(\d+)|(\d+)\s*[*]\s*\bTEST_KV_VALUE_LEN\b)", table.group("body")):
+            blob_multiplier = max(blob_multiplier, int(match.group(1) or match.group(2)))
+    blob_calls = re.findall(r"\bfdb_kv_set_blob\s*\((?P<args>[^;]*)\)", body, flags=re.S)
+    for args in blob_calls:
+        match = re.search(r"(?:\b(?:sec_size|sector_size|FDB_SECTOR_SIZE|TEST_KV_VALUE_LEN)\b\s*[*]\s*(\d+)|(\d+)\s*[*]\s*\b(?:sec_size|sector_size|FDB_SECTOR_SIZE|TEST_KV_VALUE_LEN)\b)", args)
+        if match:
+            blob_multiplier = max(blob_multiplier, int(match.group(1) or match.group(2)))
+    tsl_append_count = len(re.findall(r"\bfdb_tsl_append\s*\(", body))
+    sector_bound_calls = len(re.findall(r"\btest_fdb_tsl_sector_bound_test\s*\(", body))
+    return {
+        "kv_set_count": kv_set_count,
+        "blob_write_count": len(blob_calls),
+        "blob_multiplier": blob_multiplier,
+        "tsl_append_count": tsl_append_count,
+        "sector_bound_query_count": sector_bound_calls,
+    }
+
+
+def scenario_features_from_body(body: str, data_shape: dict[str, Any]) -> list[str]:
+    features: list[str] = []
+    if re.search(r"\bfdb_tsl_iter_reverse\s*\(", body):
+        features.append("iter_reverse")
+    if re.search(r"\bfdb_tsl_iter_by_time\s*\(", body):
+        features.append("iter_by_time")
+    if (
+        re.search(r"\bfdb_tsl_set_status\s*\([^;]*USER_STATUS", body)
+        and re.search(r"\bfdb_tsl_set_status\s*\([^;]*DELETED", body)
+    ) or (
+        re.search(r"\bfdb_tsl_query_count\s*\([^;]*USER_STATUS", body)
+        and re.search(r"\bfdb_tsl_query_count\s*\([^;]*DELETED", body)
+    ):
+        features.append("multi_status_filter")
+    if data_shape.get("blob_multiplier", 0) >= 2:
+        features.append("large_blob_persistence")
+    if data_shape.get("kv_set_count", 0) >= 4:
+        features.append("multi_kv_gc_pressure")
+    if data_shape.get("tsl_append_count", 0) >= 5 or data_shape.get("sector_bound_query_count", 0) >= 2 or re.search(r"\bsector\b", body, flags=re.I):
+        features.append("cross_sector_tsl")
+    return sorted(dict.fromkeys(features))
+
+
+def extract_control_usage(body: str) -> list[dict[str, str]]:
+    usage: list[dict[str, str]] = []
+    for match in re.finditer(r"\b(?P<function>fdb_(?:kvdb|tsdb)_control)\s*\((?P<args>[^;]*)\)", body, flags=re.S):
+        args = [part.strip() for part in match.group("args").split(",")]
+        usage.append(
+            {
+                "function": match.group("function"),
+                "command": args[1] if len(args) > 1 else "",
+            }
+        )
+    return usage
+
+
 def extract_test_semantics(body: str) -> dict[str, Any]:
     calls = sorted(
         dict.fromkeys(
@@ -157,12 +255,30 @@ def extract_test_semantics(body: str) -> dict[str, Any]:
         for name in calls
         if name.startswith("test_") and name not in assertions
     )
+    assertion_details = extract_assertion_details(body)
+    assertion_targets = sorted(
+        dict.fromkeys(
+            target
+            for detail in assertion_details
+            for target in detail.get("targets", [])
+            if isinstance(target, str)
+        )
+    )
+    data_shape = data_shape_from_body(body)
+    scenario_features = scenario_features_from_body(body, data_shape)
+    semantic_markers = semantic_markers_from_body(body, assertion_targets)
     return {
         "called_functions": calls,
         "observed_c_symbols": observed_symbols,
         "helper_calls": helper_calls,
         "assertion_macros": assertions,
         "assertion_count": sum(len(re.findall(r"\b" + re.escape(name) + r"\s*\(", body)) for name in assertions),
+        "assertion_details": assertion_details,
+        "assertion_targets": assertion_targets,
+        "control_usage": extract_control_usage(body),
+        "data_shape": data_shape,
+        "scenario_features": scenario_features,
+        "semantic_markers": semantic_markers,
     }
 
 
@@ -237,6 +353,18 @@ def empty_semantic_facts() -> dict[str, Any]:
         "helper_calls": [],
         "assertion_macros": [],
         "assertion_count": 0,
+        "assertion_details": [],
+        "assertion_targets": [],
+        "control_usage": [],
+        "data_shape": {
+            "kv_set_count": 0,
+            "blob_write_count": 0,
+            "blob_multiplier": 0,
+            "tsl_append_count": 0,
+            "sector_bound_query_count": 0,
+        },
+        "scenario_features": [],
+        "semantic_markers": [],
     }
 
 
@@ -246,14 +374,25 @@ def merge_semantic_facts(names: list[str], test_semantics: dict[str, dict[str, A
         facts = test_semantics.get(name)
         if not isinstance(facts, dict):
             continue
-        for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros"]:
+        for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros", "assertion_details", "assertion_targets", "control_usage", "scenario_features", "semantic_markers"]:
             values = facts.get(key)
             if isinstance(values, list):
                 merged[key].extend(item for item in values if isinstance(item, str))
+                if key in {"assertion_details", "control_usage"}:
+                    merged[key].extend(item for item in values if isinstance(item, dict))
         count = facts.get("assertion_count")
         if isinstance(count, int):
             merged["assertion_count"] += count
-    for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros"]:
+        data_shape = facts.get("data_shape")
+        if isinstance(data_shape, dict):
+            for shape_key in ["kv_set_count", "blob_write_count", "blob_multiplier", "tsl_append_count", "sector_bound_query_count"]:
+                value = data_shape.get(shape_key)
+                if isinstance(value, int):
+                    if shape_key == "blob_multiplier":
+                        merged["data_shape"][shape_key] = max(merged["data_shape"][shape_key], value)
+                    else:
+                        merged["data_shape"][shape_key] += value
+    for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros", "assertion_targets", "scenario_features", "semantic_markers"]:
         merged[key] = sorted(dict.fromkeys(merged[key]))
     return merged
 
@@ -277,6 +416,28 @@ def semantic_obligations_from_facts(tags: list[str], facts: dict[str, Any]) -> l
     if isinstance(helpers, list):
         obligations.extend(f"helper:{helper}" for helper in helpers if isinstance(helper, str))
 
+    markers = facts.get("semantic_markers")
+    if isinstance(markers, list):
+        obligations.extend(marker for marker in markers if isinstance(marker, str))
+
+    data_shape = facts.get("data_shape")
+    if isinstance(data_shape, dict):
+        kv_set_count = data_shape.get("kv_set_count")
+        if isinstance(kv_set_count, int) and kv_set_count >= 2:
+            obligations.append(f"data_shape:multi_kv_count:{kv_set_count}")
+        if isinstance(data_shape.get("blob_multiplier"), int) and data_shape["blob_multiplier"] >= 2:
+            obligations.append("data_shape:cross_sector_blob")
+        tsl_append_count = data_shape.get("tsl_append_count")
+        if isinstance(tsl_append_count, int) and tsl_append_count >= 5:
+            obligations.append(f"data_shape:cross_sector_tsl_count:{tsl_append_count}")
+        sector_bound_query_count = data_shape.get("sector_bound_query_count")
+        if isinstance(sector_bound_query_count, int) and sector_bound_query_count >= 2:
+            obligations.append(f"data_shape:sector_bound_queries:{sector_bound_query_count}")
+
+    features = facts.get("scenario_features")
+    if isinstance(features, list):
+        obligations.extend(f"scenario:{feature}" for feature in features if isinstance(feature, str))
+
     assertions = facts.get("assertion_macros")
     if isinstance(assertions, list) and assertions:
         obligations.append("assertion_intent")
@@ -284,6 +445,26 @@ def semantic_obligations_from_facts(tags: list[str], facts: dict[str, Any]) -> l
         obligations.append("assertion_count")
 
     return sorted(dict.fromkeys(obligations or ["registered_scenario"]))
+
+
+def related_test_names(name: str, test_semantics: dict[str, dict[str, Any]]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def visit(current: str) -> None:
+        if current in seen:
+            return
+        seen.add(current)
+        ordered.append(current)
+        facts = test_semantics.get(current, {})
+        helpers = facts.get("helper_calls")
+        if isinstance(helpers, list):
+            for helper in helpers:
+                if isinstance(helper, str) and helper in test_semantics:
+                    visit(helper)
+
+    visit(name)
+    return ordered
 
 
 def build_scorer_standard_cases(
@@ -298,7 +479,7 @@ def build_scorer_standard_cases(
         occurrences[name] = occurrences.get(name, 0) + 1
         scenario_id = name if occurrences[name] == 1 else f"{name}__{occurrences[name]}"
         tags = scenario_tags.get(name, tag_test(name))
-        facts = merge_semantic_facts([name], test_semantics)
+        facts = merge_semantic_facts(related_test_names(name, test_semantics), test_semantics)
         cases.append(
             {
                 "case_id": str(index),
