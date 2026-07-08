@@ -199,11 +199,16 @@ def check_subagent_evidence(root: Path) -> list[str]:
         errors.append(f"subagent-invocations.jsonl: {rows_error}")
     else:
         seen: set[str] = set()
-        allowed_modes = {"native", "isolated_proxy", "primary_fallback"}
+        allowed_modes = {"native", "generic_subagent", "isolated_proxy", "primary_fallback"}
+        c_analyzer_success_stages: set[str] = set()
         for index, row in enumerate(rows, start=1):
             agent = row.get("agent")
             if agent in REQUIRED_SUBAGENTS:
                 seen.add(agent)
+            if agent == "c-analyzer" and row.get("status") in {"pass", "success"}:
+                stage = row.get("stage")
+                if isinstance(stage, str):
+                    c_analyzer_success_stages.add(stage)
             if row.get("mode") not in allowed_modes:
                 errors.append(f"subagent-invocations.jsonl record {index} has invalid mode")
             if not isinstance(row.get("stage"), str) or not row.get("stage"):
@@ -220,6 +225,11 @@ def check_subagent_evidence(root: Path) -> list[str]:
         missing = sorted(set(REQUIRED_SUBAGENTS) - seen)
         if missing:
             errors.append(f"subagent-invocations.jsonl missing records for: {', '.join(missing)}")
+        individual_c_stages = {"READ_C_PROJECT", "BUILD_C_MODEL", "DESIGN_RUST_API"}
+        if individual_c_stages & c_analyzer_success_stages:
+            errors.append("c-analyzer must be recorded as one C_ANALYSIS invocation, not per C stage")
+        if "c-analyzer" in seen and "C_ANALYSIS" not in c_analyzer_success_stages:
+            errors.append("subagent-invocations.jsonl must include c-analyzer success record with stage C_ANALYSIS")
     return errors
 
 

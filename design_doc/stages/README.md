@@ -22,7 +22,7 @@
 
 ## 分层原则
 
-1. **C 事实与 API 设计同一上下文**：`READ_C_PROJECT`、`BUILD_C_MODEL`、`DESIGN_RUST_API` 由 `c-analyzer` 串行执行，避免重复读取 C 工程。
+1. **C 事实与 API 设计同一上下文**：`READ_C_PROJECT`、`BUILD_C_MODEL`、`DESIGN_RUST_API` 是 `C_ANALYSIS` 阶段族，由一次 `c-analyzer` subagent 任务串行执行，避免重复拉起 subagent 和重复读取 C 工程。
 2. **代码生成与语义实现分离**：`GENERATE_RUST_SCAFFOLD` 只生成项目骨架，`REWRITE_CORE_MODULES` 才实现业务逻辑。
 3. **C 测试基线属于实现完成条件**：`VERIFY_RUST_WITH_C_TESTS` 由 `rust-implementer` 执行，在测试迁移前用原始 C 测试证据验证 Rust core，失败优先修实现或 C ABI facade。
 4. **测试迁移独立验收**：`MIGRATE_TESTS` 只负责测试语义覆盖，不大规模修改 core。
@@ -30,7 +30,7 @@
 6. **报告只收口**：`REPORT_AND_VERIFY` 汇总证据，不补写缺失实现。
 7. **核心域是下限，不是上限**：KVDB/TSDB/FlashStorage 必须覆盖，但真实 FlashDB 新增文件、目录和符号也必须被记录、分类、映射或显式排除。
 8. **构建检查前移**：`GENERATE_RUST_SCAFFOLD` 后立即 `cargo check`，`REWRITE_CORE_MODULES` 每个实现批次后 `cargo check`，避免把骨架错误和核心实现错误堆到 `BUILD_TEST_REPAIR`。
-9. **主控判定、subagent 执行**：重阶段优先由 `c-analyzer`、`rust-implementer`、`test-migrator`、`repairer` 执行；主控只做调度、状态推进、gate 和最终报告。连续 3 次 subagent 失败后才允许主控 fallback。
+9. **主控判定、subagent 执行**：重阶段优先由 `c-analyzer`、`rust-implementer`、`test-migrator`、`repairer` 执行；主控只做调度、状态推进、gate 和最终报告。原生 subagent 不可用时用通用 subagent 读取 `work/skills/{subagent}.md` 执行，连续 3 次 subagent 失败后才允许主控 fallback。
 
 ## 统一产物约定
 

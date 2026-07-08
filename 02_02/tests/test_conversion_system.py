@@ -266,6 +266,26 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertIn("repairer: allow", orchestrator)
         self.assertNotIn("test-triage", orchestrator)
 
+    def test_c_analyzer_is_dispatched_once_for_stage_family(self):
+        orchestrator = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
+        analyzer = (PROJECT / "work" / "skills" / "c-analyzer.md").read_text(encoding="utf-8")
+
+        required_fragments = [
+            "C_ANALYSIS 阶段族",
+            "一次拉起 `c-analyzer`",
+            "从当前 checkpoint 继续执行剩余 C 分析阶段",
+            "不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent",
+            "通用 subagent",
+            "先读取 `work/skills/{subagent}.md`",
+        ]
+        for fragment in required_fragments:
+            self.assertIn(fragment, orchestrator)
+            self.assertIn(fragment, instruction)
+
+        self.assertIn("一次 subagent 任务内连续执行", analyzer)
+        self.assertIn("READ_C_PROJECT -> BUILD_C_MODEL -> DESIGN_RUST_API", analyzer)
+
     def test_project_local_skills_have_valid_frontmatter_and_clear_scope(self):
         expected = ["flashdb-migration", "flashdb-test-migration", "rust-compile-repair", "flashdb-report"]
         for skill_name in expected:
@@ -1431,9 +1451,7 @@ pub extern "C" fn fdb_probe() -> i32 {
             }), encoding="utf-8")
             (trace / "subagent-invocations.jsonl").write_text(
                 "\n".join([
-                    json.dumps({"agent": "c-analyzer", "stage": "READ_C_PROJECT", "mode": "native", "status": "pass"}),
-                    json.dumps({"agent": "c-analyzer", "stage": "BUILD_C_MODEL", "mode": "native", "status": "pass"}),
-                    json.dumps({"agent": "c-analyzer", "stage": "DESIGN_RUST_API", "mode": "native", "status": "pass"}),
+                    json.dumps({"agent": "c-analyzer", "stage": "C_ANALYSIS", "mode": "native", "status": "pass"}),
                     json.dumps({"agent": "rust-implementer", "stage": "GENERATE_RUST_SCAFFOLD", "mode": "native", "status": "pass"}),
                     json.dumps({"agent": "rust-implementer", "stage": "REWRITE_CORE_MODULES", "mode": "native", "status": "pass"}),
                     json.dumps({"agent": "rust-implementer", "stage": "VERIFY_RUST_WITH_C_TESTS", "mode": "native", "status": "pass"}),

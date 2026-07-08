@@ -29,7 +29,9 @@ permission:
 - `test-migrator`：`MIGRATE_TESTS`
 - `repairer`：`BUILD_TEST_REPAIR`
 
-如果平台原生 subagent 可用，直接调用对应 subagent。如果原生 subagent 注册异常，主控仍必须拉起一个隔离任务代理，并把任务写成：先完整读取 `work/skills/{subagent}.md`，再按该 Markdown 执行。只有同一 subagent 连续 3 次失败、超时或输出不合格，并把失败写入 `logs/trace/subagent-invocations.jsonl` 后，主控才允许 fallback 自行执行。
+如果平台原生 subagent 可用，直接调用对应 subagent。如果原生 subagent 注册异常，主控仍必须拉起一个通用 subagent 作为隔离任务代理，并把任务写成：先读取 `work/skills/{subagent}.md`，再按该 Markdown 执行。只有同一 subagent 连续 3 次失败、超时或输出不合格，并把失败写入 `logs/trace/subagent-invocations.jsonl` 后，主控才允许 fallback 自行执行。
+
+`READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API` 是 `C_ANALYSIS 阶段族`。主控必须一次拉起 `c-analyzer`，让它在同一个 subagent 任务内从当前 checkpoint 继续执行剩余 C 分析阶段；不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。如果 `READ_C_PROJECT` 已通过后用户要求继续 `BUILD_C_MODEL`，主控只能启动一次 `c-analyzer`，任务目标是从 `BUILD_C_MODEL` 继续到 `DESIGN_RUST_API` 或到用户指定的停止点。
 
 `logs/trace/agent-registry.json` 必须记录 4 个 subagent 的路径、mode 和职责阶段。`logs/trace/subagent-invocations.jsonl` 必须记录每次 subagent 调用、隔离代理调用、失败和 fallback。
 
@@ -99,7 +101,11 @@ permission:
 python3 work/tools/gate.py --stage INIT_WORKSPACE
 ```
 
-## READ_C_PROJECT
+## C_ANALYSIS 阶段族
+
+`READ_C_PROJECT`、`BUILD_C_MODEL`、`DESIGN_RUST_API` 由一次 `c-analyzer` subagent 任务连续执行。若从中间 checkpoint 恢复，`c-analyzer` 必须跳过已经通过 gate 的阶段，只执行剩余阶段。
+
+### READ_C_PROJECT
 
 由 `c-analyzer` subagent 执行。按优先级选择 FlashDB 输入目录：
 
@@ -121,7 +127,7 @@ python3 work/tools/gate.py --stage READ_C_PROJECT
 
 不得修改平台输入目录。
 
-## BUILD_C_MODEL
+### BUILD_C_MODEL
 
 由 `c-analyzer` subagent 执行。读取 `work/skills/flashdb-migration/SKILL.md` 中 `BUILD_C_MODEL` 规则。
 
@@ -139,7 +145,7 @@ python3 work/tools/gate.py --stage BUILD_C_MODEL
 - `logs/trace/c_test_model.json`
 - `logs/trace/03-build-c-model.md`
 
-## DESIGN_RUST_API
+### DESIGN_RUST_API
 
 由 `c-analyzer` subagent 执行。读取 `work/skills/flashdb-migration/SKILL.md` 中 `DESIGN_RUST_API` 规则。
 

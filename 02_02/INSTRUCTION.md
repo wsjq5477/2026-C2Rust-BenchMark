@@ -19,7 +19,9 @@
 
 work 目录仍为权威源。主控和 subagent Markdown 都按赛题约定保存到 `work/skills/`，subagent 路径形如 `work/skills/{subagent}.md`。若评测环境在启动 opencode 前已经把这些 Markdown 复制到 opencode 原生目录，并且如果启动前已经选择 flashdb-orchestrator 作为 primary agent，则由该 primary agent 执行本文件。
 
-opencode 不能在会话中把当前 primary agent 自切换为另一个 primary agent。因此，如果当前会话已经由默认 Build agent 启动，不要求它运行中切换到 `@flashdb-orchestrator`。默认 Build agent 按普通 Markdown fallback 执行也满足本检查点：完整读取 `work/skills/flashdb-orchestrator.md` 并按其中要求执行。但主控执行重阶段时必须优先拉起对应 subagent；如果平台原生 subagent 注册异常，主控仍必须拉起隔离任务代理，让该代理先读取 `work/skills/{subagent}.md` 后执行。只有同一 subagent 连续 3 次失败并写入 `subagent-invocations.jsonl` 后，主控才允许 fallback 自行执行。
+opencode 不能在会话中把当前 primary agent 自切换为另一个 primary agent。因此，如果当前会话已经由默认 Build agent 启动，不要求它运行中切换到 `@flashdb-orchestrator`。默认 Build agent 按普通 Markdown fallback 执行也满足本检查点：完整读取 `work/skills/flashdb-orchestrator.md` 并按其中要求执行。但主控执行重阶段时必须优先拉起对应 subagent；如果平台原生 subagent 注册异常，主控仍必须拉起一个通用 subagent 作为隔离任务代理，让该代理先读取 `work/skills/{subagent}.md` 后执行。只有同一 subagent 连续 3 次失败并写入 `subagent-invocations.jsonl` 后，主控才允许 fallback 自行执行。
+
+`READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API` 是 `C_ANALYSIS 阶段族`。主控必须一次拉起 `c-analyzer`，让它从当前 checkpoint 继续执行剩余 C 分析阶段；不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。
 
 ## 当前开发检查点
 
@@ -93,7 +95,7 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 
 ### READ_C_PROJECT
 
-1. 优先调用 `c-analyzer` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/c-analyzer.md` 后执行；连续 3 次失败后才允许主控 fallback。
+1. 优先调用 `c-analyzer` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/c-analyzer.md` 后执行；连续 3 次失败后才允许主控 fallback。`READ_C_PROJECT`、`BUILD_C_MODEL`、`DESIGN_RUST_API` 必须作为 `C_ANALYSIS 阶段族` 由一次 `c-analyzer` 任务连续执行。
 2. 选择 `$FLASHDB_SOURCE`，只读取目录结构和文件清单，不修改平台输入。
 3. 运行 `python3 work/tools/scan_c_project.py --source "$FLASHDB_SOURCE" --output logs/trace/input_manifest.json`。
 4. 写入中文 `logs/trace/02-read-c-project.md`。
@@ -102,7 +104,7 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 
 ### BUILD_C_MODEL
 
-1. 继续由 `c-analyzer` subagent 执行，读取 `work/skills/flashdb-migration/SKILL.md` 中 `BUILD_C_MODEL` 规则。
+1. 继续由同一次 `c-analyzer` subagent 执行，读取 `work/skills/flashdb-migration/SKILL.md` 中 `BUILD_C_MODEL` 规则。如果 `READ_C_PROJECT` 已通过后从本阶段恢复，主控只能一次拉起 `c-analyzer`，从 `BUILD_C_MODEL` 继续执行剩余 C 分析阶段。
 2. 运行 `python3 work/tools/build_c_model.py --manifest logs/trace/input_manifest.json --output-dir logs/trace`。
 3. 生成 `logs/trace/c_project_model.json`、`logs/trace/c_api_model.json`、`logs/trace/c_test_model.json`。
 4. 写入中文 `logs/trace/03-build-c-model.md`。
@@ -111,7 +113,7 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 
 ### DESIGN_RUST_API
 
-1. 继续由 `c-analyzer` subagent 执行，读取 `work/skills/flashdb-migration/SKILL.md` 中 `DESIGN_RUST_API` 规则。
+1. 继续由同一次 `c-analyzer` subagent 执行，读取 `work/skills/flashdb-migration/SKILL.md` 中 `DESIGN_RUST_API` 规则。
 2. 运行 `python3 work/tools/design_rust_api.py --project-model logs/trace/c_project_model.json --api-model logs/trace/c_api_model.json --test-model logs/trace/c_test_model.json --output logs/trace/rust_api_design.json`。
 3. 写入中文 `logs/trace/04-design-rust-api.md`，记录核心 API、扩展兼容、未映射符号和未生成源码边界。
 4. 更新 `workflow_state.json`。

@@ -12,7 +12,9 @@ permission:
 
 你是 `READ_C_PROJECT`、`BUILD_C_MODEL` 和 `DESIGN_RUST_API` 阶段的 C 分析与 Rust API 设计 subagent。
 
-主控必须优先拉起你执行这些阶段。如果平台原生 subagent 注册异常，主控仍必须拉起一个隔离任务代理，让它先完整读取 `work/skills/c-analyzer.md` 后执行；只有同一 subagent 连续 3 次失败并写入失败证据后，主控才允许 fallback 自行执行。
+主控必须优先拉起你执行这些阶段。如果平台原生 subagent 注册异常，主控仍必须拉起一个通用 subagent 作为隔离任务代理，让它先读取 `work/skills/c-analyzer.md` 后执行；只有同一 subagent 连续 3 次失败并写入失败证据后，主控才允许 fallback 自行执行。
+
+这三个阶段是 `C_ANALYSIS 阶段族`，必须在一次 subagent 任务内连续执行。主控不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。如果从中间 checkpoint 恢复，你必须从当前 checkpoint 继续执行剩余 C 分析阶段。
 
 ## 职责范围
 
@@ -26,7 +28,7 @@ permission:
 
 ## 执行要求
 
-按顺序执行：
+一次 subagent 任务内连续执行 `READ_C_PROJECT -> BUILD_C_MODEL -> DESIGN_RUST_API`。如果某个阶段已经通过 gate，则从下一个未完成阶段继续：
 
 ```bash
 python3 work/tools/scan_c_project.py --source "$FLASHDB_SOURCE" --output logs/trace/input_manifest.json
