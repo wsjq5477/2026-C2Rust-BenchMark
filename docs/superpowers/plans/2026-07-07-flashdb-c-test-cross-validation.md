@@ -24,7 +24,7 @@
 
 - Create `02_02/work/tools/c_cross_validate.py`: builds a trace-owned validation matrix for C tests against Rust.
 - Modify `02_02/work/tools/gate.py`: add `VERIFY_RUST_WITH_C_TESTS` required state keys and matrix validation.
-- Modify `02_02/work/agents/flashdb-orchestrator.md`: insert the new stage in the primary workflow.
+- Modify `02_02/work/skills/flashdb-orchestrator.md`: insert the new stage in the primary workflow.
 - Modify `design_doc/stages/README.md`: insert the new stage in the stage table and principles.
 - Modify `design_doc/stages/06-rewrite-core-modules.md`: hand off to `VERIFY_RUST_WITH_C_TESTS`.
 - Create `design_doc/stages/06-5-verify-rust-with-c-tests.md`: document the new stage.
@@ -381,7 +381,7 @@ Expected:
 ### Task 3: Update Orchestrator and Stage Docs
 
 **Files:**
-- Modify: `02_02/work/agents/flashdb-orchestrator.md`
+- Modify: `02_02/work/skills/flashdb-orchestrator.md`
 - Modify: `design_doc/stages/README.md`
 - Modify: `design_doc/stages/06-rewrite-core-modules.md`
 - Create: `design_doc/stages/06-5-verify-rust-with-c-tests.md`
@@ -396,7 +396,7 @@ Expected:
 
 - [ ] **Step 1: Insert stage in orchestrator list**
 
-Update the stage list in `02_02/work/agents/flashdb-orchestrator.md` to:
+Update the stage list in `02_02/work/skills/flashdb-orchestrator.md` to:
 
 ```text
 7. `REWRITE_CORE_MODULES`

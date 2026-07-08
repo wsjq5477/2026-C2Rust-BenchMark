@@ -24,7 +24,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
     def test_design_doc_layout_exists_and_legacy_layout_is_absent(self):
         required_files = [
             PROJECT / "INSTRUCTION.md",
-            PROJECT / "work" / "agents" / "flashdb-orchestrator.md",
+            PROJECT / "work" / "skills" / "flashdb-orchestrator.md",
             PROJECT / "work" / "skills" / "test-migrator.md",
             PROJECT / "work" / "skills" / "test-triage.md",
             PROJECT / "work" / "skills" / "repairer.md",
@@ -57,9 +57,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
         forbidden_paths = [
             PROJECT / "opencode.json",
             PROJECT / "flashDB_rust",
-            PROJECT / "work" / "agents" / "test-migrator.md",
-            PROJECT / "work" / "agents" / "test-triage.md",
-            PROJECT / "work" / "agents" / "repairer.md",
+            PROJECT / "work" / "agents",
             PROJECT / "work" / "skills" / "c-to-rust",
             PROJECT / "work" / "skills" / "dependency-analyzer.md",
             PROJECT / "work" / "skills" / "rust-translator.md",
@@ -73,9 +71,9 @@ class FrameworkCheckpointTests(unittest.TestCase):
         text = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
         required_fragments = [
             "@flashdb-orchestrator",
-            ".opencode/agents/flashdb-orchestrator.md",
+            ".opencode/skills/flashdb-orchestrator.md",
             ".opencode/skills",
-            "work/agents/flashdb-orchestrator.md",
+            "work/skills/flashdb-orchestrator.md",
             "work/skills/{subagent}.md",
             "work/skills/test-migrator.md",
             "work/skills/test-triage.md",
@@ -88,13 +86,11 @@ class FrameworkCheckpointTests(unittest.TestCase):
         for fragment in required_fragments:
             self.assertIn(fragment, text)
         self.assertNotIn("必须立即使用 `@flashdb-orchestrator`", text)
-        self.assertNotIn("work/agents/test-migrator.md", text)
-        self.assertNotIn("work/agents/test-triage.md", text)
-        self.assertNotIn("work/agents/repairer.md", text)
+        self.assertNotIn("work/agents", text)
 
     def test_agent_and_subagent_markdown_have_opencode_frontmatter(self):
         expected = {
-            PROJECT / "work" / "agents" / "flashdb-orchestrator.md": ("mode: primary", "description:"),
+            PROJECT / "work" / "skills" / "flashdb-orchestrator.md": ("mode: primary", "description:"),
             PROJECT / "work" / "skills" / "test-migrator.md": ("mode: subagent", "description:"),
             PROJECT / "work" / "skills" / "test-triage.md": ("mode: subagent", "description:"),
             PROJECT / "work" / "skills" / "repairer.md": ("mode: subagent", "description:"),
@@ -112,8 +108,8 @@ class FrameworkCheckpointTests(unittest.TestCase):
         if not mirror.exists():
             self.skipTest(".opencode mirror is created outside the checked-in workbench")
 
-        source_agent = PROJECT / "work" / "agents" / "flashdb-orchestrator.md"
-        mirror_agent = mirror / "agents" / "flashdb-orchestrator.md"
+        source_agent = PROJECT / "work" / "skills" / "flashdb-orchestrator.md"
+        mirror_agent = mirror / "skills" / "flashdb-orchestrator.md"
         self.assertTrue(mirror_agent.is_file())
         self.assertEqual(source_agent.read_text(encoding="utf-8"), mirror_agent.read_text(encoding="utf-8"))
 
@@ -132,7 +128,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
         text = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
         required_fragments = [
             "/app/code/judge-assets/02_02_c_to_rust/code/FlashDB",
-            "work/agents/flashdb-orchestrator.md",
+            "work/skills/flashdb-orchestrator.md",
             "BOOTSTRAP",
             "INIT_WORKSPACE",
             "READ_C_PROJECT",
@@ -186,7 +182,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertNotIn("opencode 已使用 `@flashdb-orchestrator` 接管", text)
 
     def test_orchestrator_declares_exact_first_checkpoint_contract(self):
-        text = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        text = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
         required_fragments = [
             "BOOTSTRAP",
             "INIT_WORKSPACE",
@@ -318,7 +314,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
 
     def test_init_workspace_documents_regenerated_outputs_and_empty_interaction_log(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
-        orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        orchestrator = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
         for text in [instruction, orchestrator]:
             self.assertIn("删除旧", text)
             self.assertIn("重新创建", text)

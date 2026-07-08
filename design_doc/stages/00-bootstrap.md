@@ -16,13 +16,13 @@ opencode 默认 Build agent 或启动前选中的 flashdb-orchestrator primary a
 
 ```text
 02_02/INSTRUCTION.md
-02_02/work/agents/flashdb-orchestrator.md
+02_02/work/skills/flashdb-orchestrator.md
 ```
 
 可选运行镜像：
 
 ```text
-02_02/.opencode/agents/flashdb-orchestrator.md
+02_02/.opencode/skills/flashdb-orchestrator.md
 02_02/.opencode/skills/
 ```
 
@@ -41,7 +41,7 @@ opencode 默认 Build agent 或启动前选中的 flashdb-orchestrator primary a
 opencode 必须：
 
 1. 从作品根目录读取 `INSTRUCTION.md`。
-2. 读取 `work/agents/flashdb-orchestrator.md`。
+2. 读取 `work/skills/flashdb-orchestrator.md`。
 3. 识别当前允许执行到哪个检查点。
 4. 识别最终输出目录是 `flashDB_rust`，但不得提前生成。
 5. 识别平台输入优先路径：

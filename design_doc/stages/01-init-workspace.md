@@ -15,7 +15,7 @@ flashdb-orchestrator + work/tools/gate.py
 ```text
 当前作品根目录
 INSTRUCTION.md
-work/agents/flashdb-orchestrator.md
+work/skills/flashdb-orchestrator.md
 ```
 
 ## 输出

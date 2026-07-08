@@ -7,24 +7,24 @@
 - 作品根目录：本文件所在目录，评测环境通常为 `/app/code/02_02`
 - 平台 C 输入：`/app/code/judge-assets/02_02_c_to_rust/code/FlashDB`
 - 最终 Rust 输出：作品根目录下的 `flashDB_rust`
-- 主控 Agent：`work/agents/flashdb-orchestrator.md`
+- 主控 Agent：`work/skills/flashdb-orchestrator.md`
 - subagent Markdown：`work/skills/test-migrator.md`、`work/skills/test-triage.md`、`work/skills/repairer.md`
-- opencode 原生 Agent 镜像：`.opencode/agents/flashdb-orchestrator.md`
+- opencode 原生 Agent 镜像：`.opencode/skills/flashdb-orchestrator.md`
 - opencode 原生 Skill 镜像：`.opencode/skills`
 - 状态与证据：`logs/trace`
 - 最终报告：`result/output.md` 和 `result/issues/00-summary.md`
 
 ## opencode 原生执行入口
 
-work 目录仍为权威源。`work/agents` 只保存 primary agent；subagent 也按赛题约定保存到 `work/skills/{subagent}.md`。若评测环境或本地环境在启动 opencode 前已经把 `work/agents/flashdb-orchestrator.md` 复制到 `.opencode/agents/flashdb-orchestrator.md`，并把 `work/skills` 复制到 `.opencode/skills`，并且如果启动前已经选择 flashdb-orchestrator 作为 primary agent，则由该 primary agent 执行本文件。
+work 目录仍为权威源。主控和 subagent Markdown 都按赛题约定保存到 `work/skills/`，subagent 路径形如 `work/skills/{subagent}.md`。若评测环境或本地环境在启动 opencode 前已经把 `work/skills/flashdb-orchestrator.md` 复制到 `.opencode/skills/flashdb-orchestrator.md`，并把 `work/skills` 复制到 `.opencode/skills`，并且如果启动前已经选择 flashdb-orchestrator 作为 primary agent，则由该 primary agent 执行本文件。
 
-opencode 不能在会话中把当前 primary agent 自切换为另一个 primary agent。因此，如果当前会话已经由默认 Build agent 启动，不要求它运行中切换到 `@flashdb-orchestrator`，也不要为了形式条件调用 subagent。默认 Build agent 按普通 Markdown fallback 执行也满足本检查点：完整读取 `work/agents/flashdb-orchestrator.md` 并按其中要求执行。两种方式的阶段边界和禁止事项完全一致。
+opencode 不能在会话中把当前 primary agent 自切换为另一个 primary agent。因此，如果当前会话已经由默认 Build agent 启动，不要求它运行中切换到 `@flashdb-orchestrator`，也不要为了形式条件调用 subagent。默认 Build agent 按普通 Markdown fallback 执行也满足本检查点：完整读取 `work/skills/flashdb-orchestrator.md` 并按其中要求执行。两种方式的阶段边界和禁止事项完全一致。
 
 ## 当前开发检查点
 
 当前实现并验证完整检查点：`BOOTSTRAP + INIT_WORKSPACE + READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API + GENERATE_RUST_SCAFFOLD + REWRITE_CORE_MODULES + VERIFY_RUST_WITH_C_TESTS + MIGRATE_TESTS + BUILD_TEST_REPAIR + REPORT_AND_VERIFY`。
 
-opencode 必须执行主控 Agent 文档中的完整流程。若会话启动时已经选中 `@flashdb-orchestrator` primary agent，则由它执行；否则由默认 Build agent 完整读取 `work/agents/flashdb-orchestrator.md` 后执行。
+opencode 必须执行主控 Agent 文档中的完整流程。若会话启动时已经选中 `@flashdb-orchestrator` primary agent，则由它执行；否则由默认 Build agent 完整读取 `work/skills/flashdb-orchestrator.md` 后执行。
 
 完成前不得写入 `STATUS: SUCCESS`。只有 `REPORT_AND_VERIFY` gate 通过后，才允许最终报告写入 `STATUS: SUCCESS`。
 

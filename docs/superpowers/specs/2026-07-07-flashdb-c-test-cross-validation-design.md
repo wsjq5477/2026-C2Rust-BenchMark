@@ -210,7 +210,7 @@ This is the main value of the matrix: it prevents the repair loop from changing 
 
 The implementation must update:
 
-- `02_02/work/agents/flashdb-orchestrator.md`
+- `02_02/work/skills/flashdb-orchestrator.md`
 - `design_doc/stages/README.md`
 - `design_doc/stages/06-rewrite-core-modules.md`
 - `design_doc/stages/07-migrate-tests.md`
