@@ -52,6 +52,9 @@ opencode 根据 C 模型和架构知识写出 `rust_api_design.json`，至少包
   "tsdb_api": [],
   "extension_api": [],
   "test_api": {},
+  "c_abi_facade": {
+    "structs": []
+  },
   "error_model": {},
   "storage_model": {},
   "c_to_rust_symbol_map": {},
@@ -81,6 +84,8 @@ opencode 根据 C 模型和架构知识写出 `rust_api_design.json`，至少包
 - `test_api.observables` 必须声明 C 测试需要的 Rust 观察接口，例如 `oldest_addr`、`is_initialized`、`sector_status`；
 - `test_api.controls` 必须声明 C control 接口对应的 Rust builder/config/control 能力；
 - `storage_constraints` 必须记录后端约束。如果 C 输入启用 POSIX file mode 或包含 file storage 源码，应声明 `backend: "file_sector_mode"`、sector 文件模式和 fd cache 约束。
+- `c_abi_facade.structs` 必须完全来自 `c_api_model.json.abi_layouts`，每个结构体记录 `c_name`、`rust_name`、`sizeof`、`alignof`、`fields` 和 `notes`；
+- `notes` 必须记录影响布局的 active macros 或条件编译说明，禁止在 Rust API 设计阶段重新猜测字段。
 
 扩展兼容项必须明确：
 
@@ -122,6 +127,7 @@ python3 work/tools/gate.py --stage DESIGN_RUST_API
 - 如果 C 测试义务包含 `verify_init_state`，`test_api.observables` 必须包含 `is_initialized`；
 - 如果 C 测试义务包含 `use_control_interface`，`test_api.controls` 必须包含 control 等价接口；
 - 如果 C 测试义务包含跨 sector 数据规模，`storage_constraints.backend` 必须为 `file_sector_mode`；
+- 如果 `c_api_model.json.abi_layouts` 非空，`rust_api_design.json.c_abi_facade.structs` 必须一一覆盖并保留布局字段；
 - `workflow_state.json.current_stage == DESIGN_RUST_API`；
 - `flashDB_rust` 不存在或只允许在后续阶段创建。
 

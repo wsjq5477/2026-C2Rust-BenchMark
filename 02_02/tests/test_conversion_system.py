@@ -55,6 +55,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             PROJECT / "work" / "knowledge" / "flashdb-rust-architecture.md",
             PROJECT / "work" / "tools" / "gate.py",
             PROJECT / "work" / "tools" / "scan_c_project.py",
+            PROJECT / "work" / "tools" / "abi_layout_extractor.py",
             PROJECT / "work" / "tools" / "build_c_model.py",
             PROJECT / "work" / "tools" / "design_rust_api.py",
             PROJECT / "work" / "tools" / "generate_rust_scaffold.py",
@@ -341,6 +342,47 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertIn("不做 Clang AST", migration_skill)
         self.assertIn("不做宏展开", migration_skill)
 
+    def test_abi_layout_extractor_uses_c_compiler_active_layout(self):
+        extractor = load_tool("abi_layout_extractor.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "inc").mkdir()
+            (root / "inc" / "fdb_cfg.h").write_text(
+                "#define FDB_USING_FILE_POSIX_MODE\n"
+                "#ifdef FDB_USING_FILE_POSIX_MODE\n"
+                "#define FDB_USING_FILE_MODE\n"
+                "#endif\n",
+                encoding="utf-8",
+            )
+            (root / "inc" / "flashdb.h").write_text(
+                "#include \"fdb_cfg.h\"\n"
+                "#include <stddef.h>\n"
+                "struct fdb_db {\n"
+                "  int status;\n"
+                "#ifdef FDB_USING_FILE_MODE\n"
+                "  void *storage;\n"
+                "#endif\n"
+                "};\n",
+                encoding="utf-8",
+            )
+
+            result = extractor.extract_layouts(
+                project_root=root,
+                include_dirs=["inc"],
+                config_headers=["inc/fdb_cfg.h"],
+                struct_names=["fdb_db"],
+            )
+
+            layout = result["abi_layouts"][0]
+            self.assertEqual("fdb_db", layout["name"])
+            self.assertGreaterEqual(layout["sizeof"], 8)
+            self.assertIn("FDB_USING_FILE_MODE", layout["active_macros"])
+            fields = {field["name"]: field for field in layout["fields"]}
+            self.assertIn("status", fields)
+            self.assertIn("storage", fields)
+            self.assertEqual(0, fields["status"]["offset"])
+            self.assertGreater(fields["storage"]["offset"], fields["status"]["offset"])
+
     def test_gate_init_workspace_rejects_missing_state_and_accepts_valid_state(self):
         gate = PROJECT / "work" / "tools" / "gate.py"
         with tempfile.TemporaryDirectory() as td:
@@ -510,6 +552,14 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertIn("fdb_tsdb_init", api_model["tsdb_symbols"])
         self.assertIn("FDB_NO_ERR", api_model["enum_values"])
         self.assertTrue(any(item["name"] == "fdb_kvdb" for item in api_model["structs"]))
+        self.assertIn("abi_layouts", api_model)
+        abi_names = {item["name"] for item in api_model["abi_layouts"]}
+        for name in ["fdb_db", "fdb_kvdb", "fdb_tsdb", "fdb_blob"]:
+            self.assertIn(name, abi_names)
+        db_layout = next(item for item in api_model["abi_layouts"] if item["name"] == "fdb_db")
+        self.assertGreater(db_layout["sizeof"], 0)
+        self.assertGreater(db_layout["alignof"], 0)
+        self.assertTrue(db_layout["fields"])
 
         self.assertIn("tests/fdb_kvdb_tc.c", test_model["test_files"])
         self.assertIn("tests/fdb_tsdb_tc.c", test_model["test_files"])
@@ -718,12 +768,116 @@ pub extern "C" fn fdb_probe() -> i32 {
             self.assertEqual({"pass": 2}, matrix["summary"]["rust_impl_c_test"])
             self.assertTrue((trace / "c-cross" / "kvdb_runner").is_file())
             self.assertTrue((trace / "c-cross" / "tsdb_runner").is_file())
+            self.assertTrue((trace / "c-cross" / "layout_checker").is_file())
+            layout_log = (trace / "c-cross" / "layout-check.log").read_text(encoding="utf-8")
+            self.assertIn("[LAYOUT CHECK] pass", layout_log)
             compile_log = (trace / "c-cross" / "cross-compile.log").read_text(encoding="utf-8")
             self.assertIn("cargo build --release", compile_log)
             self.assertIn("cc ", compile_log)
             for item in matrix["scenarios"]:
                 self.assertEqual("pass", item["rust_impl_c_test"])
                 self.assertEqual("rust_implementation_matches_c_baseline_for_scenario", item["diagnosis"])
+
+    def test_c_cross_validate_fails_fast_on_layout_mismatch(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            trace.mkdir(parents=True)
+            project = root / "flashDB_rust"
+            (project / "src").mkdir(parents=True)
+            (project / "Cargo.toml").write_text(
+                """
+[package]
+name = "flashdb_rust"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "flashdb_rust"
+path = "src/lib.rs"
+crate-type = ["rlib", "staticlib"]
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            (project / "src" / "lib.rs").write_text(
+                """
+#[no_mangle]
+pub extern "C" fn rust_sizeof_fdb_db() -> usize { 4 }
+
+#[no_mangle]
+pub extern "C" fn rust_alignof_fdb_db() -> usize { 4 }
+
+#[no_mangle]
+pub extern "C" fn rust_offsetof_fdb_db_status() -> usize { 0 }
+
+#[no_mangle]
+pub extern "C" fn rust_offsetof_fdb_db_storage() -> usize { usize::MAX }
+
+#[no_mangle]
+pub extern "C" fn fdb_probe() -> i32 { 7 }
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            c_root = root / "FlashDB"
+            (c_root / "inc").mkdir(parents=True)
+            (c_root / "tests").mkdir(parents=True)
+            (c_root / "inc" / "flashdb.h").write_text(
+                "struct fdb_db { int status; void *storage; };\nint fdb_probe(void);\n",
+                encoding="utf-8",
+            )
+            (c_root / "tests" / "kvdb_main.c").write_text(
+                '#include <flashdb.h>\nint main(void) { return fdb_probe() == 7 ? 0 : 1; }\n',
+                encoding="utf-8",
+            )
+            (trace / "workflow_state.json").write_text(json.dumps({"input_path": str(c_root)}), encoding="utf-8")
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "scorer_standard_cases": [
+                    {"case_id": "1", "scenario_id": "test_layout_guard", "suite": "kvdb"},
+                ],
+            }), encoding="utf-8")
+            (trace / "c_api_model.json").write_text(json.dumps({
+                "abi_layouts": [
+                    {
+                        "name": "fdb_db",
+                        "sizeof": 16,
+                        "alignof": 8,
+                        "active_macros": ["FDB_USING_FILE_MODE"],
+                        "fields": [
+                            {"name": "status", "ctype": "int", "offset": 0, "sizeof": 4},
+                            {"name": "storage", "ctype": "void *", "offset": 8, "sizeof": 8},
+                        ],
+                    }
+                ]
+            }), encoding="utf-8")
+            (trace / "rust_api_design.json").write_text(json.dumps({
+                "c_abi_facade": {
+                    "structs": [
+                        {
+                            "c_name": "fdb_db",
+                            "rust_name": "FdbDb",
+                            "sizeof": 16,
+                            "alignof": 8,
+                            "fields": [
+                                {"name": "status", "offset": 0, "sizeof": 4},
+                                {"name": "storage", "offset": 8, "sizeof": 8},
+                            ],
+                            "notes": ["active macro FDB_USING_FILE_MODE"],
+                        }
+                    ]
+                }
+            }), encoding="utf-8")
+
+            matrix = cross.build_matrix(root, trace, project_name="flashDB_rust")
+
+            self.assertEqual({"fail": 1}, matrix["summary"]["rust_impl_c_test"])
+            self.assertFalse((trace / "c-cross" / "kvdb_runner").exists())
+            layout_log = (trace / "c-cross" / "layout-check.log").read_text(encoding="utf-8")
+            self.assertIn("[LAYOUT MISMATCH]", layout_log)
+            self.assertIn("field=fdb_db.storage", layout_log)
+            self.assertIn("layout mismatch", matrix["scenarios"][0]["reason"])
 
     def test_verify_rust_with_c_tests_rejects_not_supported_matrix(self):
         gate = load_tool("gate.py")
@@ -863,6 +1017,37 @@ pub extern "C" fn fdb_probe() -> i32 {
                 "scenario_tags": {"test_fdb_gc": ["kvdb", "gc"]},
             }), encoding="utf-8")
             (root / "logs" / "trace" / "03-build-c-model.md").write_text("# model\n", encoding="utf-8")
+            missing_abi = subprocess.run(
+                [sys.executable, str(gate), "--stage", "BUILD_C_MODEL", "--root", str(root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertNotEqual(0, missing_abi.returncode)
+            self.assertIn("c_api_model.json abi_layouts must be a non-empty list", missing_abi.stdout)
+
+            (root / "logs" / "trace" / "c_api_model.json").write_text(json.dumps({
+                "public_functions": ["fdb_kvdb_init", "fdb_tsdb_init"],
+                "kvdb_symbols": ["fdb_kvdb_init"],
+                "tsdb_symbols": ["fdb_tsdb_init"],
+                "public_headers": ["inc/flashdb.h"],
+                "structs": [{"name": "fdb_kvdb", "file": "inc/fdb_def.h"}],
+                "abi_layouts": [
+                    {
+                        "name": "fdb_kvdb",
+                        "sizeof": 32,
+                        "alignof": 8,
+                        "active_macros": ["FDB_USING_FILE_MODE"],
+                        "fields": [
+                            {"name": "parent", "ctype": "struct fdb_db", "offset": 0, "sizeof": 16}
+                        ],
+                    }
+                ],
+                "typedefs": [],
+                "macros": [],
+                "enums": [],
+                "enum_values": ["FDB_NO_ERR"],
+            }), encoding="utf-8")
             passed = subprocess.run(
                 [sys.executable, str(gate), "--stage", "BUILD_C_MODEL", "--root", str(root)],
                 stdout=subprocess.PIPE,
@@ -895,6 +1080,16 @@ pub extern "C" fn fdb_probe() -> i32 {
         self.assertTrue(set(design["c_to_rust_symbol_map"]).issubset(public_symbols))
         self.assertIn("kvdb_tests", design["test_api"])
         self.assertIn("tsdb_tests", design["test_api"])
+        self.assertIn("c_abi_facade", design)
+        facade_names = {item["c_name"] for item in design["c_abi_facade"]["structs"]}
+        model_names = {item["name"] for item in models["c_api_model"]["abi_layouts"]}
+        self.assertEqual(model_names, facade_names)
+        for struct in design["c_abi_facade"]["structs"]:
+            self.assertIn("rust_name", struct)
+            self.assertIn("sizeof", struct)
+            self.assertIn("alignof", struct)
+            self.assertIn("fields", struct)
+            self.assertIn("notes", struct)
 
     def test_design_rust_api_cli_writes_design(self):
         scanner = load_tool("scan_c_project.py")
@@ -970,6 +1165,19 @@ pub extern "C" fn fdb_probe() -> i32 {
             self.assertNotEqual(0, missing.returncode)
             self.assertIn("rust_api_design.json", missing.stdout)
 
+            (trace / "c_api_model.json").write_text(json.dumps({
+                "abi_layouts": [
+                    {
+                        "name": "fdb_db",
+                        "sizeof": 16,
+                        "alignof": 8,
+                        "active_macros": ["FDB_USING_FILE_MODE"],
+                        "fields": [
+                            {"name": "storage", "ctype": "void *", "offset": 8, "sizeof": 8}
+                        ],
+                    }
+                ]
+            }), encoding="utf-8")
             valid_design = {
                 "crate_name": "flashdb_rust",
                 "modules": ["error", "flash", "kvdb", "tsdb"],
@@ -981,6 +1189,31 @@ pub extern "C" fn fdb_probe() -> i32 {
                 "error_model": {"result_alias": "Result<T, FdbError>"},
                 "storage_model": {"implementations": ["MemFlash", "FileFlash"]},
                 "c_to_rust_symbol_map": {"fdb_kvdb_init": "KvDb::open", "fdb_tsdb_init": "TsDb::open"},
+            }
+            (trace / "rust_api_design.json").write_text(json.dumps(valid_design), encoding="utf-8")
+            (trace / "04-design-rust-api.md").write_text("# Rust API 设计\n\n本阶段只设计 API，不生成 Rust 项目。\n", encoding="utf-8")
+            missing_facade = subprocess.run(
+                [sys.executable, str(gate), "--stage", "DESIGN_RUST_API", "--root", str(root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertNotEqual(0, missing_facade.returncode)
+            self.assertIn("rust_api_design.json c_abi_facade.structs must cover c_api_model.json abi_layouts", missing_facade.stdout)
+
+            valid_design["c_abi_facade"] = {
+                "structs": [
+                    {
+                        "c_name": "fdb_db",
+                        "rust_name": "FdbDb",
+                        "sizeof": 16,
+                        "alignof": 8,
+                        "fields": [
+                            {"name": "storage", "ctype": "void *", "offset": 8, "sizeof": 8}
+                        ],
+                        "notes": ["Active layout macros: FDB_USING_FILE_MODE"],
+                    }
+                ]
             }
             (trace / "rust_api_design.json").write_text(json.dumps(valid_design), encoding="utf-8")
             (trace / "04-design-rust-api.md").write_text("# API Design\n\nEnglish only log.\n", encoding="utf-8")
@@ -1018,6 +1251,21 @@ pub extern "C" fn fdb_probe() -> i32 {
                 "kvdb_api": [{"name": "set"}, {"name": "get"}, {"name": "delete"}],
                 "tsdb_api": [{"name": "append"}, {"name": "query_by_time"}],
                 "test_api": {"kvdb_tests": ["test_fdb_kv_set_get"], "tsdb_tests": ["test_fdb_tsl_append"]},
+                "c_abi_facade": {
+                    "structs": [
+                        {
+                            "c_name": "fdb_db",
+                            "rust_name": "FdbDb",
+                            "sizeof": 16,
+                            "alignof": 8,
+                            "fields": [
+                                {"name": "status", "offset": 0, "sizeof": 4},
+                                {"name": "storage", "offset": 8, "sizeof": 8},
+                            ],
+                            "notes": ["active macro FDB_USING_FILE_MODE"],
+                        }
+                    ]
+                },
                 "unmapped_symbols": [],
                 "excluded_sources": [],
             }
@@ -1056,8 +1304,21 @@ pub extern "C" fn fdb_probe() -> i32 {
             )
             self.assertEqual(0, scaffold_run.returncode, scaffold_run.stdout)
             self.assertIn("GENERATE_RUST_SCAFFOLD: SCAFFOLD_WRITTEN", scaffold_run.stdout)
-            for rel_path in ["Cargo.toml", "src/lib.rs", "src/error.rs", "src/flash.rs", "src/kvdb.rs", "src/tsdb.rs"]:
+            for rel_path in [
+                "Cargo.toml",
+                "src/lib.rs",
+                "src/error.rs",
+                "src/flash.rs",
+                "src/kvdb.rs",
+                "src/tsdb.rs",
+                "src/ffi/mod.rs",
+                "src/ffi/layout_probe.rs",
+            ]:
                 self.assertTrue((root / "flashDB_rust" / rel_path).is_file(), rel_path)
+            layout_probe = (root / "flashDB_rust" / "src" / "ffi" / "layout_probe.rs").read_text(encoding="utf-8")
+            self.assertIn("rust_sizeof_fdb_db", layout_probe)
+            self.assertIn("rust_alignof_fdb_db", layout_probe)
+            self.assertIn("rust_offsetof_fdb_db_storage", layout_probe)
 
             migrate_run = subprocess.run(
                 [

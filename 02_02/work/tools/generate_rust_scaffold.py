@@ -34,9 +34,75 @@ def safe_rust_ident(name: str) -> str:
     return ident
 
 
+def c_symbol_suffix(name: str) -> str:
+    return safe_rust_ident(name)
+
+
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.rstrip() + "\n", encoding="utf-8")
+
+
+def generate_layout_probe(design: dict[str, Any]) -> str:
+    facade = design.get("c_abi_facade")
+    structs = facade.get("structs") if isinstance(facade, dict) else []
+    if not isinstance(structs, list):
+        structs = []
+    lines = [
+        "//! C ABI layout probe exports used by VERIFY_RUST_WITH_C_TESTS.",
+        "//!",
+        "//! The scaffold initializes these from rust_api_design.json so the symbols",
+        "//! exist early. rust-implementer must replace constants with actual",
+        "//! core::mem::size_of/align_of and offset calculations once FFI structs",
+        "//! are implemented.",
+        "",
+        "pub const RUST_MISSING_FIELD_OFFSET: usize = usize::MAX;",
+        "",
+    ]
+    for struct in structs:
+        if not isinstance(struct, dict) or not isinstance(struct.get("c_name"), str):
+            continue
+        c_name = struct["c_name"]
+        suffix = c_symbol_suffix(c_name)
+        sizeof = struct.get("sizeof")
+        alignof = struct.get("alignof")
+        sizeof_value = sizeof if isinstance(sizeof, int) and sizeof >= 0 else 0
+        alignof_value = alignof if isinstance(alignof, int) and alignof >= 0 else 0
+        lines.extend(
+            [
+                "#[no_mangle]",
+                f"pub extern \"C\" fn rust_sizeof_{suffix}() -> usize {{ {sizeof_value} }}",
+                "",
+                "#[no_mangle]",
+                f"pub extern \"C\" fn rust_alignof_{suffix}() -> usize {{ {alignof_value} }}",
+                "",
+            ]
+        )
+        fields = struct.get("fields", [])
+        if not isinstance(fields, list):
+            fields = []
+        for field in fields:
+            if not isinstance(field, dict) or not isinstance(field.get("name"), str):
+                continue
+            field_suffix = c_symbol_suffix(field["name"])
+            offset = field.get("offset")
+            offset_value = offset if isinstance(offset, int) and offset >= 0 else "RUST_MISSING_FIELD_OFFSET"
+            lines.extend(
+                [
+                    "#[no_mangle]",
+                    f"pub extern \"C\" fn rust_offsetof_{suffix}_{field_suffix}() -> usize {{ {offset_value} }}",
+                    "",
+                ]
+            )
+    if len(lines) == 7:
+        lines.extend(
+            [
+                "#[no_mangle]",
+                "pub extern \"C\" fn rust_layout_probe_available() -> usize { 1 }",
+                "",
+            ]
+        )
+    return "\n".join(str(line) for line in lines)
 
 
 def generate_project(design: dict[str, Any], project: Path) -> None:
@@ -60,6 +126,8 @@ crate-type = ["rlib", "staticlib"]
     lib_lines = [f"pub mod {name};" for name in modules]
     if "c_abi" not in modules:
         lib_lines.append("pub mod c_abi;")
+    if "ffi" not in modules:
+        lib_lines.append("pub mod ffi;")
     lib_lines.append("pub use error::{Error, Result};")
     write(project / "src" / "lib.rs", "\n".join(lib_lines))
 
@@ -298,6 +366,9 @@ pub extern "C" fn fdb_calc_crc32(crc: u32, _buf: *const c_void, _size: usize) ->
 }
 """,
     )
+
+    write(project / "src" / "ffi" / "mod.rs", "pub mod layout_probe;\n")
+    write(project / "src" / "ffi" / "layout_probe.rs", generate_layout_probe(design))
 
     (project / "tests").mkdir(parents=True, exist_ok=True)
 

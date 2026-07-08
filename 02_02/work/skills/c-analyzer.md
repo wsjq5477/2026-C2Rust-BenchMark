@@ -22,8 +22,8 @@ permission:
 
 - 选择并记录 `$FLASHDB_SOURCE`。
 - 只读扫描 FlashDB C 输入目录，生成 `logs/trace/input_manifest.json`。
-- 基于当前 C 输入动态生成 `logs/trace/c_project_model.json`、`logs/trace/c_api_model.json`、`logs/trace/c_test_model.json`。
-- 基于 C 模型和测试模型生成 `logs/trace/rust_api_design.json`。
+- 基于当前 C 输入动态生成 `logs/trace/c_project_model.json`、`logs/trace/c_api_model.json`、`logs/trace/c_test_model.json`，其中 `c_api_model.json.abi_layouts` 必须记录 C 编译器确认的 ABI struct 布局。
+- 基于 C 模型和测试模型生成 `logs/trace/rust_api_design.json`，其中 `c_abi_facade` 必须来自 `c_api_model.json.abi_layouts`。
 - 写入中文阶段日志：`02-read-c-project.md`、`03-build-c-model.md`、`04-design-rust-api.md`。
 - 更新 `logs/trace/workflow_state.json`。
 - 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。

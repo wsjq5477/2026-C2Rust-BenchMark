@@ -119,6 +119,88 @@ def check_design_test_contracts(design: dict[str, Any], test_model: dict[str, An
     return errors
 
 
+def check_abi_layout_contract(api_model: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    layouts = api_model.get("abi_layouts")
+    if not isinstance(layouts, list) or not layouts:
+        return ["c_api_model.json abi_layouts must be a non-empty list"]
+    names: set[str] = set()
+    for index, layout in enumerate(layouts, start=1):
+        if not isinstance(layout, dict):
+            errors.append(f"c_api_model.json abi_layouts entry {index} must be an object")
+            continue
+        name = layout.get("name")
+        if not isinstance(name, str) or not name:
+            errors.append(f"c_api_model.json abi_layouts entry {index} must include name")
+            continue
+        if name in names:
+            errors.append(f"c_api_model.json abi_layouts duplicate struct {name}")
+        names.add(name)
+        if layout.get("error"):
+            errors.append(f"c_api_model.json abi_layouts {name} has extractor error: {layout.get('error')}")
+        if not isinstance(layout.get("sizeof"), int) or layout.get("sizeof") <= 0:
+            errors.append(f"c_api_model.json abi_layouts {name} must include positive sizeof")
+        if not isinstance(layout.get("alignof"), int) or layout.get("alignof") <= 0:
+            errors.append(f"c_api_model.json abi_layouts {name} must include positive alignof")
+        fields = layout.get("fields")
+        if not isinstance(fields, list) or not fields:
+            errors.append(f"c_api_model.json abi_layouts {name} fields must be a non-empty list")
+            continue
+        field_names: set[str] = set()
+        for field in fields:
+            if not isinstance(field, dict) or not isinstance(field.get("name"), str):
+                errors.append(f"c_api_model.json abi_layouts {name} fields must include field names")
+                continue
+            field_name = field["name"]
+            if field_name in field_names:
+                errors.append(f"c_api_model.json abi_layouts {name} duplicate field {field_name}")
+            field_names.add(field_name)
+            if not isinstance(field.get("offset"), int) or field.get("offset") < 0:
+                errors.append(f"c_api_model.json abi_layouts {name}.{field_name} must include offset")
+            if not isinstance(field.get("sizeof"), int) or field.get("sizeof") <= 0:
+                errors.append(f"c_api_model.json abi_layouts {name}.{field_name} must include positive sizeof")
+    return errors
+
+
+def check_c_abi_facade_contract(design: dict[str, Any], api_model: dict[str, Any]) -> list[str]:
+    layouts = api_model.get("abi_layouts")
+    if not isinstance(layouts, list) or not layouts:
+        return []
+    expected = {
+        layout.get("name")
+        for layout in layouts
+        if isinstance(layout, dict) and isinstance(layout.get("name"), str)
+    }
+    facade = design.get("c_abi_facade")
+    structs = facade.get("structs") if isinstance(facade, dict) else None
+    if not isinstance(structs, list):
+        return ["rust_api_design.json c_abi_facade.structs must cover c_api_model.json abi_layouts"]
+    actual = {
+        item.get("c_name")
+        for item in structs
+        if isinstance(item, dict) and isinstance(item.get("c_name"), str)
+    }
+    errors: list[str] = []
+    if expected != actual:
+        errors.append("rust_api_design.json c_abi_facade.structs must cover c_api_model.json abi_layouts")
+    for item in structs:
+        if not isinstance(item, dict) or not isinstance(item.get("c_name"), str):
+            errors.append("rust_api_design.json c_abi_facade.structs entries must include c_name")
+            continue
+        c_name = item["c_name"]
+        if not isinstance(item.get("rust_name"), str) or not item.get("rust_name"):
+            errors.append(f"rust_api_design.json c_abi_facade {c_name} must include rust_name")
+        if not isinstance(item.get("sizeof"), int) or item.get("sizeof") <= 0:
+            errors.append(f"rust_api_design.json c_abi_facade {c_name} must include positive sizeof")
+        if not isinstance(item.get("alignof"), int) or item.get("alignof") <= 0:
+            errors.append(f"rust_api_design.json c_abi_facade {c_name} must include positive alignof")
+        if not isinstance(item.get("fields"), list) or not item.get("fields"):
+            errors.append(f"rust_api_design.json c_abi_facade {c_name} fields must be a non-empty list")
+        if not isinstance(item.get("notes"), list) or not item.get("notes"):
+            errors.append(f"rust_api_design.json c_abi_facade {c_name} notes must be a non-empty list")
+    return errors
+
+
 def is_c_cross_owned_log_path(log_path: str) -> bool:
     candidate = Path(log_path)
     if candidate.is_absolute():
@@ -473,6 +555,7 @@ def check_build_c_model(root: Path) -> list[str]:
         errors.append("c_api_model.json kvdb_symbols must be non-empty")
     if not api_model.get("tsdb_symbols"):
         errors.append("c_api_model.json tsdb_symbols must be non-empty")
+    errors.extend(check_abi_layout_contract(api_model))
 
     if not isinstance(test_model.get("test_functions"), list) or not test_model.get("test_functions"):
         errors.append("c_test_model.json test_functions must be non-empty")
@@ -632,6 +715,11 @@ def check_design_rust_api(root: Path) -> list[str]:
             errors.append(f"c_test_model.json: {test_model_error}")
         else:
             errors.extend(check_design_test_contracts(design, test_model))
+        api_model, api_model_error = load_json(root / "logs" / "trace" / "c_api_model.json")
+        if api_model_error:
+            errors.append(f"c_api_model.json: {api_model_error}")
+        else:
+            errors.extend(check_c_abi_facade_contract(design, api_model))
 
     stage_log = root / "logs" / "trace" / "04-design-rust-api.md"
     try:
@@ -864,6 +952,8 @@ def check_verify_rust_with_c_tests(root: Path) -> list[str]:
     if state is None:
         return errors
     errors.extend(check_validation_matrix(root, allow_not_supported=False))
+    if not (root / "logs" / "trace" / "c-cross" / "layout-check.log").exists():
+        errors.append("missing logs/trace/c-cross/layout-check.log")
     if not (root / "logs" / "trace" / "06-5-verify-rust-with-c-tests.md").exists():
         errors.append("missing logs/trace/06-5-verify-rust-with-c-tests.md")
     errors.extend(check_no_c_sources_in_src(root))

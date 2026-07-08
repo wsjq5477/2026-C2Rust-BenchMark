@@ -20,6 +20,7 @@ logs/trace/c_project_model.json
 logs/trace/c_api_model.json
 logs/trace/c_test_model.json
 logs/trace/rust_api_design.json
+rust_api_design.json.c_abi_facade
 flashDB_rust/
 ```
 
@@ -27,6 +28,7 @@ flashDB_rust/
 
 ```text
 logs/trace/c-cross/cross-compile.log
+logs/trace/c-cross/layout-check.log
 logs/trace/c-cross/cross-test.log
 logs/trace/validation-matrix.json
 logs/trace/06-5-verify-rust-with-c-tests.md
@@ -44,7 +46,17 @@ python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out log
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```
 
-`c_cross_validate.py` 必须执行真实 C harness：先编译 Rust `staticlib`，再用系统 C 编译器编译 `tests/kvdb_main.c` 和 `tests/tsdb_main.c`，把原始 C 测试 runner 链接到 Rust C ABI facade。临时 runner、二进制和运行目录只能写入 `logs/trace/c-cross/`。
+`c_cross_validate.py` 必须执行真实 C harness：先编译 Rust `staticlib`，再生成并运行 `logs/trace/c-cross/layout_checker.c`。layout checker 必须链接 Rust staticlib，比较 C/Rust 两侧 ABI struct 的 `sizeof`、`alignof` 和关键字段 offset。
+
+layout checker 通过后，才允许用系统 C 编译器编译 `tests/kvdb_main.c` 和 `tests/tsdb_main.c`，把原始 C 测试 runner 链接到 Rust C ABI facade。临时 checker、runner、二进制和运行目录只能写入 `logs/trace/c-cross/`。
+
+如果 layout mismatch，必须：
+
+- 输出 `[LAYOUT MISMATCH]` 到 `layout-check.log`；
+- 列出 missing fields、offset mismatch、sizeof mismatch 或 alignof mismatch；
+- reason 中说明可能原因，例如 active macro 激活字段被 Rust 遗漏；
+- 不继续运行功能 C runner；
+- 将对应 scorer cases 写成 `fail`。
 
 第一版 runner 以 suite 为执行粒度：KVDB 原始测试 runner 通过则 KVDB scorer cases 通过，TSDB runner 通过则 TSDB scorer cases 通过；任一 suite 编译或运行失败，必须把该 suite 对应 scorer cases 写成 `fail`。不得把全量 unsupported 当作阶段通过。
 
@@ -90,6 +102,7 @@ log
 - `completed_stages` 包含从 `BOOTSTRAP` 到 `VERIFY_RUST_WITH_C_TESTS` 的连续阶段；
 - `validation-matrix.json` 存在且合法；
 - matrix scenario 与 scorer case 一一对应；
+- `logs/trace/c-cross/layout-check.log` 存在；
 - `rust_impl_c_test == fail` 必须阻断后续阶段；
 - `not_supported` 在本阶段 strict gate 中不允许通过；
 - `fail` 必须包含 reason 和 `logs/trace/c-cross/` 下的 log；
@@ -97,7 +110,8 @@ log
 
 ## 失败归因
 
-- 本阶段 `fail`：优先修 Rust 实现或 C ABI 测试 facade。
+- 本阶段 layout `fail`：优先修 Rust FFI struct、`src/ffi/layout_probe.rs` 或回派 `c-analyzer` 补充 `c_abi_facade`。
+- 本阶段 functional `fail`：优先修 Rust 实现或 C ABI 测试 facade。
 - 本阶段通过但 `MIGRATE_TESTS` 失败：优先修 Rust 测试迁移和 `rust_test_mapping.json`。
 - 本阶段和 `MIGRATE_TESTS` 都通过但 `BUILD_TEST_REPAIR` 失败：优先修 Rust 测试 harness、Cargo 配置或集成边界。
 

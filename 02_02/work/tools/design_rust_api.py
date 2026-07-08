@@ -54,6 +54,13 @@ def type_name_from_module(module: str) -> str:
     return "".join(part[:1].upper() + part[1:] for part in parts) or "Api"
 
 
+def rust_type_name_from_c_struct(name: str) -> str:
+    parts = [part for part in name.split("_") if part]
+    if parts and parts[0] == "fdb":
+        parts = parts[1:]
+    return "Fdb" + "".join(part[:1].upper() + part[1:] for part in parts)
+
+
 def api_items_from_symbols(module: str, c_symbols: list[str]) -> list[dict[str, Any]]:
     type_name = type_name_from_module(module)
     items: list[dict[str, Any]] = []
@@ -164,6 +171,37 @@ def design_storage_constraints(c_project_model: dict[str, Any], c_api_model: dic
     }
 
 
+def design_c_abi_facade(c_api_model: dict[str, Any]) -> dict[str, Any]:
+    structs: list[dict[str, Any]] = []
+    raw_layouts = c_api_model.get("abi_layouts", [])
+    if not isinstance(raw_layouts, list):
+        raw_layouts = []
+    for layout in raw_layouts:
+        if not isinstance(layout, dict) or not isinstance(layout.get("name"), str):
+            continue
+        fields = layout.get("fields", [])
+        active_macros = layout.get("active_macros", [])
+        notes = ["Fields reflect active C preprocessor configuration from c_api_model.abi_layouts."]
+        conditional_macros = [
+            macro for macro in active_macros if isinstance(macro, str) and macro.startswith("FDB_USING_")
+        ] if isinstance(active_macros, list) else []
+        if conditional_macros:
+            notes.append("Active layout macros: " + ", ".join(sorted(conditional_macros)))
+        if layout.get("error"):
+            notes.append(str(layout["error"]))
+        structs.append(
+            {
+                "c_name": layout["name"],
+                "rust_name": rust_type_name_from_c_struct(layout["name"]),
+                "sizeof": layout.get("sizeof"),
+                "alignof": layout.get("alignof"),
+                "fields": fields if isinstance(fields, list) else [],
+                "notes": notes,
+            }
+        )
+    return {"structs": structs}
+
+
 def design_api(
     c_project_model: dict[str, Any],
     c_api_model: dict[str, Any],
@@ -220,6 +258,7 @@ def design_api(
             ],
         },
         "storage_constraints": design_storage_constraints(c_project_model, c_api_model),
+        "c_abi_facade": design_c_abi_facade(c_api_model),
         "kvdb_api": kvdb_api,
         "tsdb_api": tsdb_api,
         "test_api": design_test_api(kvdb_tests, tsdb_tests, standard_scenarios, scorer_standard_cases, obligations),

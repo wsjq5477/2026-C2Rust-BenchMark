@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 from collections import Counter
@@ -33,6 +34,10 @@ def _write(path: Path, text: str) -> None:
 def _command_text(command: list[str], cwd: Path | None = None) -> str:
     prefix = f"(cd {cwd} && )" if cwd else ""
     return prefix + " ".join(command)
+
+
+def _safe_c_suffix(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
 
 
 def _run(command: list[str], *, cwd: Path | None = None) -> tuple[int, str]:
@@ -82,6 +87,20 @@ def _rust_staticlib(project: Path) -> Path:
     return project / "target" / "release" / "libflashdb_rust.a"
 
 
+def _c_include_args(c_root: Path, c_cross: Path) -> list[str]:
+    generated_include = c_cross / "include"
+    generated_include.mkdir(parents=True, exist_ok=True)
+    cfg = c_root / "inc" / "fdb_cfg.h"
+    cfg_template = c_root / "inc" / "fdb_cfg_template.h"
+    if not cfg.exists() and cfg_template.exists():
+        (generated_include / "fdb_cfg.h").write_text(
+            cfg_template.read_text(encoding="utf-8", errors="ignore"),
+            encoding="utf-8",
+        )
+    args = ["-I", str(generated_include), "-I", str(c_root / "tests"), "-I", str(c_root / "inc")]
+    return args
+
+
 def _build_rust_staticlib(project: Path) -> tuple[bool, str]:
     command = ["cargo", "build", "--release"]
     code, output = _run(command, cwd=project)
@@ -116,10 +135,7 @@ def _compile_suite_runner(
         "-g3",
         "-Wall",
         "-Wno-format",
-        "-I",
-        str(c_root / "tests"),
-        "-I",
-        str(c_root / "inc"),
+        *_c_include_args(c_root, c_cross),
         str(source),
         str(rust_lib),
         "-o",
@@ -145,6 +161,162 @@ def _run_suite_runner(suite: str, binary: Path, c_cross: Path) -> tuple[bool, st
     if code != 0:
         text += f"runner exited with {code}\n"
         return False, text
+    return True, text
+
+
+def _layout_structs(trace: Path) -> list[dict[str, Any]]:
+    design_path = trace / "rust_api_design.json"
+    if design_path.exists():
+        design = load_json(design_path)
+        facade = design.get("c_abi_facade")
+        structs = facade.get("structs") if isinstance(facade, dict) else []
+        if isinstance(structs, list):
+            result = [item for item in structs if isinstance(item, dict) and isinstance(item.get("c_name"), str)]
+            if result:
+                return result
+    api_path = trace / "c_api_model.json"
+    if not api_path.exists():
+        return []
+    api_model = load_json(api_path)
+    layouts = api_model.get("abi_layouts")
+    if not isinstance(layouts, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for layout in layouts:
+        if not isinstance(layout, dict) or not isinstance(layout.get("name"), str):
+            continue
+        result.append(
+            {
+                "c_name": layout["name"],
+                "sizeof": layout.get("sizeof"),
+                "alignof": layout.get("alignof"),
+                "fields": layout.get("fields", []),
+                "notes": [],
+            }
+        )
+    return result
+
+
+def _layout_checker_source(structs: list[dict[str, Any]]) -> str:
+    lines = [
+        "#include <stddef.h>",
+        "#include <stdint.h>",
+        "#include <stdio.h>",
+        '#include "flashdb.h"',
+        "",
+    ]
+    for struct in structs:
+        c_name = struct["c_name"]
+        suffix = _safe_c_suffix(c_name)
+        lines.append(f"extern size_t rust_sizeof_{suffix}(void);")
+        lines.append(f"extern size_t rust_alignof_{suffix}(void);")
+        fields = struct.get("fields", [])
+        if isinstance(fields, list):
+            for field in fields:
+                if isinstance(field, dict) and isinstance(field.get("name"), str):
+                    lines.append(f"extern size_t rust_offsetof_{suffix}_{_safe_c_suffix(field['name'])}(void);")
+    lines.extend(
+        [
+            "",
+            "int main(void) {",
+            "  int failures = 0;",
+            '  printf("[LAYOUT CHECK] start\\n");',
+        ]
+    )
+    for struct in structs:
+        c_name = struct["c_name"]
+        suffix = _safe_c_suffix(c_name)
+        lines.extend(
+            [
+                f"  if (sizeof(struct {c_name}) != rust_sizeof_{suffix}()) {{",
+                f'    printf("[LAYOUT MISMATCH] struct={c_name} sizeof c=%zu rust=%zu\\n", sizeof(struct {c_name}), rust_sizeof_{suffix}());',
+                "    failures++;",
+                "  }",
+                f"  if (_Alignof(struct {c_name}) != rust_alignof_{suffix}()) {{",
+                f'    printf("[LAYOUT MISMATCH] struct={c_name} alignof c=%zu rust=%zu\\n", (size_t)_Alignof(struct {c_name}), rust_alignof_{suffix}());',
+                "    failures++;",
+                "  }",
+                f"  if (sizeof(struct {c_name}) == rust_sizeof_{suffix}() && _Alignof(struct {c_name}) == rust_alignof_{suffix}()) {{",
+                f'    printf("[LAYOUT OK] struct={c_name} sizeof=%zu alignof=%zu\\n", sizeof(struct {c_name}), (size_t)_Alignof(struct {c_name}));',
+                "  }",
+            ]
+        )
+        fields = struct.get("fields", [])
+        if not isinstance(fields, list):
+            fields = []
+        for field in fields:
+            if not isinstance(field, dict) or not isinstance(field.get("name"), str):
+                continue
+            field_name = field["name"]
+            field_suffix = _safe_c_suffix(field_name)
+            lines.extend(
+                [
+                    f"  if (rust_offsetof_{suffix}_{field_suffix}() == (size_t)-1) {{",
+                    f'    printf("[LAYOUT MISMATCH] field={c_name}.{field_name} offset c=%zu rust=missing\\n", offsetof(struct {c_name}, {field_name}));',
+                    f'    printf("possible_reason=active macro added field {field_name} that Rust omitted\\n");',
+                    "    failures++;",
+                    f"  }} else if (offsetof(struct {c_name}, {field_name}) != rust_offsetof_{suffix}_{field_suffix}()) {{",
+                    f'    printf("[LAYOUT MISMATCH] field={c_name}.{field_name} offset c=%zu rust=%zu\\n", offsetof(struct {c_name}, {field_name}), rust_offsetof_{suffix}_{field_suffix}());',
+                    "    failures++;",
+                    "  } else {",
+                    f'    printf("[LAYOUT OK] struct={c_name} field={field_name} offset=%zu\\n", offsetof(struct {c_name}, {field_name}));',
+                    "  }",
+                ]
+            )
+    lines.extend(
+        [
+            "  if (failures) {",
+            '    printf("[LAYOUT CHECK] fail\\n");',
+            "    return 1;",
+            "  }",
+            '  printf("[LAYOUT CHECK] pass\\n");',
+            "  return 0;",
+            "}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _run_layout_checker(c_root: Path, c_cross: Path, rust_lib: Path, trace: Path) -> tuple[bool, str]:
+    structs = _layout_structs(trace)
+    source = c_cross / "layout_checker.c"
+    binary = c_cross / "layout_checker"
+    log_path = c_cross / "layout-check.log"
+    source.write_text(_layout_checker_source(structs), encoding="utf-8")
+    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    if cc is None:
+        text = "missing C compiler: cc/gcc/clang not found\n"
+        _write(log_path, text)
+        return False, text
+    command = [
+        cc,
+        "-std=c11",
+        "-O0",
+        "-g3",
+        "-Wall",
+        "-Wno-format",
+        *_c_include_args(c_root, c_cross),
+        str(source),
+        str(rust_lib),
+        "-o",
+        str(binary),
+        "-lpthread",
+        "-ldl",
+        "-lm",
+    ]
+    code, output = _run(command)
+    text = f"$ {_command_text(command)}\n{output}\n"
+    if code != 0:
+        text += f"layout checker compile exited with {code}\n"
+        _write(log_path, text)
+        return False, text
+    code, output = _run([str(binary.resolve())], cwd=c_cross)
+    text += f"$ {_command_text([str(binary.resolve())], c_cross)}\n{output}\n"
+    if code != 0:
+        text += f"layout checker exited with {code}\n"
+        _write(log_path, text)
+        return False, text
+    _write(log_path, text)
     return True, text
 
 
@@ -261,18 +433,25 @@ def build_matrix(root: Path, out: Path, project_name: str = "flashDB_rust") -> d
                 suite_results[suite] = ("fail", reason)
         else:
             rust_lib = _rust_staticlib(project)
-            for suite in sorted({_suite_for_case(case) for case in valid_cases}):
-                ok, binary, output = _compile_suite_runner(suite, c_root, c_cross, rust_lib)
-                compile_log.append(output)
-                if not ok or binary is None:
-                    suite_results[suite] = ("fail", f"{suite} original C runner failed to compile")
-                    continue
-                run_ok, run_output = _run_suite_runner(suite, binary, c_cross)
-                test_log.append(run_output)
-                suite_results[suite] = (
-                    "pass" if run_ok else "fail",
-                    f"{suite} original C runner {'passed' if run_ok else 'failed'}",
-                )
+            layout_ok, layout_output = _run_layout_checker(c_root, c_cross, rust_lib, trace)
+            compile_log.append(layout_output)
+            if not layout_ok:
+                reason = "layout mismatch or layout checker failure; see logs/trace/c-cross/layout-check.log"
+                for suite in sorted({_suite_for_case(case) for case in valid_cases}):
+                    suite_results[suite] = ("fail", reason)
+            else:
+                for suite in sorted({_suite_for_case(case) for case in valid_cases}):
+                    ok, binary, output = _compile_suite_runner(suite, c_root, c_cross, rust_lib)
+                    compile_log.append(output)
+                    if not ok or binary is None:
+                        suite_results[suite] = ("fail", f"{suite} original C runner failed to compile")
+                        continue
+                    run_ok, run_output = _run_suite_runner(suite, binary, c_cross)
+                    test_log.append(run_output)
+                    suite_results[suite] = (
+                        "pass" if run_ok else "fail",
+                        f"{suite} original C runner {'passed' if run_ok else 'failed'}",
+                    )
 
     _write(c_cross / "cross-compile.log", "\n".join(compile_log))
     _write(c_cross / "cross-test.log", "\n".join(test_log) if test_log else "No C runner executed.\n")

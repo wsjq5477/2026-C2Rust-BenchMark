@@ -40,6 +40,17 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 
 `VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。`c_cross_validate.py` 会编译 Rust `staticlib`，编译原始 C 测试 runner 并链接到 Rust C ABI facade。只有 `validation-matrix.json.policy == strict` 且所有 scorer cases 的 `rust_impl_c_test == pass` 后，才允许进入 `MIGRATE_TESTS`。
 
+## C ABI Layout Rules
+
+`logs/trace/rust_api_design.json.c_abi_facade` 是 FFI struct 的唯一布局合同。实现 C ABI facade 时必须遵守：
+
+- 所有暴露给 C runner 或 layout checker 的 FFI struct 必须使用 `#[repr(C)]`。
+- Rust 字段顺序、类型宽度、`sizeof`、`alignof` 和字段 offset 必须匹配 `c_abi_facade.structs`。
+- 不得仅凭原始 C header 肉眼猜测条件编译字段。
+- `c_abi_facade.structs[].notes` 和 `c_api_model.json.abi_layouts[].active_macros` 中记录的 active macros 已经影响 C 编译器布局，激活字段不得遗漏。
+- `src/ffi/layout_probe.rs` 必须导出 `rust_sizeof_xxx`、`rust_alignof_xxx` 和 `rust_offsetof_xxx_field`，并用真实 Rust struct 计算结果替换 scaffold 常量。
+- 如果 `c_abi_facade` 缺少必须结构体、字段、offset 或条件编译说明，写入 `logs/trace/design-gaps.jsonl` 并要求主控回派 `c-analyzer` 补充模型；不得在实现阶段私自修改 C 事实模型。
+
 ## C 源码读取规则
 
 - 允许按实现单元局部回看 `$FLASHDB_SOURCE` 中的 C 源码。

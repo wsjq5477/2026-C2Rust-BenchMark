@@ -184,6 +184,7 @@ python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
 - `logs/trace/c_test_model.json`
 - `logs/trace/c_api_model.json`
 - `logs/trace/rust_api_design.json`
+- `rust_api_design.json.c_abi_facade`
 - `flashDB_rust/`
 
 运行：
@@ -196,11 +197,12 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 写入：
 
 - `logs/trace/c-cross/cross-compile.log`
+- `logs/trace/c-cross/layout-check.log`
 - `logs/trace/c-cross/cross-test.log`
 - `logs/trace/validation-matrix.json`
 - 中文 `logs/trace/06-5-verify-rust-with-c-tests.md`
 
-本阶段使用原始 C 测试证据验证 Rust 实现。临时 C harness 只能写入 `logs/trace/c-cross/`，不得进入 `flashDB_rust/src/`，不得让最终 Rust 项目依赖 FlashDB C 实现。
+本阶段使用原始 C 测试证据验证 Rust 实现。`c_cross_validate.py` 必须先生成并运行 C ABI layout checker，比较 C/Rust 两侧 `sizeof`、`alignof` 和字段 offset；layout mismatch 必须输出 `[LAYOUT MISMATCH]`，写入 `layout-check.log`，并阻止后续功能 runner。layout checker 通过后才允许运行原始 C 测试 runner。临时 C harness 只能写入 `logs/trace/c-cross/`，不得进入 `flashDB_rust/src/`，不得让最终 Rust 项目依赖 FlashDB C 实现。
 
 ## MIGRATE_TESTS
 

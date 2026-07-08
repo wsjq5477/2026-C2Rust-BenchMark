@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -65,6 +66,16 @@ def extract_structs(text: str, file_name: str) -> list[dict[str, str]]:
     for match in re.finditer(r"\bstruct\s+(" + IDENT + r")\b", clean):
         names.append(match.group(1))
     return [{"name": name, "file": file_name} for name in sorted(dict.fromkeys(names))]
+
+
+def load_abi_extractor():
+    path = Path(__file__).resolve().with_name("abi_layout_extractor.py")
+    spec = importlib.util.spec_from_file_location("abi_layout_extractor", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def extract_typedefs(text: str, file_name: str) -> list[dict[str, str]]:
@@ -202,6 +213,57 @@ def data_shape_from_body(body: str) -> dict[str, Any]:
         "tsl_append_count": tsl_append_count,
         "sector_bound_query_count": sector_bound_calls,
     }
+
+
+def abi_struct_candidates(structs: list[dict[str, str]]) -> list[str]:
+    public_names = [
+        item["name"]
+        for item in structs
+        if item.get("file", "").startswith("inc/") and item.get("name", "").startswith("fdb_")
+    ]
+    preferred = ["fdb_db", "fdb_kvdb", "fdb_tsdb", "fdb_blob", "fdb_kv", "fdb_tsl"]
+    available = set(public_names)
+    ordered = [name for name in preferred if name in available]
+    ordered.extend(name for name in sorted(available) if name not in set(ordered))
+    return ordered
+
+
+def config_headers_for_abi(root: Path, headers: list[str]) -> list[str]:
+    if (root / "inc" / "fdb_cfg.h").is_file():
+        return ["inc/fdb_cfg.h"]
+    if (root / "inc" / "fdb_cfg_template.h").is_file():
+        return ["inc/fdb_cfg_template.h"]
+    return [header for header in headers if Path(header).name == "fdb_cfg.h"]
+
+
+def extract_abi_layouts(root: Path, headers: list[str], structs: list[dict[str, str]]) -> list[dict[str, Any]]:
+    candidates = abi_struct_candidates(structs)
+    if not candidates:
+        return []
+    include_dirs = sorted({str(Path(header).parent) for header in headers if Path(header).parent.as_posix() != "."})
+    if "inc" not in include_dirs and (root / "inc").is_dir():
+        include_dirs.insert(0, "inc")
+    config_headers = config_headers_for_abi(root, headers)
+    try:
+        extractor = load_abi_extractor()
+        result = extractor.extract_layouts(
+            project_root=root,
+            include_dirs=include_dirs or ["inc"],
+            config_headers=config_headers,
+            struct_names=candidates,
+        )
+    except Exception as exc:
+        return [
+            {
+                "name": name,
+                "error": f"abi layout extraction failed: {exc}",
+                "fields": [],
+                "active_macros": [],
+            }
+            for name in candidates
+        ]
+    layouts = result.get("abi_layouts", [])
+    return layouts if isinstance(layouts, list) else []
 
 
 def scenario_features_from_body(body: str, data_shape: dict[str, Any]) -> list[str]:
@@ -551,6 +613,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     )
     kvdb_symbols = sorted([name for name in public_functions if "kv" in name or "kvdb" in name])
     tsdb_symbols = sorted([name for name in public_functions if "tsl" in name or "tsdb" in name])
+    abi_layouts = extract_abi_layouts(root, headers, structs)
 
     test_functions: list[str] = []
     registered_tests: list[str] = []
@@ -608,6 +671,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         "macros": sorted(dict.fromkeys(macros)),
         "enums": sorted({(item["file"], item["name"]) for item in enum_blocks}),
         "enum_values": sorted(dict.fromkeys(enum_values)),
+        "abi_layouts": abi_layouts,
         "kvdb_symbols": kvdb_symbols,
         "tsdb_symbols": tsdb_symbols,
     }

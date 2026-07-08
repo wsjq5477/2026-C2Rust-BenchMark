@@ -132,6 +132,7 @@ python3 work/tools/build_c_model.py \
   "public_functions": [],
   "all_functions": [],
   "structs": [],
+  "abi_layouts": [],
   "typedefs": [],
   "macros": [],
   "enums": [],
@@ -141,6 +142,29 @@ python3 work/tools/build_c_model.py \
   "unmapped_public_symbols": []
 }
 ```
+
+`abi_layouts` 是 C 编译器确认的 ABI 布局事实，由 `work/tools/abi_layout_extractor.py` 通过 C probe 生成。第一版记录：
+
+```json
+{
+  "name": "fdb_db",
+  "header": "inc/fdb_def.h",
+  "sizeof": 64,
+  "alignof": 8,
+  "active_macros": ["FDB_USING_FILE_POSIX_MODE", "FDB_USING_FILE_MODE"],
+  "fields": [
+    {
+      "name": "storage",
+      "ctype": "union { const char *dir; }",
+      "offset": 16,
+      "sizeof": 8,
+      "condition": null
+    }
+  ]
+}
+```
+
+布局候选必须从当前输入动态推导：优先 public header 中的 `fdb_*` struct 和 public API 直接使用的 struct。当前输入中存在的 `fdb_db`、`fdb_kvdb`、`fdb_tsdb`、`fdb_blob`、`fdb_kv`、`fdb_tsl` 必须被探测。`FDB_USING_*` active macros 必须记录，不能让实现阶段凭 header 猜条件字段。
 
 提取范围：
 
@@ -152,7 +176,7 @@ python3 work/tools/build_c_model.py \
 边界：
 
 - 不做 Clang AST；
-- 不做宏展开；
+- 不做全量宏语义展开；ABI layout 允许用受控 C probe 和预处理结果获取编译器确认的 active fields；
 - 不做完整调用图；
 - 不解析函数体业务语义；
 - 不做 Rust API 决策。
@@ -220,6 +244,7 @@ python3 work/tools/gate.py --stage BUILD_C_MODEL
 - manifest 中递归发现的 `.c/.h` 都被模型覆盖、分类、标记 unknown 或显式忽略；
 - `c_api_model.json.public_functions` 非空；
 - `c_api_model.json` 包含 `fdb_kvdb_init` 和 `fdb_tsdb_init`；
+- `c_api_model.json.abi_layouts` 非空，且每个布局包含 `name`、`sizeof`、`alignof`、`fields[].offset` 和 `fields[].sizeof`；
 - 新增 `fdb_*` public 符号不能静默丢弃，必须进入 `public_functions`，并按情况进入核心域、扩展域或未映射清单；
 - `c_test_model.json.test_functions` 非空；
 - 高风险 scorer case 的 `semantic_obligations` 应包含可验证的 `verify_*`、`data_shape:*` 或 `scenario:*` 义务，而不是只停留在 `assertion_intent`；
