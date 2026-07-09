@@ -40,8 +40,6 @@ logs/trace/c_api_model.json
 logs/trace/c_test_model.json
 logs/trace/03-build-c-model.md
 logs/trace/workflow_state.json
-result/output.md
-result/issues/00-summary.md
 ```
 
 ## 细节实现

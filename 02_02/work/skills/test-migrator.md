@@ -22,9 +22,9 @@ permission:
 
 ## 职责范围
 
-- 根据 `logs/trace/c_test_model.json` 理解 C 测试语义；
-- 读取 `logs/trace/validation-matrix.json`，确认 Rust 实现已有 C 基线证据；
-- 根据 `logs/trace/rust_api_design.json` 使用已设计的 Rust API 编写测试；
+- 根据 `logs/trace/c_test_model.json` 的相关局部片段理解 C 测试语义；
+- 读取 `logs/trace/validation-matrix.json` 的结论或相关局部片段，确认 Rust 实现已有 C 基线证据；
+- 根据 `logs/trace/rust_api_design.json` 的相关局部片段使用已设计的 Rust API 编写测试；
 - 生成并维护 `rust_test_mapping.json` 声明的 Rust 测试文件；
 - 维护 `logs/trace/rust_test_mapping.json`；
 - 以 `c_test_model.json.scorer_standard_cases` 为评分覆盖合同，逐项一一迁移；
@@ -34,6 +34,13 @@ permission:
 - 清除对应 `MIGRATION_PENDING` 后，只有当 `validated_obligations` 覆盖全部 `semantic_obligations` 且 `assertion_evidence` 证明关键断言时，才可把该项 mapping 的 `coverage` 改为 `semantic`。
 - coverage 分级：`api` 只代表调用覆盖；`assertion_semantic` 代表断言属性等价；`deep_semantic` 代表数据规模、布局和边界条件等价。不得把 `api` 级测试标记为 `semantic`。
 - 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。
+
+## 上下文边界
+
+- 默认不得全文读取 `c_test_model.json`、`rust_api_design.json`、`validation-matrix.json`、总设计文档或历史报告。
+- 需要 C 测试事实、Rust API 或验证矩阵时，只读取当前测试迁移所需的局部片段。
+- 不读取 C 源码全文；若测试事实缺口必须回看 C 测试，只能读取相关测试函数附近窗口。
+- 最终 `result/output.md` 和 `result/issues/00-summary.md` 只由 `REPORT_AND_VERIFY` 统一生成，本 subagent 不维护最终报告。
 
 ## 禁止事项
 

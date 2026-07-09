@@ -17,7 +17,7 @@ work/tools/gate.py
 ## 输入
 
 ```text
-logs/trace/rust_api_design.json
+logs/trace/rust_api_design.json 的脚手架局部设计事实
 work/knowledge/flashdb-rust-architecture.md
 ```
 
@@ -36,8 +36,6 @@ logs/trace/05-generate-rust-scaffold.md
 logs/trace/cargo-check-scaffold.log
 logs/trace/scaffold-check.json
 logs/trace/workflow_state.json
-result/output.md
-result/issues/00-summary.md
 ```
 
 ## 细节实现

@@ -76,7 +76,7 @@ def _find_c_project_root(root: Path, trace: Path) -> Path | None:
         root.parent.parent / "judge-assets" / "code" / "FlashDB",
     ]
     for candidate in candidates:
-        if (candidate / "inc" / "flashdb.h").exists() and (candidate / "tests").exists():
+        if (candidate / "tests").is_dir() and any((candidate / "inc").glob("*.h")):
             return candidate.resolve()
     return None
 
@@ -90,13 +90,21 @@ def _rust_staticlib(project: Path) -> Path:
 def _c_include_args(c_root: Path, c_cross: Path) -> list[str]:
     generated_include = c_cross / "include"
     generated_include.mkdir(parents=True, exist_ok=True)
-    cfg = c_root / "inc" / "fdb_cfg.h"
-    cfg_template = c_root / "inc" / "fdb_cfg_template.h"
-    if not cfg.exists() and cfg_template.exists():
-        (generated_include / "fdb_cfg.h").write_text(
-            cfg_template.read_text(encoding="utf-8", errors="ignore"),
-            encoding="utf-8",
-        )
+    inc = c_root / "inc"
+    if inc.is_dir():
+        for template in sorted(inc.glob("*_template.h")):
+            target_name = template.name.replace("_template.h", ".h")
+            if not (inc / target_name).exists():
+                content = template.read_text(encoding="utf-8", errors="ignore")
+                if target_name == "fdb_cfg.h":
+                    content = content.replace(
+                        "#define _FDB_CFG_H_",
+                        "#define _FDB_CFG_H_\n\n#include <stdbool.h>\n#include <time.h>",
+                    )
+                (generated_include / target_name).write_text(
+                    content,
+                    encoding="utf-8",
+                )
     args = ["-I", str(generated_include), "-I", str(c_root / "tests"), "-I", str(c_root / "inc")]
     return args
 
@@ -116,15 +124,36 @@ def _build_rust_staticlib(project: Path) -> tuple[bool, str]:
     return True, text
 
 
+def _discover_suite_runner(suite: str, c_root: Path) -> Path | None:
+    tests_dir = c_root / "tests"
+    if not tests_dir.is_dir():
+        return None
+    candidates = []
+    for source in sorted(tests_dir.glob("*.c")):
+        text = source.read_text(encoding="utf-8", errors="ignore")
+        if not re.search(r"\bmain\s*\(", text):
+            continue
+        score = 0
+        lower_name = source.name.lower()
+        if suite.lower() in lower_name:
+            score += 10
+        if re.search(r"\bTEST_RUN\s*\(", text):
+            score += 3
+        candidates.append((score, source))
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda item: (-item[0], item[1].as_posix()))[0][1]
+
+
 def _compile_suite_runner(
     suite: str,
     c_root: Path,
     c_cross: Path,
     rust_lib: Path,
 ) -> tuple[bool, Path | None, str]:
-    source = c_root / "tests" / f"{suite}_main.c"
-    if not source.exists():
-        return False, None, f"missing original C test runner: {source}\n"
+    source = _discover_suite_runner(suite, c_root)
+    if source is None:
+        return False, None, f"missing discovered C test runner for suite: {suite}\n"
     binary = c_cross / f"{suite}_runner"
     cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if cc is None:
@@ -197,14 +226,30 @@ def _layout_structs(trace: Path) -> list[dict[str, Any]]:
     return result
 
 
-def _layout_checker_source(structs: list[dict[str, Any]]) -> str:
+def _layout_headers(c_root: Path, structs: list[dict[str, Any]]) -> list[str]:
+    headers = [
+        str(item.get("header"))
+        for item in structs
+        if isinstance(item.get("header"), str) and item.get("header")
+    ]
+    headers = [header.removeprefix("inc/") for header in headers]
+    if not headers:
+        inc = c_root / "inc"
+        if inc.is_dir():
+            headers = [path.relative_to(inc).as_posix() for path in sorted(inc.glob("*.h"))]
+    return sorted(dict.fromkeys(headers))
+
+
+def _layout_checker_source(structs: list[dict[str, Any]], headers: list[str]) -> str:
     lines = [
         "#include <stddef.h>",
         "#include <stdint.h>",
         "#include <stdio.h>",
-        '#include "flashdb.h"',
-        "",
+        "#include <stdbool.h>",
+        "#include <time.h>",
     ]
+    lines.extend(f'#include "{header}"' for header in headers)
+    lines.append("")
     for struct in structs:
         c_name = struct["c_name"]
         suffix = _safe_c_suffix(c_name)
@@ -279,10 +324,11 @@ def _layout_checker_source(structs: list[dict[str, Any]]) -> str:
 
 def _run_layout_checker(c_root: Path, c_cross: Path, rust_lib: Path, trace: Path) -> tuple[bool, str]:
     structs = _layout_structs(trace)
+    headers = _layout_headers(c_root, structs)
     source = c_cross / "layout_checker.c"
     binary = c_cross / "layout_checker"
     log_path = c_cross / "layout-check.log"
-    source.write_text(_layout_checker_source(structs), encoding="utf-8")
+    source.write_text(_layout_checker_source(structs, headers), encoding="utf-8")
     cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if cc is None:
         text = "missing C compiler: cc/gcc/clang not found\n"

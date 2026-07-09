@@ -35,16 +35,16 @@
 
 ## 统一产物约定
 
-所有阶段都应更新：
+所有阶段都应保留最小 trace 证据：
 
 ```text
 logs/trace/workflow_state.json
 logs/trace/<stage-log>.md
-result/output.md
-result/issues/00-summary.md
 logs/trace/agent-registry.json
 logs/trace/subagent-invocations.jsonl
 ```
+
+`result/output.md` 和 `result/issues/00-summary.md` 只在 `REPORT_AND_VERIFY` 统一生成，前置阶段和 subagent 不维护最终报告。
 
 每个阶段成功后，`workflow_state.json.current_stage` 应等于当前阶段名，`completed_stages` 应包含从 `BOOTSTRAP` 到当前阶段的连续阶段。
 

@@ -10,7 +10,7 @@ permission:
 
 ## 角色
 
-你是 `GENERATE_RUST_SCAFFOLD`、`REWRITE_CORE_MODULES` 和 `VERIFY_RUST_WITH_C_TESTS` 阶段的 Rust 实现 subagent。
+你是 `GENERATE_RUST_SCAFFOLD`、`REWRITE_CORE_MODULES` 和 `VERIFY_RUST_WITH_C_TESTS` 阶段的 Rust 实现 subagent。三个阶段可以分别由独立 session 执行；每个阶段必须从文件系统产物恢复，不依赖上一阶段对话历史。
 
 主控必须优先拉起你执行这些阶段。如果平台原生 subagent 注册异常，主控仍必须拉起一个隔离任务代理，让它先完整读取 `work/skills/rust-implementer.md` 后执行；只有同一 subagent 连续 3 次失败并写入失败证据后，主控才允许 fallback 自行执行。
 
@@ -18,8 +18,8 @@ permission:
 
 ## 职责范围
 
-- 根据 `logs/trace/rust_api_design.json` 生成 `flashDB_rust/`。
-- 根据 `logs/trace/c_project_model.json`、`logs/trace/c_api_model.json` 和必要的 `$FLASHDB_SOURCE` 局部 C 源码证据，实现 `flashDB_rust/src/`。
+- 根据 `logs/trace/rust_api_design.json` 的必要局部设计事实生成 `flashDB_rust/`。
+- 根据 C/Rust 模型的必要局部片段和必要的 `$FLASHDB_SOURCE` 局部 C 源码证据，实现 `flashDB_rust/src/`。
 - 维护 Rust `staticlib` 和 FlashDB C ABI facade，使原始 C 测试 runner 能链接并调用 Rust 实现。
 - 运行原始 C 测试证据验证 Rust 实现，生成 `logs/trace/validation-matrix.json`。
 - 写入中文阶段日志：`05-generate-rust-scaffold.md`、`06-rewrite-core-modules.md`、`06-5-verify-rust-with-c-tests.md`。
@@ -28,7 +28,7 @@ permission:
 
 ## 执行要求
 
-按顺序执行：
+按当前调度阶段执行。若主控只要求其中一个阶段，完成该阶段后停止，不继续追后续阶段：
 
 ```bash
 python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust
@@ -40,9 +40,18 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 
 `VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。`c_cross_validate.py` 会编译 Rust `staticlib`，编译原始 C 测试 runner 并链接到 Rust C ABI facade。只有 `validation-matrix.json.policy == strict` 且所有 scorer cases 的 `rust_impl_c_test == pass` 后，才允许进入 `MIGRATE_TESTS`。
 
+## 上下文边界
+
+- `logs/trace` 是机器证据仓库，不是默认阅读材料。
+- 默认不得全文读取 `c_project_model.json`、`c_api_model.json`、`c_test_model.json`、`rust_api_design.json`、`validation-matrix.json`、总设计文档或历史报告。
+- 需要模型事实时，只读取当前阶段直接相关的局部片段。
+- `GENERATE_RUST_SCAFFOLD` 不读 C 源码。
+- `VERIFY_RUST_WITH_C_TESTS` 默认只读验证输出、失败 tail、`flashDB_rust/` 和必要 layout/API 局部片段；不得系统性重读 C 工程。
+- 最终 `result/output.md` 和 `result/issues/00-summary.md` 只由 `REPORT_AND_VERIFY` 统一生成，本 subagent 不维护最终报告。
+
 ## C ABI Layout Rules
 
-`logs/trace/rust_api_design.json.c_abi_facade` 是 FFI struct 的唯一布局合同。实现 C ABI facade 时必须遵守：
+`logs/trace/rust_api_design.json.c_abi_facade` 是 FFI struct 的唯一布局合同。实现 C ABI facade 时必须遵守，但只读取当前需要的 struct 局部片段：
 
 - 所有暴露给 C runner 或 layout checker 的 FFI struct 必须使用 `#[repr(C)]`。
 - Rust 字段顺序、类型宽度、`sizeof`、`alignof` 和字段 offset 必须匹配 `c_abi_facade.structs`。
@@ -53,7 +62,10 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 
 ## C 源码读取规则
 
-- 允许按实现单元局部回看 `$FLASHDB_SOURCE` 中的 C 源码。
+- 默认不读 C 源码；只有 `REWRITE_CORE_MODULES` 阶段允许按需局部回看 `$FLASHDB_SOURCE` 中的 C 源码。
+- 读取 C 源码前必须说明要验证的模型缺口或实现疑点。
+- 超过 400 行的 C/Rust 文件禁止全文读取；必须先用 `rg` 定位，再读取命中点附近窗口。
+- 单次源码窗口不超过 120 行，每阶段累计源码窗口不超过 600 行。
 - 禁止全量重做 C 模型。
 - 禁止修改 `logs/trace/c_project_model.json`、`c_api_model.json`、`c_test_model.json` 或 `rust_api_design.json`。
 - 如果发现设计或 C 模型缺口，写入 `logs/trace/design-gaps.jsonl`，由主控回派 `c-analyzer`。

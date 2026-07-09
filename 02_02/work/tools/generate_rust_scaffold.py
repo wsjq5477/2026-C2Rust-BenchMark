@@ -38,9 +38,149 @@ def c_symbol_suffix(name: str) -> str:
     return safe_rust_ident(name)
 
 
+def safe_rust_type(name: str, fallback: str = "GeneratedType") -> str:
+    parts = [part for part in re.split(r"[^A-Za-z0-9]+", name) if part]
+    value = "".join(part[:1].upper() + part[1:] for part in parts)
+    if not value:
+        value = fallback
+    if value[0].isdigit():
+        value = f"{fallback}{value}"
+    return value
+
+
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.rstrip() + "\n", encoding="utf-8")
+
+
+def error_variants(design: dict[str, Any]) -> list[str]:
+    model = design.get("error_model")
+    variants: list[str] = []
+    if isinstance(model, dict):
+        raw_variants = model.get("variants")
+        if isinstance(raw_variants, list):
+            for item in raw_variants:
+                if isinstance(item, str):
+                    variants.append(safe_rust_type(item, "ErrorVariant"))
+                elif isinstance(item, dict) and isinstance(item.get("name"), str):
+                    variants.append(safe_rust_type(item["name"], "ErrorVariant"))
+        raw_statuses = model.get("status_values") or model.get("enum_values")
+        if isinstance(raw_statuses, list):
+            for item in raw_statuses:
+                if isinstance(item, str):
+                    variants.append(safe_rust_type(item, "Status"))
+    if not variants:
+        variants.append("Message")
+    return list(dict.fromkeys(variants))
+
+
+def generate_error_module(design: dict[str, Any]) -> str:
+    variants = error_variants(design)
+    variant_lines = "\n".join(f"    {variant}(String)," for variant in variants)
+    match_lines = "\n".join(
+        f'            Self::{variant}(message) => write!(f, "{safe_rust_ident(variant)}: {{message}}"),'
+        for variant in variants
+    )
+    return f"""
+use std::fmt::{{Display, Formatter}};
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Error {{
+{variant_lines}
+}}
+
+impl Display for Error {{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {{
+        match self {{
+{match_lines}
+        }}
+    }}
+}}
+
+impl std::error::Error for Error {{}}
+"""
+
+
+def facade_structs(design: dict[str, Any]) -> list[dict[str, Any]]:
+    facade = design.get("c_abi_facade")
+    structs = facade.get("structs") if isinstance(facade, dict) else []
+    if not isinstance(structs, list):
+        return []
+    return [
+        item
+        for item in structs
+        if isinstance(item, dict) and isinstance(item.get("c_name"), str)
+    ]
+
+
+def c_abi_symbols(design: dict[str, Any]) -> list[str]:
+    symbols: list[str] = []
+    mapping = design.get("c_to_rust_symbol_map")
+    if isinstance(mapping, dict):
+        symbols.extend(key for key in mapping if isinstance(key, str))
+    for key, value in design.items():
+        if not key.endswith("_api") or not isinstance(value, list):
+            continue
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            raw_symbols = item.get("c_symbols")
+            if isinstance(raw_symbols, list):
+                symbols.extend(symbol for symbol in raw_symbols if isinstance(symbol, str))
+    return [
+        symbol
+        for symbol in sorted(dict.fromkeys(symbols))
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", symbol)
+    ]
+
+
+def generate_c_abi_facade(design: dict[str, Any]) -> str:
+    lines = [
+        "//! Temporary C ABI facade used by VERIFY_RUST_WITH_C_TESTS.",
+        "//!",
+        "//! Exports are derived from rust_api_design.json. The rust-implementer",
+        "//! stage must replace these generic placeholders with typed ABI wrappers",
+        "//! backed by the safe Rust implementation before the C cross-validation",
+        "//! gate can pass.",
+        "",
+        "use std::ffi::c_void;",
+        "",
+    ]
+    for struct in facade_structs(design):
+        rust_name = safe_rust_type(str(struct.get("rust_name") or struct["c_name"]), "CAbiStruct")
+        sizeof = struct.get("sizeof")
+        size = sizeof if isinstance(sizeof, int) and sizeof > 0 else 1
+        lines.extend(
+            [
+                "#[repr(C)]",
+                f"pub struct {rust_name} {{",
+                f"    _opaque: [u8; {size}],",
+                "}",
+                "",
+            ]
+        )
+    symbols = c_abi_symbols(design)
+    if not symbols:
+        lines.extend(
+            [
+                "#[no_mangle]",
+                "pub extern \"C\" fn rust_c_abi_facade_available() -> usize { 1 }",
+                "",
+            ]
+        )
+    for symbol in symbols:
+        lines.extend(
+            [
+                "#[no_mangle]",
+                f"pub extern \"C\" fn {symbol}() -> *mut c_void {{",
+                "    std::ptr::null_mut()",
+                "}",
+                "",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def generate_layout_probe(design: dict[str, Any]) -> str:
@@ -131,31 +271,7 @@ crate-type = ["rlib", "staticlib"]
     lib_lines.append("pub use error::{Error, Result};")
     write(project / "src" / "lib.rs", "\n".join(lib_lines))
 
-    write(
-        project / "src" / "error.rs",
-        """
-use std::fmt::{Display, Formatter};
-
-pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Error {
-    InvalidInput(String),
-    OperationFailed(String),
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidInput(message) => write!(f, "invalid input: {message}"),
-            Self::OperationFailed(message) => write!(f, "operation failed: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-""",
-    )
+    write(project / "src" / "error.rs", generate_error_module(design))
 
     for module in modules:
         module_path = project / "src" / f"{module}.rs"
@@ -172,200 +288,7 @@ pub fn {function_name}() -> bool {{
 """,
             )
 
-    write(
-        project / "src" / "c_abi.rs",
-        """
-//! Temporary C ABI facade used by VERIFY_RUST_WITH_C_TESTS.
-//!
-//! The functions are exported so original FlashDB C tests can link against the
-//! Rust crate. The rust-implementer stage must replace these stubs with calls
-//! into the safe Rust implementation before the C cross-validation gate passes.
-
-use std::ffi::{c_char, c_void};
-
-#[repr(C)]
-pub struct FdbBlobSaved {
-    pub meta_addr: u32,
-    pub addr: u32,
-    pub len: usize,
-}
-
-#[repr(C)]
-pub struct FdbBlob {
-    pub buf: *mut c_void,
-    pub size: usize,
-    pub saved: FdbBlobSaved,
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kvdb_init(
-    _db: *mut c_void,
-    _name: *const c_char,
-    _path: *const c_char,
-    _default_kv: *mut c_void,
-    _user_data: *mut c_void,
-) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kvdb_control(_db: *mut c_void, _cmd: i32, _arg: *mut c_void) {}
-
-#[no_mangle]
-pub extern "C" fn fdb_kvdb_check(_db: *mut c_void) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kvdb_deinit(_db: *mut c_void) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsdb_init(
-    _db: *mut c_void,
-    _name: *const c_char,
-    _path: *const c_char,
-    _get_time: *mut c_void,
-    _max_len: usize,
-    _user_data: *mut c_void,
-) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsdb_control(_db: *mut c_void, _cmd: i32, _arg: *mut c_void) {}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsdb_deinit(_db: *mut c_void) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_blob_make(blob: *mut FdbBlob, value_buf: *const c_void, buf_len: usize) -> *mut FdbBlob {
-    if !blob.is_null() {
-        unsafe {
-            (*blob).buf = value_buf as *mut c_void;
-            (*blob).size = buf_len;
-            (*blob).saved.len = buf_len;
-        }
-    }
-    blob
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_blob_read(_db: *mut c_void, _blob: *mut FdbBlob) -> usize {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_set(_db: *mut c_void, _key: *const c_char, _value: *const c_char) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_get(_db: *mut c_void, _key: *const c_char) -> *mut c_char {
-    std::ptr::null_mut()
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_set_blob(_db: *mut c_void, _key: *const c_char, _blob: *mut FdbBlob) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_get_blob(_db: *mut c_void, _key: *const c_char, _blob: *mut FdbBlob) -> usize {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_del(_db: *mut c_void, _key: *const c_char) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_get_obj(_db: *mut c_void, _key: *const c_char, _kv: *mut c_void) -> *mut c_void {
-    std::ptr::null_mut()
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_to_blob(_kv: *mut c_void, blob: *mut FdbBlob) -> *mut FdbBlob {
-    blob
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_set_default(_db: *mut c_void) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_print(_db: *mut c_void) {}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_iterator_init(_db: *mut c_void, itr: *mut c_void) -> *mut c_void {
-    itr
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_kv_iterate(_db: *mut c_void, _itr: *mut c_void) -> bool {
-    false
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsl_append(_db: *mut c_void, _blob: *mut FdbBlob) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsl_append_with_ts(_db: *mut c_void, _blob: *mut FdbBlob, _timestamp: i32) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsl_iter(_db: *mut c_void, _cb: *mut c_void, _cb_arg: *mut c_void) {}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsl_iter_reverse(_db: *mut c_void, _cb: *mut c_void, _cb_arg: *mut c_void) {}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsl_iter_by_time(
-    _db: *mut c_void,
-    _from: i32,
-    _to: i32,
-    _cb: *mut c_void,
-    _cb_arg: *mut c_void,
-) {
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsl_query_count(_db: *mut c_void, _from: i32, _to: i32, _status: i32) -> usize {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsl_max_blob_count(_db: *mut c_void) -> usize {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsl_set_status(_db: *mut c_void, _tsl: *mut c_void, _status: i32) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsl_clean(_db: *mut c_void) {}
-
-#[no_mangle]
-pub extern "C" fn fdb_tsl_to_blob(_tsl: *mut c_void, blob: *mut FdbBlob) -> *mut FdbBlob {
-    blob
-}
-
-#[no_mangle]
-pub extern "C" fn fdb_calc_crc32(crc: u32, _buf: *const c_void, _size: usize) -> u32 {
-    crc
-}
-""",
-    )
+    write(project / "src" / "c_abi.rs", generate_c_abi_facade(design))
 
     write(project / "src" / "ffi" / "mod.rs", "pub mod layout_probe;\n")
     write(project / "src" / "ffi" / "layout_probe.rs", generate_layout_probe(design))

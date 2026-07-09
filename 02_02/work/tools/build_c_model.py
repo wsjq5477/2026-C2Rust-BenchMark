@@ -175,17 +175,38 @@ def extract_assertion_details(body: str) -> list[dict[str, Any]]:
     return details
 
 
+def iter_call_matches(body: str):
+    return re.finditer(r"\b(" + IDENT + r")\s*\((?P<args>[^;]*)\)", body, flags=re.S)
+
+
+def call_name_matches(name: str, *suffixes: str) -> bool:
+    lower = name.lower()
+    return any(lower == suffix or lower.endswith("_" + suffix) for suffix in suffixes)
+
+
+def count_calls(body: str, *suffixes: str) -> int:
+    return sum(1 for match in iter_call_matches(body) if call_name_matches(match.group(1), *suffixes))
+
+
+def call_args(body: str, *suffixes: str) -> list[str]:
+    return [
+        match.group("args")
+        for match in iter_call_matches(body)
+        if call_name_matches(match.group(1), *suffixes)
+    ]
+
+
 def semantic_markers_from_body(body: str, assertion_targets: list[str]) -> list[str]:
     markers: list[str] = []
     lower = body.lower()
     target_set = set(assertion_targets)
     if {"addr", "oldest_addr"} & target_set or re.search(r"\boldest_addr\b[^;]*(?:%|sec_size|sector)", body):
         markers.append("verify_addr_alignment")
-    if re.search(r"\bfdb_(?:kvdb|tsdb)_control\s*\(", body):
+    if count_calls(body, "control"):
         markers.append("use_control_interface")
-    if re.search(r"\bfdb_reboot\s*\(", body):
+    if count_calls(body, "reboot"):
         markers.append("verify_persistence_after_reboot")
-    elif re.search(r"\bfdb_(?:kvdb|tsdb)_deinit\s*\(", body) and re.search(r"\bfdb_(?:kvdb|tsdb)_init\s*\(", body):
+    elif count_calls(body, "deinit") and count_calls(body, "init"):
         markers.append("verify_persistence_after_reboot")
     if "init_ok" in lower:
         markers.append("verify_init_state")
@@ -193,19 +214,19 @@ def semantic_markers_from_body(body: str, assertion_targets: list[str]) -> list[
 
 
 def data_shape_from_body(body: str) -> dict[str, Any]:
-    kv_set_count = len(re.findall(r"\bfdb_kv_set\s*\(", body))
+    kv_set_count = count_calls(body, "kv_set")
     blob_multiplier = 0
     for table in re.finditer(r"\bstruct\s+test_kv\s+\w+\s*\[\s*\]\s*=\s*\{(?P<body>.*?)\}\s*;", body, flags=re.S):
         kv_set_count = max(kv_set_count, len(re.findall(r"\{\s*\"kv", table.group("body"))))
         for match in re.finditer(r"(?:\bTEST_KV_VALUE_LEN\b\s*[*]\s*(\d+)|(\d+)\s*[*]\s*\bTEST_KV_VALUE_LEN\b)", table.group("body")):
             blob_multiplier = max(blob_multiplier, int(match.group(1) or match.group(2)))
-    blob_calls = re.findall(r"\bfdb_kv_set_blob\s*\((?P<args>[^;]*)\)", body, flags=re.S)
+    blob_calls = call_args(body, "kv_set_blob", "set_blob")
     for args in blob_calls:
         match = re.search(r"(?:\b(?:sec_size|sector_size|FDB_SECTOR_SIZE|TEST_KV_VALUE_LEN)\b\s*[*]\s*(\d+)|(\d+)\s*[*]\s*\b(?:sec_size|sector_size|FDB_SECTOR_SIZE|TEST_KV_VALUE_LEN)\b)", args)
         if match:
             blob_multiplier = max(blob_multiplier, int(match.group(1) or match.group(2)))
-    tsl_append_count = len(re.findall(r"\bfdb_tsl_append\s*\(", body))
-    sector_bound_calls = len(re.findall(r"\btest_fdb_tsl_sector_bound_test\s*\(", body))
+    tsl_append_count = count_calls(body, "tsl_append")
+    sector_bound_calls = sum(1 for match in iter_call_matches(body) if "sector_bound" in match.group(1).lower())
     return {
         "kv_set_count": kv_set_count,
         "blob_write_count": len(blob_calls),
@@ -221,26 +242,33 @@ def abi_struct_candidates(structs: list[dict[str, str]]) -> list[str]:
         for item in structs
         if item.get("file", "").startswith("inc/") and item.get("name", "").startswith("fdb_")
     ]
-    preferred = ["fdb_db", "fdb_kvdb", "fdb_tsdb", "fdb_blob", "fdb_kv", "fdb_tsl"]
-    available = set(public_names)
-    ordered = [name for name in preferred if name in available]
-    ordered.extend(name for name in sorted(available) if name not in set(ordered))
-    return ordered
+    return sorted(dict.fromkeys(public_names))
 
 
 def config_headers_for_abi(root: Path, headers: list[str]) -> list[str]:
-    if (root / "inc" / "fdb_cfg.h").is_file():
-        return ["inc/fdb_cfg.h"]
-    if (root / "inc" / "fdb_cfg_template.h").is_file():
-        return ["inc/fdb_cfg_template.h"]
-    return [header for header in headers if Path(header).name == "fdb_cfg.h"]
+    candidates: list[str] = []
+    for header in headers:
+        name = Path(header).name
+        if name.endswith("_cfg.h") or name.endswith("_cfg_template.h") or name.endswith("_config.h"):
+            candidates.append(header)
+    inc = root / "inc"
+    if inc.is_dir():
+        for path in sorted(inc.glob("*_template.h")):
+            candidates.append(path.relative_to(root).as_posix())
+    return sorted(dict.fromkeys(candidates))
 
 
 def extract_abi_layouts(root: Path, headers: list[str], structs: list[dict[str, str]]) -> list[dict[str, Any]]:
     candidates = abi_struct_candidates(structs)
     if not candidates:
         return []
-    include_dirs = sorted({str(Path(header).parent) for header in headers if Path(header).parent.as_posix() != "."})
+    include_dirs = sorted(
+        {
+            str(Path(header).parent)
+            for header in headers
+            if Path(header).parent.as_posix() != "." and not str(Path(header).parent).startswith("tests")
+        }
+    )
     if "inc" not in include_dirs and (root / "inc").is_dir():
         include_dirs.insert(0, "inc")
     config_headers = config_headers_for_abi(root, headers)
@@ -268,16 +296,16 @@ def extract_abi_layouts(root: Path, headers: list[str], structs: list[dict[str, 
 
 def scenario_features_from_body(body: str, data_shape: dict[str, Any]) -> list[str]:
     features: list[str] = []
-    if re.search(r"\bfdb_tsl_iter_reverse\s*\(", body):
+    if count_calls(body, "tsl_iter_reverse", "iter_reverse"):
         features.append("iter_reverse")
-    if re.search(r"\bfdb_tsl_iter_by_time\s*\(", body):
+    if count_calls(body, "tsl_iter_by_time", "iter_by_time"):
         features.append("iter_by_time")
     if (
-        re.search(r"\bfdb_tsl_set_status\s*\([^;]*USER_STATUS", body)
-        and re.search(r"\bfdb_tsl_set_status\s*\([^;]*DELETED", body)
+        any("USER_STATUS" in args for args in call_args(body, "tsl_set_status", "set_status"))
+        and any("DELETED" in args for args in call_args(body, "tsl_set_status", "set_status"))
     ) or (
-        re.search(r"\bfdb_tsl_query_count\s*\([^;]*USER_STATUS", body)
-        and re.search(r"\bfdb_tsl_query_count\s*\([^;]*DELETED", body)
+        any("USER_STATUS" in args for args in call_args(body, "tsl_query_count", "query_count"))
+        and any("DELETED" in args for args in call_args(body, "tsl_query_count", "query_count"))
     ):
         features.append("multi_status_filter")
     if data_shape.get("blob_multiplier", 0) >= 2:
@@ -291,11 +319,13 @@ def scenario_features_from_body(body: str, data_shape: dict[str, Any]) -> list[s
 
 def extract_control_usage(body: str) -> list[dict[str, str]]:
     usage: list[dict[str, str]] = []
-    for match in re.finditer(r"\b(?P<function>fdb_(?:kvdb|tsdb)_control)\s*\((?P<args>[^;]*)\)", body, flags=re.S):
+    for match in iter_call_matches(body):
+        if not call_name_matches(match.group(1), "control"):
+            continue
         args = [part.strip() for part in match.group("args").split(",")]
         usage.append(
             {
-                "function": match.group("function"),
+                "function": match.group(1),
                 "command": args[1] if len(args) > 1 else "",
             }
         )

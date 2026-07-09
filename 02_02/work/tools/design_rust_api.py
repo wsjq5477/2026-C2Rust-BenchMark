@@ -102,6 +102,7 @@ def design_test_api(
     standard_scenarios: list[Any],
     scorer_standard_cases: list[Any],
     obligations: set[str],
+    owner_type: str,
 ) -> dict[str, Any]:
     observables: list[dict[str, Any]] = []
     controls: list[dict[str, Any]] = []
@@ -118,18 +119,18 @@ def design_test_api(
             )
 
     if "verify_addr_alignment" in obligations:
-        add_observable("oldest_addr", "Kvdb::oldest_addr", "Required to verify C oldest_addr alignment assertions.")
+        add_observable("oldest_addr", f"{owner_type}::oldest_addr", "Required to verify C address alignment assertions.")
     if "verify_init_state" in obligations:
-        add_observable("is_initialized", "Kvdb::is_initialized", "Required to verify C init_ok state assertions.")
+        add_observable("is_initialized", f"{owner_type}::is_initialized", "Required to verify C initialization state assertions.")
     if any(item.startswith("data_shape:cross_sector") or item.startswith("scenario:multi_status") for item in obligations):
-        add_observable("sector_status", "Kvdb::sector_status", "Required to inspect sector boundary and status behavior in tests.")
+        add_observable("sector_status", f"{owner_type}::sector_status", "Required to inspect sector boundary and status behavior in tests.")
     if "use_control_interface" in obligations:
         controls.append(
             {
                 "name": "control",
-                "rust": "Kvdb::control",
+                "rust": f"{owner_type}::control",
                 "test_observable": True,
-                "reason": "Required to preserve fdb_kvdb_control/fdb_tsdb_control setup from C tests.",
+                "reason": "Required to preserve control-style setup observed in C tests.",
             }
         )
 
@@ -169,6 +170,13 @@ def design_storage_constraints(c_project_model: dict[str, Any], c_api_model: dic
         "fd_cache_required": False,
         "requires_reload_scan": True,
     }
+
+
+def test_api_owner_type(modules: list[str]) -> str:
+    for module in modules:
+        if module not in {"error", "storage"}:
+            return type_name_from_module(module)
+    return type_name_from_module(modules[0] if modules else "api")
 
 
 def design_c_abi_facade(c_api_model: dict[str, Any]) -> dict[str, Any]:
@@ -261,7 +269,14 @@ def design_api(
         "c_abi_facade": design_c_abi_facade(c_api_model),
         "kvdb_api": kvdb_api,
         "tsdb_api": tsdb_api,
-        "test_api": design_test_api(kvdb_tests, tsdb_tests, standard_scenarios, scorer_standard_cases, obligations),
+        "test_api": design_test_api(
+            kvdb_tests,
+            tsdb_tests,
+            standard_scenarios,
+            scorer_standard_cases,
+            obligations,
+            test_api_owner_type(modules),
+        ),
         "c_to_rust_symbol_map": c_to_rust_symbol_map,
         "semantic_requirements": [
             "Preserve externally observable behavior from current C tests.",

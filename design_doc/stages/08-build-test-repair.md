@@ -23,8 +23,8 @@ work/tools/gate.py
 flashDB_rust/
 work/skills/rust-compile-repair/SKILL.md
 logs/trace/rust_test_mapping.json
-logs/trace/validation-matrix.json
-logs/trace/c_test_model.json
+logs/trace/validation-matrix.json 的相关局部片段
+logs/trace/c_test_model.json 的相关局部片段
 ```
 
 ## 输出
@@ -38,8 +38,6 @@ logs/trace/08-build-test-repair.md
 logs/trace/test-failure-triage.jsonl
 result/issues/repair_trace.jsonl
 logs/trace/workflow_state.json
-result/output.md
-result/issues/00-summary.md
 ```
 
 ## 细节实现

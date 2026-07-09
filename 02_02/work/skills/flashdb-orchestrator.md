@@ -33,6 +33,8 @@ permission:
 
 主控传给 subagent 的提示词必须是短调度单，只允许包含动态上下文：作品根目录、当前 checkpoint、目标阶段族、`$FLASHDB_SOURCE`、必须先读取 `work/skills/{subagent}.md`、需要读取的 trace/state 文件、停止条件和回写证据路径。如果调度提示与 subagent Markdown 冲突，以 subagent Markdown 为准。禁止在调度提示中复制或改写 subagent 的业务细节，禁止写入固定 API 清单、固定源码文件清单或实现策略。
 
+`logs/trace` 是机器证据仓库，不是默认上下文输入。除 `workflow_state.json`、短阶段日志和必要错误 tail 外，subagent 默认不得全文读取 `c_api_model.json`、`c_test_model.json`、`rust_api_design.json`、`validation-matrix.json`、总设计文档或历史报告；需要模型事实时只能读取与当前阶段直接相关的局部片段。
+
 `READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API` 是 `C_ANALYSIS 阶段族`。主控必须一次拉起 `c-analyzer`，让它在同一个 subagent 任务内从当前 checkpoint 继续执行剩余 C 分析阶段；不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。如果 `READ_C_PROJECT` 已通过后用户要求继续 `BUILD_C_MODEL`，主控只能启动一次 `c-analyzer`，任务目标是从 `BUILD_C_MODEL` 继续到 `DESIGN_RUST_API` 或到用户指定的停止点。
 
 `logs/trace/agent-registry.json` 必须记录 4 个 subagent 的路径、mode 和职责阶段。`logs/trace/subagent-invocations.jsonl` 必须记录每次 subagent 调用、隔离代理调用、失败和 fallback。
@@ -61,7 +63,7 @@ permission:
 
 - 更新 `logs/trace/workflow_state.json`；
 - 写入中文 `logs/trace/<stage>.md`；
-- 更新 `result/output.md` 和 `result/issues/00-summary.md`；
+- 保留本阶段最小证据，不更新最终 `result/output.md` 和 `result/issues/00-summary.md`；
 - 对重阶段写入 `logs/trace/subagent-invocations.jsonl`；
 - 运行对应 `python3 work/tools/gate.py --stage <STAGE>`；
 - gate 不通过不得进入下一阶段。
@@ -165,7 +167,7 @@ python3 work/tools/gate.py --stage DESIGN_RUST_API
 
 ## GENERATE_RUST_SCAFFOLD
 
-由 `rust-implementer` subagent 执行。读取 `logs/trace/rust_api_design.json`。
+由 `rust-implementer` subagent 执行。本阶段结束后该 subagent session 可退出，下一阶段不得依赖本阶段对话历史。读取 `logs/trace/rust_api_design.json` 中生成脚手架所需的局部设计事实，不读取 C 源码。
 
 运行：
 
@@ -184,7 +186,7 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 
 ## REWRITE_CORE_MODULES
 
-由 `rust-implementer` subagent 执行。读取 `work/skills/flashdb-migration/SKILL.md` 中 `REWRITE_CORE_MODULES` 规则。
+由新的 `rust-implementer` subagent session 执行，读取 `work/skills/flashdb-migration/SKILL.md` 中 `REWRITE_CORE_MODULES` 规则，不继承 `GENERATE_RUST_SCAFFOLD` 的对话历史。
 
 实现或完善：
 
@@ -203,14 +205,18 @@ python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
 
 不得写 `todo!()`、`unimplemented!()`，不得把 C 源码放进 `flashDB_rust/src/`。
 
+只有本阶段可按需读取 C 源码局部窗口。读取前必须说明要验证的模型缺口或实现疑点；超过 400 行的 C/Rust 文件禁止全文读取，必须先用 `rg` 定位，再读取命中点附近窗口，单次窗口不超过 120 行。不得全文读取 trace 大 JSON。
+
 ## VERIFY_RUST_WITH_C_TESTS
 
-由 `rust-implementer` subagent 执行。本阶段是 Rust 源码迁移完成条件，不属于测试迁移阶段。读取：
+由新的 `rust-implementer` subagent session 执行。本阶段是 Rust 源码迁移完成条件，不属于测试迁移阶段，不继承 `REWRITE_CORE_MODULES` 的对话历史。默认只读取 `flashDB_rust/`、验证命令输出、失败 tail 和必要的 layout/API 局部片段；不得全文读取 C 源码或 trace 大 JSON。若验证失败显示 C 模型或 API 设计缺口，必须回派 `c-analyzer`，不得在本阶段系统性重读 C 工程。
 
-- `logs/trace/c_test_model.json`
-- `logs/trace/c_api_model.json`
-- `logs/trace/rust_api_design.json`
-- `rust_api_design.json.c_abi_facade`
+读取：
+
+- `logs/trace/c_test_model.json` 的相关局部片段
+- `logs/trace/c_api_model.json` 的相关局部片段
+- `logs/trace/rust_api_design.json` 的相关局部片段
+- `rust_api_design.json.c_abi_facade` 的相关局部片段
 - `flashDB_rust/`
 
 运行：
@@ -230,7 +236,7 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 
 本阶段使用原始 C 测试证据验证 Rust 实现。临时 C harness 只能写入 `logs/trace/c-cross/`，不得进入 `flashDB_rust/src/`，不得让最终 Rust 项目依赖 FlashDB C 实现。
 
-`c_cross_validate.py` 必须执行真实编译和运行：先编译 Rust `staticlib`，再生成并运行 C ABI layout checker，确认 C/Rust 两侧 `sizeof`、`alignof` 和字段 offset 匹配；layout mismatch 必须输出 `[LAYOUT MISMATCH]`，写入 `layout-check.log`，并阻止后续功能 runner。layout checker 通过后，才允许编译原始 C 测试 runner（`tests/kvdb_main.c`、`tests/tsdb_main.c`），再把它们链接到 Rust C ABI facade。`validation-matrix.json.policy` 必须是 `strict`；任一 `fail` 或 `not_supported` 都阻断进入 `MIGRATE_TESTS`。
+`c_cross_validate.py` 必须执行真实编译和运行：先编译 Rust `staticlib`，再生成并运行 C ABI layout checker，确认 C/Rust 两侧 `sizeof`、`alignof` 和字段 offset 匹配；layout mismatch 必须输出 `[LAYOUT MISMATCH]`，写入 `layout-check.log`，并阻止后续功能 runner。layout checker 通过后，才允许从当前输入的 `tests/` 目录扫描发现带 `main()` 和测试注册证据的原始 C runner，再把它们链接到 Rust C ABI facade。`validation-matrix.json.policy` 必须是 `strict`；任一 `fail` 或 `not_supported` 都阻断进入 `MIGRATE_TESTS`。
 
 ## MIGRATE_TESTS
 
@@ -238,8 +244,9 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 
 - `work/skills/test-migrator.md`
 - `work/skills/flashdb-test-migration/SKILL.md`
-- `logs/trace/c_test_model.json`
-- `logs/trace/rust_api_design.json`
+- `logs/trace/c_test_model.json` 的相关局部片段
+- `logs/trace/rust_api_design.json` 的相关局部片段
+- `logs/trace/validation-matrix.json` 的结论或相关局部片段
 
 必须在 `VERIFY_RUST_WITH_C_TESTS` gate 通过后由 `test-migrator` subagent 执行。如果原生 subagent 不可用，主控必须拉起隔离任务代理读取 `work/skills/test-migrator.md` 后执行；只有同一 subagent 连续 3 次失败后，主控才可 fallback 自行执行。最终 gate 只认产物和测试结果。
 
@@ -284,7 +291,7 @@ python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 
 1. 如果 `cargo-results.json.test_status == fail`，必须先运行 `python3 work/tools/test_failure_triage.py --root . --out logs/trace`；
 2. 确认 `logs/trace/test-failure-triage.jsonl` 存在，且 `workflow_state.json.test_failure_triage_required == true`；
-3. 读取 `work/skills/repairer.md` 和 `work/skills/rust-compile-repair/SKILL.md` 做 triage 后的最小补丁；
+3. 读取 `work/skills/repairer.md`、`work/skills/rust-compile-repair/SKILL.md`、triage 记录、cargo 日志 tail 和相关局部模型片段做最小补丁，不全文读取 trace 大 JSON；
 4. 如果 `repairer` 判断问题属于 C 模型、Rust 实现或测试迁移的系统性缺陷，主控必须回派 `c-analyzer`、`rust-implementer` 或 `test-migrator`；
 5. 如果 `repairer` 不可用、超时或输出不合格，主控必须重新拉起隔离任务代理读取 `work/skills/repairer.md`；只有连续 3 次失败后才允许主控 fallback。
 

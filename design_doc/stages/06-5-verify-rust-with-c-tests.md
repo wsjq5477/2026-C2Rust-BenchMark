@@ -16,11 +16,11 @@ work/tools/gate.py
 
 ```text
 logs/trace/input_manifest.json
-logs/trace/c_project_model.json
-logs/trace/c_api_model.json
-logs/trace/c_test_model.json
-logs/trace/rust_api_design.json
-rust_api_design.json.c_abi_facade
+logs/trace/c_project_model.json 的必要局部片段
+logs/trace/c_api_model.json 的必要局部片段
+logs/trace/c_test_model.json 的必要局部片段
+logs/trace/rust_api_design.json 的必要局部片段
+rust_api_design.json.c_abi_facade 的必要局部片段
 flashDB_rust/
 ```
 
@@ -33,8 +33,6 @@ logs/trace/c-cross/cross-test.log
 logs/trace/validation-matrix.json
 logs/trace/06-5-verify-rust-with-c-tests.md
 logs/trace/workflow_state.json
-result/output.md
-result/issues/00-summary.md
 ```
 
 ## 细节实现
@@ -121,6 +119,7 @@ log
 - 不让最终 Rust 项目依赖 FlashDB C 实现。
 - 不把 `not_supported` 当作 `pass`；本阶段默认 strict。
 - 不替代 `MIGRATE_TESTS`，只在 Rust 测试迁移前提供 C 基线证据。
+- 默认不全文读取 C 源码、trace 大 JSON、总设计文档或历史报告。失败归因优先读取验证输出、失败 tail 和必要 layout/API 局部片段；若发现 C 模型缺口，回派 `c-analyzer`。
 
 ## 下一阶段交接
 

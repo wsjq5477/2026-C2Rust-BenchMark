@@ -300,7 +300,7 @@ grep -r -oP '(?<=fn )\w+' <rust_project>/tests/ | grep -v '^Binary' | sort
 - **测试数据**：构造了哪些 KV key/value、TSL blob 数据、初始化参数
 - **断言条件**：使用了哪些断言（如 `assert_eq!()`、`assert!()`、`unwrap()` 等）及期望值
 
-c. 对比规则（按 24 个标准测试用例逐一校验，**基于语义而非名称**）：
+c. 对比规则（按 23 个标准测试用例逐一校验，**基于语义而非名称**）：
 
 | 校验维度 | 判断逻辑 | 不一致时结论 |
 |---|---|---|
@@ -337,7 +337,7 @@ d. 输出一致性分析结果：
         "detail": "C 期望扩容后 sector 数=4，Rust 期望=2"
       }
     ],
-    "total_c_standard": 24,
+    "total_c_standard": 23,
     "rust_matched_count": 20,
     "rust_file_count": 3
   }
@@ -448,7 +448,7 @@ cargo bench 2>&1 | tee rust_benchmark_output.txt
 
 ### Step 6 — 分析结果并输出评分报告
 
-**测试用例映射**（FlashDB 标准 24 个测试场景）：
+**测试用例映射**（FlashDB 标准 23 个测试场景）：
 
 **KVDB 测试（13 个）**：
 | case_id | C 测试函数 | 描述 |
@@ -467,20 +467,19 @@ cargo bench 2>&1 | tee rust_benchmark_output.txt
 | 12 | test_fdb_scale_up | 扩容 |
 | 13 | test_fdb_kvdb_deinit | KVDB 去初始化 |
 
-**TSDB 测试（11 个）**：
+**TSDB 测试（10 个）**：
 | case_id | C 测试函数 | 描述 |
 |---|---|---|
 | 14 | test_fdb_tsdb_init | TSDB 初始化 |
 | 15 | test_fdb_tsl_append | 追加 TSL |
 | 16 | test_fdb_tsl_append_by_time | 按时间追加 |
 | 17 | test_fdb_tsl_iter | 正向迭代 |
-| 18 | test_fdb_tsl_iter_reverse | 反向迭代 |
-| 19 | test_fdb_tsl_iter_by_time | 按时间迭代 |
-| 20 | test_fdb_tsl_query_count | 查询计数 |
-| 21 | test_fdb_tsl_clean | 清理 TSL |
-| 22 | test_fdb_tsl_set_status | 设置状态 |
-| 23 | test_fdb_tsdb_control | TSDB 控制 |
-| 24 | test_fdb_tsdb_deinit | TSDB 去初始化 |
+| 18 | test_fdb_tsl_iter_by_time | 按时间迭代 |
+| 19 | test_fdb_tsl_query_count | 查询计数 |
+| 20 | test_fdb_tsl_clean | 清理 TSL |
+| 21 | test_fdb_tsl_set_status | 设置状态 |
+| 22 | test_fdb_tsdb_control | TSDB 控制 |
+| 23 | test_fdb_tsdb_deinit | TSDB 去初始化 |
 
 **输出格式**：
 
@@ -513,13 +512,12 @@ cargo bench 2>&1 | tee rust_benchmark_output.txt
     {"case_id": "15", "name": "tsl_append",      "passed": true},
     {"case_id": "16", "name": "tsl_append_by_time", "passed": true},
     {"case_id": "17", "name": "tsl_iter",        "passed": false, "reason": "timeout 60s"},
-    {"case_id": "18", "name": "tsl_iter_reverse", "passed": false, "reason": "timeout 60s"},
-    {"case_id": "19", "name": "tsl_iter_by_time",  "passed": false, "reason": "timeout 60s"},
-    {"case_id": "20", "name": "tsl_query_count",   "passed": false, "reason": "timeout 60s"},
-    {"case_id": "21", "name": "tsl_clean",          "passed": false, "reason": "incorrect count"},
-    {"case_id": "22", "name": "tsl_set_status",     "passed": false, "reason": "incorrect status"},
-    {"case_id": "23", "name": "tsdb_control",       "passed": true},
-    {"case_id": "24", "name": "tsdb_deinit",        "passed": true}
+    {"case_id": "18", "name": "tsl_iter_by_time",  "passed": false, "reason": "timeout 60s"},
+    {"case_id": "19", "name": "tsl_query_count",   "passed": false, "reason": "timeout 60s"},
+    {"case_id": "20", "name": "tsl_clean",          "passed": false, "reason": "incorrect count"},
+    {"case_id": "21", "name": "tsl_set_status",     "passed": false, "reason": "incorrect status"},
+    {"case_id": "22", "name": "tsdb_control",       "passed": true},
+    {"case_id": "23", "name": "tsdb_deinit",        "passed": true}
   ],
   "benchmark": {
     "kv_set_ops":     {"c": 12345, "rust": 11728, "ratio": 0.95},
@@ -529,14 +527,14 @@ cargo bench 2>&1 | tee rust_benchmark_output.txt
     "memory_kb":      {"c": 2048,  "rust": 1856,  "ratio": 0.91}
   },
   "summary": {
-    "total": 24,
-    "passed": 11,
+    "total": 23,
+    "passed": 10,
     "failed": 13,
-    "pass_rate": 0.458,
+    "pass_rate": 0.435,
     "kvdb_passed": 6,
     "kvdb_total": 13,
-    "tsdb_passed": 5,
-    "tsdb_total": 11,
+    "tsdb_passed": 4,
+    "tsdb_total": 10,
     "build_passed": true,
     "benchmark": "性能基线测试：Rust KV set/get/del 吞吐分别为 C 的 95%/102%/88%，TSL append 延迟为 C 的 110%"
   }
@@ -595,7 +593,7 @@ gcc -o tsdb_benchmark tsdb_benchmark.c -I../../src -lm
 #（方案 A：Rust 基准复用 C 测试链接 librust.a）
 
 # Step 6: 输出报告
-# 预期结果: 24/24 pass (C2RustXW 是 1:1 映射，功能正确性保证)
+# 预期结果: 23/23 pass (C2RustXW 是 1:1 映射，功能正确性保证)
 ```
 
 ### 示例 2： Rust Skill重写（方案 B）

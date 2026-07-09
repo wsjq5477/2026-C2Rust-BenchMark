@@ -1370,6 +1370,62 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             )
             self.assertEqual(0, cargo_test.returncode, cargo_test.stdout)
 
+    def test_generate_scaffold_derives_c_abi_from_design_without_flashdb_symbol_stubs(self):
+        scaffold = PROJECT / "work" / "tools" / "generate_rust_scaffold.py"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            design = {
+                "crate_name": "flashdb_rust",
+                "modules": ["error", "alpha"],
+                "error_model": {
+                    "variants": [
+                        {"name": "StatusFailure", "source": "current C status model"}
+                    ]
+                },
+                "alpha_api": [{"name": "open", "c_symbols": ["fdb_alpha_open"]}],
+                "c_to_rust_symbol_map": {"fdb_alpha_open": "Alpha::open"},
+                "c_abi_facade": {
+                    "structs": [
+                        {
+                            "c_name": "fdb_alpha",
+                            "rust_name": "FdbAlpha",
+                            "sizeof": 24,
+                            "alignof": 8,
+                            "fields": [{"name": "state", "offset": 0, "sizeof": 4}],
+                        }
+                    ]
+                },
+            }
+            design_path = root / "rust_api_design.json"
+            design_path.write_text(json.dumps(design), encoding="utf-8")
+
+            completed = subprocess.run(
+                [sys.executable, str(scaffold), "--design", str(design_path), "--project", str(root / "flashDB_rust")],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+            self.assertEqual(0, completed.returncode, completed.stdout)
+            c_abi = (root / "flashDB_rust" / "src" / "c_abi.rs").read_text(encoding="utf-8")
+            error_rs = (root / "flashDB_rust" / "src" / "error.rs").read_text(encoding="utf-8")
+            self.assertIn("pub struct FdbAlpha", c_abi)
+            self.assertIn("pub extern \"C\" fn fdb_alpha_open", c_abi)
+            self.assertNotIn("pub extern \"C\" fn fdb_kvdb_init", c_abi)
+            self.assertNotIn("pub struct FdbBlob", c_abi)
+            self.assertIn("StatusFailure(String)", error_rs)
+            self.assertNotIn("InvalidInput", error_rs)
+            self.assertNotIn("OperationFailed", error_rs)
+
+            cargo_check = subprocess.run(
+                ["cargo", "check", "--quiet"],
+                cwd=root / "flashDB_rust",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertEqual(0, cargo_check.returncode, cargo_check.stdout)
+
     def test_migrate_tests_uses_scorer_standard_cases_when_present(self):
         migrator = load_tool("migrate_tests.py")
         test_model = {

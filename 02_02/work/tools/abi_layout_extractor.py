@@ -46,12 +46,14 @@ def _prepare_config_alias(project_root: Path, config_headers: list[str], tmp: Pa
         if not source.is_file():
             continue
         aliases.append(header)
-        if source.name == "fdb_cfg.h":
-            continue
-        target = alias_dir / "fdb_cfg.h"
-        if not target.exists():
+        if source.name.endswith("_template.h"):
+            target_name = source.name.replace("_template.h", ".h")
+        else:
+            target_name = source.name
+        target = alias_dir / target_name
+        if not target.exists() and source.name != target_name:
             target.write_text(source.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
-            aliases.append("fdb_cfg.h")
+            aliases.append(target_name)
     return aliases
 
 
@@ -62,13 +64,30 @@ def _include_args(project_root: Path, include_dirs: list[str], tmp: Path) -> lis
     return args
 
 
+def _discovered_header_includes(project_root: Path, include_dirs: list[str]) -> str:
+    headers: list[str] = []
+    for include_dir in include_dirs:
+        root = project_root / include_dir
+        if not root.is_dir():
+            continue
+        for path in sorted(root.glob("*.h")):
+            headers.append(path.relative_to(root).as_posix())
+    standard_headers = [
+        "#include <stdbool.h>",
+        "#include <stddef.h>",
+        "#include <stdint.h>",
+    ]
+    project_headers = [f'#include "{header}"' for header in sorted(dict.fromkeys(headers))]
+    return "\n".join(standard_headers + project_headers) + "\n"
+
+
 def _preprocess(project_root: Path, include_dirs: list[str], config_headers: list[str], tmp: Path) -> str:
     cc = _cc()
     if cc is None:
         raise RuntimeError("missing C compiler: cc/gcc/clang not found")
     _prepare_config_alias(project_root, config_headers, tmp)
     source = tmp / "abi_preprocess.c"
-    source.write_text('#include "flashdb.h"\n', encoding="utf-8")
+    source.write_text(_discovered_header_includes(project_root, include_dirs), encoding="utf-8")
     command = [cc, "-E", "-P", *_include_args(project_root, include_dirs, tmp), str(source)]
     code, output = _run(command, cwd=project_root)
     if code != 0:
@@ -82,7 +101,7 @@ def _active_macros(project_root: Path, include_dirs: list[str], config_headers: 
         return []
     _prepare_config_alias(project_root, config_headers, tmp)
     source = tmp / "abi_macros.c"
-    source.write_text('#include "flashdb.h"\n', encoding="utf-8")
+    source.write_text(_discovered_header_includes(project_root, include_dirs), encoding="utf-8")
     command = [cc, "-dM", "-E", *_include_args(project_root, include_dirs, tmp), str(source)]
     code, output = _run(command, cwd=project_root)
     if code != 0:
@@ -162,13 +181,13 @@ def _parse_fields(preprocessed: str, struct_name: str) -> list[dict[str, Any]]:
     return fields
 
 
-def _probe_source(fields_by_struct: dict[str, list[dict[str, Any]]]) -> str:
+def _probe_source(project_root: Path, include_dirs: list[str], fields_by_struct: dict[str, list[dict[str, Any]]]) -> str:
     lines = [
         "#include <stddef.h>",
         "#include <stdio.h>",
-        '#include "flashdb.h"',
-        "int main(void) {",
     ]
+    lines.extend(_discovered_header_includes(project_root, include_dirs).splitlines())
+    lines.append("int main(void) {")
     for struct_name, fields in fields_by_struct.items():
         lines.append(
             f'  printf("STRUCT|{struct_name}|%zu|%zu\\n", '
@@ -199,7 +218,7 @@ def _run_probe(
     _prepare_config_alias(project_root, config_headers, tmp)
     source = tmp / "abi_probe.c"
     binary = tmp / "abi_probe"
-    source.write_text(_probe_source(fields_by_struct), encoding="utf-8")
+    source.write_text(_probe_source(project_root, include_dirs, fields_by_struct), encoding="utf-8")
     command = [cc, "-std=c11", *_include_args(project_root, include_dirs, tmp), str(source), "-o", str(binary)]
     code, output = _run(command, cwd=project_root)
     if code != 0:

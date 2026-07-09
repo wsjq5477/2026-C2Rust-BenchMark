@@ -33,8 +33,6 @@ judge-assets/code/FlashDB
 logs/trace/input_manifest.json
 logs/trace/02-read-c-project.md
 logs/trace/workflow_state.json
-result/output.md
-result/issues/00-summary.md
 ```
 
 ## 细节实现

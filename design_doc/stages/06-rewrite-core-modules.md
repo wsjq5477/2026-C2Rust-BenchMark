@@ -14,14 +14,14 @@ flashdb-migration Skill
 work/tools/gate.py
 ```
 
-不拆 KVDB/TSDB core subagent，避免 public API 和存储语义被多个上下文改散。
+不新增固定模块名的 core subagent，避免 public API 和存储语义被多个上下文改散。本阶段仍可由独立的 `rust-implementer` session 执行，但只按 `rust_api_design.json` 当前声明的模块分批推进，不预置固定任务清单。
 
 ## 输入
 
 ```text
-logs/trace/rust_api_design.json
-logs/trace/c_project_model.json
-logs/trace/c_api_model.json
+logs/trace/rust_api_design.json 的必要局部片段
+logs/trace/c_project_model.json 的必要局部片段
+logs/trace/c_api_model.json 的必要局部片段
 flashDB_rust/src/
 work/knowledge/flashdb-rust-architecture.md
 ```
@@ -29,31 +29,16 @@ work/knowledge/flashdb-rust-architecture.md
 ## 输出
 
 ```text
-flashDB_rust/src/error.rs
-flashDB_rust/src/flash.rs
-flashDB_rust/src/kvdb.rs
-flashDB_rust/src/tsdb.rs
-flashDB_rust/src/<support-or-extension>.rs
+rust_api_design.json.modules 声明的 Rust 源文件
 logs/trace/06-rewrite-core-modules.md
 logs/trace/core_rewrite_batches.jsonl
-logs/trace/cargo-check-06-error.log
-logs/trace/cargo-check-06-flash.log
-logs/trace/cargo-check-06-kvdb.log
-logs/trace/cargo-check-06-tsdb.log
+logs/trace/cargo-check-06-<batch>.log
 logs/trace/workflow_state.json
-result/output.md
-result/issues/00-summary.md
 ```
 
 ## 细节实现
 
-必须按批次实现：
-
-1. `error.rs`：`FdbError`、`Result` alias、错误转换。
-2. `flash.rs`：`FlashStorage` trait、`MemFlash`、`FileFlash` 基本读写擦除。
-3. `kvdb.rs`：record append、set/get/delete/update、reload、gc。
-4. `tsdb.rs`：append、iter、query、status、clean、reload。
-5. 支持/扩展模块：按照 `rust_api_design.json.support_modules` 和 `rust_api_design.json.extension_modules` 逐项实现，或在 `unmapped_symbols` / `result/issues` 中记录不能实现的原因。
+必须按 `rust_api_design.json.modules`、`support_modules` 和 `extension_modules` 的当前声明分批实现。批次名称、目标文件和顺序从设计产物推导，不在阶段文档中预置固定函数、固定 case 或固定实现任务清单。
 
 每完成一个批次，主控 Agent 必须运行：
 
@@ -83,14 +68,10 @@ logs/trace/core_rewrite_batches.jsonl
 }
 ```
 
-推荐批次和日志：
+推荐日志命名：
 
 ```text
-error      -> logs/trace/cargo-check-06-error.log
-flash      -> logs/trace/cargo-check-06-flash.log
-kvdb       -> logs/trace/cargo-check-06-kvdb.log
-tsdb       -> logs/trace/cargo-check-06-tsdb.log
-extension  -> logs/trace/cargo-check-06-extension.log（仅在存在扩展模块时）
+<batch> -> logs/trace/cargo-check-06-<batch>.log
 ```
 
 ## 执行命令
@@ -110,7 +91,7 @@ python3 ../work/tools/gate.py --stage REWRITE_CORE_MODULES --root ..
 - `rust_api_design.json.modules` 声明的支持/扩展模块存在且有实现或有明确未完成记录；
 - 不存在 `todo!()`、`unimplemented!()`；
 - `core_rewrite_batches.jsonl` 存在；
-- `core_rewrite_batches.jsonl` 至少包含 `error`、`flash`、`kvdb`、`tsdb` 四个批次；
+- `core_rewrite_batches.jsonl` 覆盖 `rust_api_design.json.modules` 当前声明的模块；
 - 每个批次的 `status == pass`；
 - 最近一次 `cargo check` 证据存在且通过；
 - 不存在 `.c` 文件被放进 `flashDB_rust/src/`；
@@ -123,6 +104,7 @@ python3 ../work/tools/gate.py --stage REWRITE_CORE_MODULES --root ..
 - 不链接 C 源码。
 - unsafe 必须极少且有注释；优先 safe Rust。
 - 不改变已固定 public API，除非回退到 `DESIGN_RUST_API` 并记录原因。
+- 默认不全文读取 C 源码或 trace 大 JSON。只有模型事实不足以指导实现时，才允许说明缺口后读取 C 源码局部窗口；超过 400 行的 C/Rust 文件禁止全文读取。
 
 ## 下一阶段交接
 

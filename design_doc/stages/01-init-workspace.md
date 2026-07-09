@@ -28,8 +28,6 @@ logs/trace/
 logs/interaction.md
 logs/trace/workflow_state.json
 logs/trace/01-init-workspace.md
-result/output.md
-result/issues/00-summary.md
 ```
 
 ## 细节实现

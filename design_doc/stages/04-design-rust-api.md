@@ -31,8 +31,6 @@ work/skills/flashdb-migration/SKILL.md
 logs/trace/rust_api_design.json
 logs/trace/04-design-rust-api.md
 logs/trace/workflow_state.json
-result/output.md
-result/issues/00-summary.md
 ```
 
 ## 细节实现

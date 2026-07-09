@@ -18,8 +18,8 @@ work/tools/gate.py
 ## 输入
 
 ```text
-logs/trace/c_test_model.json
-logs/trace/rust_api_design.json
+logs/trace/c_test_model.json 的相关局部片段
+logs/trace/rust_api_design.json 的相关局部片段
 flashDB_rust/src/
 work/knowledge/flashdb-test-map.md
 work/skills/flashdb-test-migration/SKILL.md
@@ -34,8 +34,6 @@ flashDB_rust/tests/equivalence_tests.rs
 logs/trace/rust_test_mapping.json
 logs/trace/07-migrate-tests.md
 logs/trace/workflow_state.json
-result/output.md
-result/issues/00-summary.md
 ```
 
 ## 细节实现
@@ -48,6 +46,8 @@ logs/trace/rust_test_mapping.json
 ```
 
 `MIGRATE_TESTS` 阶段不强制 `cargo test` 通过；它强制测试被生成、映射被记录、语义义务被验证。最终 cargo build/test 由 `BUILD_TEST_REPAIR` 归档并修复。
+
+本阶段默认不全文读取 trace 大 JSON、C 源码、总设计文档或历史报告；需要 C 测试事实时只读取相关场景或测试函数窗口。
 
 `rust_test_mapping.json` 建议结构：
 

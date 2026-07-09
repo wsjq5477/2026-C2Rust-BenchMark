@@ -19,14 +19,21 @@ permission:
 ## 职责范围
 
 - 运行或读取 `work/tools/test_failure_triage.py` 产出的 `logs/trace/test-failure-triage.jsonl`；
-- 读取 `logs/trace/cargo-build.log`、`logs/trace/cargo-test.log`、`logs/trace/cargo-results.json`；
-- 读取 `logs/trace/validation-matrix.json` 和 `logs/trace/rust_test_mapping.json`；
+- 读取 `logs/trace/cargo-build.log`、`logs/trace/cargo-test.log` 的 tail 和 `logs/trace/cargo-results.json`；
+- 读取 `logs/trace/validation-matrix.json` 和 `logs/trace/rust_test_mapping.json` 的相关局部片段；
 - 根据错误栈定位最小修复点；
 - 只在 triage 允许的 `allowed_edit_scope` 内修改文件；
 - 做最小补丁；
 - 每轮修复后重新运行相应 cargo 命令；
 - 将修复轮次写入 `result/issues/repair_trace.jsonl`。
 - 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。
+
+## 上下文边界
+
+- 默认不得全文读取 trace 大 JSON、完整 cargo 日志、总设计文档或历史报告。
+- 失败归因优先使用 triage 记录、cargo tail、`cargo-results.json` 和必要局部模型片段。
+- 不系统性读取 C 源码；若证据不足，应要求主控回派对应 subagent，而不是扩大读取范围。
+- 最终 `result/output.md` 和 `result/issues/00-summary.md` 只由 `REPORT_AND_VERIFY` 统一生成，本 subagent 不维护最终报告。
 
 ## 自修范围
 
