@@ -22,8 +22,10 @@ permission:
 
 - 选择并记录 `$FLASHDB_SOURCE`。
 - 只读扫描 FlashDB C 输入目录，生成 `logs/trace/input_manifest.json`。
-- 基于当前 C 输入动态生成 `logs/trace/c_project_model.json`、`logs/trace/c_api_model.json`、`logs/trace/c_test_model.json`，其中 `c_api_model.json.abi_layouts` 必须记录 C 编译器确认的 ABI struct 布局。
-- 基于 C 模型和测试模型生成 `logs/trace/rust_api_design.json`，其中 `c_abi_facade` 必须来自 `c_api_model.json.abi_layouts`。
+- 基于当前 C 输入动态生成 `logs/trace/c_project_model.json`、`logs/trace/c_api_model.json`、`logs/trace/c_test_model.json`，其中 `c_api_model.json.function_signatures` 必须记录 public header 中关键 C ABI 函数的 return type、参数顺序、参数类型、pointer depth、const 信息和声明来源，`c_api_model.json.abi_layouts` 必须记录 C 编译器确认的 ABI struct 布局。
+- 维护 `c_api_model.json.typedef_map`、`enum_map`、`unresolved_signatures` 和 `unresolved_types`。C runner、scorer case 或 layout checker 依赖的关键路径不得 unresolved；非关键扩展符号如果 unresolved，必须记录 `symbol`、`reason`、`source` 和后续去向。
+- 在 `c_test_model.json.registered_test_invocations` 中保留 `TEST_RUN(...)` 的动态注册顺序、来源 runner 和测试函数名；不得固定测试数量或 scorer case 数量。
+- 基于 C 模型和测试模型生成 `logs/trace/rust_api_design.json`，其中 `c_abi_facade.structs` 必须来自 `c_api_model.json.abi_layouts`，`c_abi_facade.functions` 必须来自 `c_api_model.json.function_signatures`，`c_abi_facade.c_type_map` 必须说明 C->Rust FFI 类型映射和 unresolved 类型。
 - 写入中文阶段日志：`02-read-c-project.md`、`03-build-c-model.md`、`04-design-rust-api.md`。
 - 更新 `logs/trace/workflow_state.json`。
 - 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。

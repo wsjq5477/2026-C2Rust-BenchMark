@@ -20,7 +20,7 @@ permission:
 
 - 运行或读取 `work/tools/test_failure_triage.py` 产出的 `logs/trace/test-failure-triage.jsonl`；
 - 读取 `logs/trace/cargo-build.log`、`logs/trace/cargo-test.log` 的 tail 和 `logs/trace/cargo-results.json`；
-- 读取 `logs/trace/validation-matrix.json` 和 `logs/trace/rust_test_mapping.json` 的相关局部片段；
+- 读取 `logs/trace/validation-matrix.json`、`logs/trace/c-cross/diagnostics.jsonl`、`logs/trace/c-cross/case-results.jsonl` 和 `logs/trace/rust_test_mapping.json` 的相关局部片段；
 - 根据错误栈定位最小修复点；
 - 只在 triage 允许的 `allowed_edit_scope` 内修改文件；
 - 做最小补丁；
@@ -31,7 +31,7 @@ permission:
 ## 上下文边界
 
 - 默认不得全文读取 trace 大 JSON、完整 cargo 日志、总设计文档或历史报告。
-- 失败归因优先使用 triage 记录、cargo tail、`cargo-results.json` 和必要局部模型片段。
+- 失败归因优先使用 triage 记录、cargo tail、`cargo-results.json`、`validation-matrix.json.scenarios[]` 中失败项、`diagnostics.jsonl` 中对应 `phase/diagnosis/handoff` 记录和必要局部模型片段。
 - 不系统性读取 C 源码；若证据不足，应要求主控回派对应 subagent，而不是扩大读取范围。
 - 最终 `result/output.md` 和 `result/issues/00-summary.md` 只由 `REPORT_AND_VERIFY` 统一生成，本 subagent 不维护最终报告。
 
@@ -44,8 +44,9 @@ permission:
 
 ## 回派规则
 
-- 回派 `c-analyzer`：`rust_api_design.json` 错误、C 模型漏符号、漏测试语义、API mapping 错，或实现和测试都无法判断。
-- 回派 `rust-implementer`：Rust 核心行为与 C 语义不一致，涉及多个模块的状态机、存储布局、KVDB/TSDB 语义，或你连续 2 轮修复同类实现问题失败。
+- 优先遵守 `validation-matrix.json.scenarios[].handoff` 和 `diagnostics.jsonl.handoff` 的有限枚举；只读对应失败 scenario、log tail 和必要 ABI/test mapping 局部。
+- 回派 `c-analyzer`：`c_model_signature_gap`、C 模型漏符号、漏测试语义、API mapping 错，或实现和测试都无法判断。
+- 回派 `rust-implementer`：`rust_staticlib_build_failed`、`c_abi_layout_mismatch`、`c_runner_link_failed`、`c_runner_runtime_failed`、`c_test_case_failed`，Rust 核心行为与 C 语义不一致，涉及多个模块的状态机、存储布局、KVDB/TSDB 语义，或你连续 2 轮修复同类实现问题失败。
 - 回派 `test-migrator`：测试断言没有 C evidence，`rust_test_mapping.json` 的 `validated_obligations` / `assertion_evidence` 不完整，漏 case、重复 case、覆盖级别标错，或 `validation-matrix.json` 已通过但 Rust 测试预期冲突。
 
 ## 测试失败归因优先级

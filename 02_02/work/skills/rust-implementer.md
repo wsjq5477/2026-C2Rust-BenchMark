@@ -34,11 +34,11 @@ permission:
 python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust
 python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
-python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```
 
-`VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。`c_cross_validate.py` 会编译 Rust `staticlib`，编译原始 C 测试 runner 并链接到 Rust C ABI facade。只有 `validation-matrix.json.policy == strict` 且所有 scorer cases 的 `rust_impl_c_test == pass` 后，才允许进入 `MIGRATE_TESTS`。
+`VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。`c_cross_validate.py --mode full` 会按 build/layout/link/full 分层执行：编译 Rust `staticlib`，运行 C ABI layout checker，编译/链接原始 C 测试 runner，再运行 runner。它必须写入 `build-check.json`、`layout-check.json`、`link-check.json`、`case-results.jsonl`、`diagnostics.jsonl` 和 `validation-matrix.json`。只有 `validation-matrix.json.policy == strict`、`mode == full` 且所有 scorer cases 的 `rust_impl_c_test == pass` 后，才允许进入 `MIGRATE_TESTS`。
 
 ## 上下文边界
 
@@ -53,11 +53,14 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 
 `logs/trace/rust_api_design.json.c_abi_facade` 是 FFI struct 的唯一布局合同。实现 C ABI facade 时必须遵守，但只读取当前需要的 struct 局部片段：
 
+- `GENERATE_RUST_SCAFFOLD` 阶段必须创建 `src/ffi/mod.rs`、`src/ffi/c_types.rs`、`src/ffi/c_abi.rs` 和 `src/ffi/layout_probe.rs`，根级 `src/c_abi.rs` 只能作为兼容 re-export。
 - 所有暴露给 C runner 或 layout checker 的 FFI struct 必须使用 `#[repr(C)]`。
 - Rust 字段顺序、类型宽度、`sizeof`、`alignof` 和字段 offset 必须匹配 `c_abi_facade.structs`。
+- 不得用 `_opaque` 替代 C runner 或 layout checker 需要字段 offset 的 struct；必须生成真实字段和必要 padding。
+- `src/ffi/c_abi.rs` 的 `extern "C"` 函数签名必须来自 `c_abi_facade.functions`，参数和返回值使用 `rust_ffi_type`，不得统一退化为 `fn() -> *mut c_void`。
 - 不得仅凭原始 C header 肉眼猜测条件编译字段。
 - `c_abi_facade.structs[].notes` 和 `c_api_model.json.abi_layouts[].active_macros` 中记录的 active macros 已经影响 C 编译器布局，激活字段不得遗漏。
-- `src/ffi/layout_probe.rs` 必须导出 `rust_sizeof_xxx`、`rust_alignof_xxx` 和 `rust_offsetof_xxx_field`，并用真实 Rust struct 计算结果替换 scaffold 常量。
+- `src/ffi/layout_probe.rs` 必须导出 `rust_sizeof_xxx`、`rust_alignof_xxx` 和 `rust_offsetof_xxx_field`，并用真实 Rust struct 的 `core::mem::size_of`、`core::mem::align_of` 和 `offset_of!` 计算结果，不能返回合同常量伪装通过。
 - 如果 `c_abi_facade` 缺少必须结构体、字段、offset 或条件编译说明，写入 `logs/trace/design-gaps.jsonl` 并要求主控回派 `c-analyzer` 补充模型；不得在实现阶段私自修改 C 事实模型。
 
 ## C 源码读取规则

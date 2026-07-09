@@ -31,6 +31,14 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    _write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    _write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+
+
 def _command_text(command: list[str], cwd: Path | None = None) -> str:
     prefix = f"(cd {cwd} && )" if cwd else ""
     return prefix + " ".join(command)
@@ -40,15 +48,21 @@ def _safe_c_suffix(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
 
 
-def _run(command: list[str], *, cwd: Path | None = None) -> tuple[int, str]:
-    completed = subprocess.run(
-        command,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    return completed.returncode, completed.stdout
+def _run(command: list[str], *, cwd: Path | None = None, timeout: float = 60) -> tuple[int, str]:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        return -124, f"{stdout}{stderr}\nTIMEOUT: killed after {timeout}s\n"
+    return completed.returncode, f"{completed.stdout}{completed.stderr}"
 
 
 def _suite_for_case(case: dict[str, Any]) -> str:
@@ -181,16 +195,23 @@ def _compile_suite_runner(
     return True, binary, text
 
 
-def _run_suite_runner(suite: str, binary: Path, c_cross: Path) -> tuple[bool, str]:
-    run_dir = c_cross / f"{suite}-run"
+def _run_suite_runner(suite: str, binary: Path, c_cross: Path) -> tuple[bool, str, str]:
+    run_dir = c_cross / f"{suite}_run"
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
+    log_path = c_cross / f"{suite}_runner.log"
     command = [str(binary.resolve())]
-    code, output = _run(command, cwd=run_dir)
+    code, output = _run(command, cwd=run_dir, timeout=60)
     text = f"$ {_command_text(command, run_dir)}\n{output}\n"
+    _write(log_path, text)
+    if code == -124:
+        return False, text, f"{suite} runner timeout after 60s, see {log_path}"
     if code != 0:
         text += f"runner exited with {code}\n"
-        return False, text
-    return True, text
+        _write(log_path, text)
+        return False, text, f"{suite} runner failed, see {log_path}"
+    return True, text, f"{suite} original C runner passed"
 
 
 def _layout_structs(trace: Path) -> list[dict[str, Any]]:
@@ -383,6 +404,10 @@ def _malformed_row(index: int, case: Any, c_cross: Path, root: Path) -> dict[str
         "scenario_id": scenario_id,
         "scorer_case_id": scenario_id,
         "suite": "unknown",
+        "phase": "build",
+        "failure_layer": "build",
+        "source_runner": "unknown",
+        "source_test": scenario_id,
         "c_impl_c_test": "baseline",
         "rust_impl_c_test": "not_supported",
         "c_impl_rust_test": "not_run",
@@ -390,12 +415,53 @@ def _malformed_row(index: int, case: Any, c_cross: Path, root: Path) -> dict[str
         "diagnosis": "c_cross_harness_not_supported",
         "reason": reason,
         "log": _relative_log_path(log, root),
+        "handoff": "c-analyzer",
     }
+
+
+def _source_evidence_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[str, str]]:
+    raw = test_model.get("registered_test_invocations")
+    if not isinstance(raw, list):
+        return {}
+    evidence: dict[str, dict[str, str]] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        runner = item.get("runner")
+        test_function = item.get("test_function")
+        scenarios = item.get("scenarios")
+        if not isinstance(runner, str) or not isinstance(test_function, str) or not isinstance(scenarios, list):
+            continue
+        for scenario in scenarios:
+            if isinstance(scenario, str) and scenario not in evidence:
+                evidence[scenario] = {
+                    "source_runner": runner,
+                    "source_test": test_function,
+                }
+    return evidence
+
+
+def _handoff_for_diagnosis(diagnosis: str) -> str:
+    if diagnosis in {"c_model_signature_gap", "c_cross_harness_not_supported"}:
+        return "c-analyzer"
+    if diagnosis in {
+        "rust_staticlib_build_failed",
+        "c_abi_layout_mismatch",
+        "c_runner_link_failed",
+        "c_runner_runtime_failed",
+        "c_test_case_failed",
+        "rust_implementation_failed_c_baseline",
+    }:
+        return "rust-implementer"
+    return "none"
 
 
 def _suite_result_rows(
     cases: list[dict[str, Any]],
     suite_results: dict[str, tuple[str, str]],
+    suite_phases: dict[str, str],
+    suite_diagnoses: dict[str, str],
+    source_evidence: dict[str, dict[str, str]],
     c_cross: Path,
     root: Path,
 ) -> list[dict[str, Any]]:
@@ -408,18 +474,32 @@ def _suite_result_rows(
             ("not_supported", f"no original C runner is available for suite {suite}"),
         )
         log = c_cross / f"{scenario_id}.log"
-        if status == "pass":
-            diagnosis = "rust_implementation_matches_c_baseline_for_scenario"
-        elif status == "fail":
-            diagnosis = "rust_implementation_failed_c_baseline"
-        else:
-            diagnosis = "c_cross_harness_not_supported"
+        phase = suite_phases.get(suite, "full")
+        diagnosis = suite_diagnoses.get(suite)
+        if not diagnosis:
+            if status == "pass":
+                diagnosis = "rust_implementation_matches_c_baseline_for_scenario"
+            elif status == "fail":
+                diagnosis = "rust_implementation_failed_c_baseline"
+            else:
+                diagnosis = "c_cross_harness_not_supported"
+        evidence = source_evidence.get(
+            scenario_id,
+            {
+                "source_runner": f"{suite}_runner",
+                "source_test": scenario_id,
+            },
+        )
         _write(log, f"suite={suite}\nstatus={status}\nreason={reason}\n")
         rows.append(
             {
                 "scenario_id": scenario_id,
                 "scorer_case_id": str(case["case_id"]),
                 "suite": suite,
+                "phase": phase,
+                "failure_layer": phase,
+                "source_runner": evidence["source_runner"],
+                "source_test": evidence["source_test"],
                 "c_impl_c_test": "baseline",
                 "rust_impl_c_test": status,
                 "c_impl_rust_test": "not_run",
@@ -427,12 +507,15 @@ def _suite_result_rows(
                 "diagnosis": diagnosis,
                 "reason": reason,
                 "log": _relative_log_path(log, root),
+                "handoff": _handoff_for_diagnosis(diagnosis),
             }
         )
     return rows
 
 
-def build_matrix(root: Path, out: Path, project_name: str = "flashDB_rust") -> dict[str, Any]:
+def build_matrix(root: Path, out: Path, project_name: str = "flashDB_rust", mode: str = "full") -> dict[str, Any]:
+    if mode not in {"build", "layout", "link", "full"}:
+        raise ValueError(f"unsupported c-cross mode: {mode}")
     trace = out
     c_cross = trace / "c-cross"
     c_cross.mkdir(parents=True, exist_ok=True)
@@ -454,59 +537,197 @@ def build_matrix(root: Path, out: Path, project_name: str = "flashDB_rust") -> d
         else:
             valid_cases.append(case)
 
-    compile_log = []
-    test_log = []
+    compile_log: list[str] = []
+    test_log: list[str] = []
     suite_results: dict[str, tuple[str, str]] = {}
+    suite_phases: dict[str, str] = {}
+    suite_diagnoses: dict[str, str] = {}
+    diagnostics: list[dict[str, Any]] = []
+    source_evidence = _source_evidence_by_scenario(test_model)
     c_root = _find_c_project_root(root, trace)
     project = (root / project_name).resolve()
+    suites = sorted({_suite_for_case(case) for case in valid_cases})
 
     if c_root is None:
         reason = "FlashDB C project root not found"
         compile_log.append(reason + "\n")
-        for suite in sorted({_suite_for_case(case) for case in valid_cases}):
+        _write_json(c_cross / "build-check.json", {"phase": "build", "status": "not_supported", "reason": reason})
+        _write_json(c_cross / "layout-check.json", {"phase": "layout", "status": "not_run", "reason": reason})
+        _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+        for suite in suites:
             suite_results[suite] = ("not_supported", reason)
+            suite_phases[suite] = "build"
+            suite_diagnoses[suite] = "c_cross_harness_not_supported"
     elif not project.exists():
         reason = f"Rust project not found: {project}"
         compile_log.append(reason + "\n")
-        for suite in sorted({_suite_for_case(case) for case in valid_cases}):
+        _write_json(c_cross / "build-check.json", {"phase": "build", "status": "fail", "reason": reason})
+        _write_json(c_cross / "layout-check.json", {"phase": "layout", "status": "not_run", "reason": reason})
+        _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+        for suite in suites:
             suite_results[suite] = ("fail", reason)
+            suite_phases[suite] = "build"
+            suite_diagnoses[suite] = "rust_staticlib_build_failed"
     else:
         rust_ok, rust_output = _build_rust_staticlib(project)
         compile_log.append(rust_output)
+        _write_json(
+            c_cross / "build-check.json",
+            {
+                "phase": "build",
+                "status": "pass" if rust_ok else "fail",
+                "command": "cargo build --release",
+                "log": _relative_log_path(c_cross / "cross-compile.log", root),
+                "staticlib": _relative_log_path(_rust_staticlib(project), root) if rust_ok else None,
+            },
+        )
         if not rust_ok:
             reason = "Rust staticlib build failed"
-            for suite in sorted({_suite_for_case(case) for case in valid_cases}):
+            _write_json(c_cross / "layout-check.json", {"phase": "layout", "status": "not_run", "reason": reason})
+            _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+            for suite in suites:
                 suite_results[suite] = ("fail", reason)
+                suite_phases[suite] = "build"
+                suite_diagnoses[suite] = "rust_staticlib_build_failed"
+        elif mode == "build":
+            reason = "stopped after build mode"
+            _write_json(c_cross / "layout-check.json", {"phase": "layout", "status": "not_run", "reason": reason})
+            _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+            for suite in suites:
+                suite_results[suite] = ("pending", reason)
+                suite_phases[suite] = "build"
+                suite_diagnoses[suite] = "blocked_before_rust_test_migration"
         else:
             rust_lib = _rust_staticlib(project)
             layout_ok, layout_output = _run_layout_checker(c_root, c_cross, rust_lib, trace)
             compile_log.append(layout_output)
+            _write_json(
+                c_cross / "layout-check.json",
+                {
+                    "phase": "layout",
+                    "status": "pass" if layout_ok else "fail",
+                    "diagnosis": "pass" if layout_ok else "c_abi_layout_mismatch",
+                    "log": _relative_log_path(c_cross / "layout-check.log", root),
+                },
+            )
             if not layout_ok:
                 reason = "layout mismatch or layout checker failure; see logs/trace/c-cross/layout-check.log"
-                for suite in sorted({_suite_for_case(case) for case in valid_cases}):
+                _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+                for suite in suites:
                     suite_results[suite] = ("fail", reason)
+                    suite_phases[suite] = "layout"
+                    suite_diagnoses[suite] = "c_abi_layout_mismatch"
+                for case in valid_cases:
+                    diagnostics.append(
+                        {
+                            "phase": "layout",
+                            "diagnosis": "c_abi_layout_mismatch",
+                            "scenario_id": str(case["scenario_id"]),
+                            "scorer_case_id": str(case["case_id"]),
+                            "suite": _suite_for_case(case),
+                            "handoff": "rust-implementer",
+                            "reason": reason,
+                            "log": _relative_log_path(c_cross / "layout-check.log", root),
+                        }
+                    )
+            elif mode == "layout":
+                reason = "stopped after layout mode"
+                _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+                for suite in suites:
+                    suite_results[suite] = ("pending", reason)
+                    suite_phases[suite] = "layout"
+                    suite_diagnoses[suite] = "blocked_before_rust_test_migration"
             else:
-                for suite in sorted({_suite_for_case(case) for case in valid_cases}):
+                link_suites: dict[str, str] = {}
+                link_reasons: dict[str, str] = {}
+                compiled_binaries: dict[str, Path] = {}
+                for suite in suites:
                     ok, binary, output = _compile_suite_runner(suite, c_root, c_cross, rust_lib)
                     compile_log.append(output)
                     if not ok or binary is None:
-                        suite_results[suite] = ("fail", f"{suite} original C runner failed to compile")
+                        reason = f"{suite} original C runner failed to compile"
+                        suite_results[suite] = ("fail", reason)
+                        suite_phases[suite] = "link"
+                        suite_diagnoses[suite] = "c_runner_link_failed"
+                        link_suites[suite] = "fail"
+                        link_reasons[suite] = reason
+                        diagnostics.append(
+                            {
+                                "phase": "link",
+                                "diagnosis": "c_runner_link_failed",
+                                "suite": suite,
+                                "handoff": "rust-implementer",
+                                "reason": reason,
+                                "log": _relative_log_path(c_cross / "cross-compile.log", root),
+                            }
+                        )
                         continue
-                    run_ok, run_output = _run_suite_runner(suite, binary, c_cross)
-                    test_log.append(run_output)
-                    suite_results[suite] = (
-                        "pass" if run_ok else "fail",
-                        f"{suite} original C runner {'passed' if run_ok else 'failed'}",
-                    )
+                    compiled_binaries[suite] = binary
+                    link_suites[suite] = "pass"
+                _write_json(
+                    c_cross / "link-check.json",
+                    {
+                        "phase": "link",
+                        "status": "pass" if link_suites and all(value == "pass" for value in link_suites.values()) else "fail",
+                        "suites": link_suites,
+                        "reasons": link_reasons,
+                        "log": _relative_log_path(c_cross / "cross-compile.log", root),
+                    },
+                )
+                if mode == "link":
+                    test_log.append("No C runner executed in link mode.\n")
+                    for suite in suites:
+                        if suite not in suite_results:
+                            suite_results[suite] = ("pending", "stopped after link mode")
+                            suite_phases[suite] = "link"
+                            suite_diagnoses[suite] = "blocked_before_rust_test_migration"
+                else:
+                    for suite, binary in compiled_binaries.items():
+                        run_ok, run_output, run_reason = _run_suite_runner(suite, binary, c_cross)
+                        test_log.append(run_output)
+                        suite_results[suite] = (
+                            "pass" if run_ok else "fail",
+                            run_reason,
+                        )
+                        suite_phases[suite] = "full"
+                        suite_diagnoses[suite] = (
+                            "rust_implementation_matches_c_baseline_for_scenario"
+                            if run_ok
+                            else "c_runner_runtime_failed"
+                        )
+                        if not run_ok:
+                            diagnostics.append(
+                                {
+                                    "phase": "full",
+                                    "diagnosis": "c_runner_runtime_failed",
+                                    "suite": suite,
+                                    "handoff": "rust-implementer",
+                                    "reason": run_reason,
+                                    "log": _relative_log_path(c_cross / f"{suite}_runner.log", root),
+                                }
+                            )
+                    for suite in suites:
+                        suite_phases.setdefault(suite, "link")
 
     _write(c_cross / "cross-compile.log", "\n".join(compile_log))
     _write(c_cross / "cross-test.log", "\n".join(test_log) if test_log else "No C runner executed.\n")
 
-    scenarios = malformed + _suite_result_rows(valid_cases, suite_results, c_cross, root)
+    scenarios = malformed + _suite_result_rows(
+        valid_cases,
+        suite_results,
+        suite_phases,
+        suite_diagnoses,
+        source_evidence,
+        c_cross,
+        root,
+    )
+    _write_jsonl(c_cross / "case-results.jsonl", scenarios)
+    _write_jsonl(c_cross / "diagnostics.jsonl", diagnostics)
     summary = Counter(item["rust_impl_c_test"] for item in scenarios)
     return {
         "stage": "VERIFY_RUST_WITH_C_TESTS",
         "policy": "strict",
+        "mode": mode,
         "total_scenarios": len(scenarios),
         "summary": {"rust_impl_c_test": dict(sorted(summary.items()))},
         "scenarios": scenarios,
@@ -518,11 +739,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".", help="Workbench root directory.")
     parser.add_argument("--project", default="flashDB_rust", help="Rust project path, relative to root.")
     parser.add_argument("--out", default="logs/trace", help="Trace output directory, relative to root.")
+    parser.add_argument("--mode", choices=["build", "layout", "link", "full"], default="full", help="C-cross checkpoint depth.")
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
     out = (root / args.out).resolve()
-    matrix = build_matrix(root, out, project_name=args.project)
+    matrix = build_matrix(root, out, project_name=args.project, mode=args.mode)
     matrix_path = out / "validation-matrix.json"
     matrix_path.write_text(json.dumps(matrix, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     counts = matrix["summary"]["rust_impl_c_test"]

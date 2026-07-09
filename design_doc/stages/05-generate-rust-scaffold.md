@@ -30,6 +30,11 @@ flashDB_rust/src/error.rs
 flashDB_rust/src/flash.rs
 flashDB_rust/src/kvdb.rs
 flashDB_rust/src/tsdb.rs
+flashDB_rust/src/c_abi.rs
+flashDB_rust/src/ffi/mod.rs
+flashDB_rust/src/ffi/c_types.rs
+flashDB_rust/src/ffi/c_abi.rs
+flashDB_rust/src/ffi/layout_probe.rs
 flashDB_rust/src/<support-or-extension>.rs
 flashDB_rust/tests/
 logs/trace/05-generate-rust-scaffold.md
@@ -51,6 +56,12 @@ flashDB_rust/
 │   ├── flash.rs
 │   ├── kvdb.rs
 │   ├── tsdb.rs
+│   ├── c_abi.rs
+│   ├── ffi/
+│   │   ├── mod.rs
+│   │   ├── c_types.rs
+│   │   ├── c_abi.rs
+│   │   └── layout_probe.rs
 │   └── <support-or-extension>.rs
 └── tests/
 ```
@@ -66,6 +77,15 @@ pub mod tsdb;
 ```
 
 API 空壳必须与 `rust_api_design.json` 一致。`error`、`flash`、`kvdb`、`tsdb` 是必须存在的核心模块；如果 `rust_api_design.json.modules` 包含支持模块或扩展模块，也必须生成对应 `.rs` 文件和 `lib.rs` module 声明。允许使用明确错误返回表示“尚未实现”，但不得长期留下 `todo!()`、`unimplemented!()` 或 panic 作为后续阶段通过条件。
+
+如果 `rust_api_design.json.c_abi_facade` 包含 struct 或 function 合同，本阶段必须同步生成 typed FFI 骨架：
+
+- `src/ffi/c_types.rs` 按 `c_abi_facade.structs` 生成真实 `#[repr(C)]` struct；
+- 字段顺序、字段名、字段宽度和显式 padding 必须来自 layout 合同，不得用 `_opaque` 代替 C runner 或 layout checker 需要检查的字段；
+- `src/ffi/c_abi.rs` 按 `c_abi_facade.functions` 生成同名 `extern "C"` export，参数和返回值使用 `rust_ffi_type`；
+- 函数体可以是中性默认值，占位范围只限业务语义，不允许把签名退化成 `fn() -> *mut c_void`；
+- `src/ffi/layout_probe.rs` 必须用真实 Rust struct 计算 `core::mem::size_of`、`core::mem::align_of` 和 `offset_of!`，不能返回 `rust_api_design.json` 的合同常量伪装通过；
+- 根级 `src/c_abi.rs` 只作为兼容 re-export 时，主实现仍必须在 `src/ffi/c_abi.rs`。
 
 生成骨架后立即执行：
 
@@ -121,6 +141,12 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 - `flashDB_rust/tests/` 存在；
 - public module 声明与 `rust_api_design.json.modules` 一致；
 - `rust_api_design.json.modules` 中声明的支持/扩展模块均有对应 Rust 文件；
+- 当 `rust_api_design.json.c_abi_facade` 声明 struct 或 function 时，`src/ffi/mod.rs`、`src/ffi/c_types.rs`、`src/ffi/c_abi.rs`、`src/ffi/layout_probe.rs` 必须存在；
+- `c_abi_facade.structs` 中的每个 Rust struct 必须在 `src/ffi/c_types.rs` 以 `#[repr(C)]` 生成，并包含合同字段；
+- `src/ffi/c_types.rs` 不得使用 `_opaque` 占位替代需要真实布局的 struct；
+- `c_abi_facade.functions` 中的每个 `rust_export` 必须在 `src/ffi/c_abi.rs` 以 typed `extern "C"` 生成；
+- `src/ffi/c_abi.rs` 不得把 C ABI 函数退化为 `fn() -> *mut c_void`；
+- `src/ffi/layout_probe.rs` 必须包含真实 Rust `size_of` 和字段 `offset_of!` probe；
 - `logs/trace/cargo-check-scaffold.log` 存在；
 - `logs/trace/scaffold-check.json.status == pass`；
 - `workflow_state.json.current_stage == GENERATE_RUST_SCAFFOLD`。

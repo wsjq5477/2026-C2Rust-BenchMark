@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,17 @@ VALID_DIAGNOSES = {
     "c_cross_harness_not_supported",
     "blocked_before_rust_test_migration",
     "rust_test_migration_pending",
+    "rust_staticlib_build_failed",
+    "c_abi_layout_mismatch",
+    "c_runner_link_failed",
+    "c_runner_runtime_failed",
+    "c_test_case_failed",
+    "c_cross_result_parse_failed",
+    "c_model_signature_gap",
 }
+
+VALID_FAILURE_LAYERS = {"build", "layout", "link", "full"}
+VALID_HANDOFFS = {"none", "c-analyzer", "rust-implementer", "test-migrator", "repairer"}
 
 VALID_TEST_TRIAGE_CLASSIFICATIONS = {
     "test_oracle_suspect",
@@ -60,6 +71,26 @@ VALID_TEST_TRIAGE_CLASSIFICATIONS = {
     "harness_suspect",
     "insufficient_evidence",
 }
+
+
+def safe_rust_ident(name: str) -> str:
+    ident = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
+    if not ident:
+        ident = "item"
+    if ident[0].isdigit():
+        ident = f"item_{ident}"
+    return ident
+
+
+def safe_rust_type(name: str, fallback: str = "GeneratedType") -> str:
+    parts = [part for part in re.split(r"[^A-Za-z0-9]+", name) if part]
+    value = "".join(part[:1].upper() + part[1:] for part in parts)
+    if not value:
+        value = fallback
+    if value[0].isdigit():
+        value = f"{fallback}{value}"
+    return value
+
 
 REQUIRED_SUBAGENTS = {
     "c-analyzer": ["READ_C_PROJECT", "BUILD_C_MODEL", "DESIGN_RUST_API"],
@@ -162,6 +193,89 @@ def check_abi_layout_contract(api_model: dict[str, Any]) -> list[str]:
     return errors
 
 
+def required_signature_symbols(api_model: dict[str, Any], test_model: dict[str, Any]) -> set[str]:
+    public = {
+        item for item in api_model.get("public_functions", [])
+        if isinstance(item, str)
+    } if isinstance(api_model.get("public_functions"), list) else set()
+    required = {
+        item
+        for key in ["kvdb_symbols", "tsdb_symbols"]
+        for item in api_model.get(key, [])
+        if isinstance(item, str)
+    }
+    cases = test_model.get("scorer_standard_cases")
+    if isinstance(cases, list):
+        for case in cases:
+            if not isinstance(case, dict):
+                continue
+            obligations = case.get("semantic_obligations")
+            if isinstance(obligations, list):
+                for obligation in obligations:
+                    if isinstance(obligation, str) and obligation.startswith("calls:"):
+                        symbol = obligation.split(":", 1)[1]
+                        if symbol in public:
+                            required.add(symbol)
+            facts = case.get("semantic_facts")
+            observed = facts.get("observed_c_symbols") if isinstance(facts, dict) else None
+            if isinstance(observed, list):
+                required.update(symbol for symbol in observed if isinstance(symbol, str) and symbol in public)
+    return required
+
+
+def check_function_signature_contract(api_model: dict[str, Any], test_model: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    signatures = api_model.get("function_signatures")
+    if not isinstance(signatures, dict) or not signatures:
+        errors.append("c_api_model.json function_signatures must be a non-empty object")
+        signatures = {}
+
+    required_symbols = required_signature_symbols(api_model, test_model)
+    for symbol in sorted(required_symbols):
+        signature = signatures.get(symbol)
+        if not isinstance(signature, dict):
+            errors.append(f"c_api_model.json function_signatures must cover required symbol {symbol}")
+            continue
+        if signature.get("name") != symbol:
+            errors.append(f"c_api_model.json function_signatures.{symbol}.name must equal {symbol}")
+        if not isinstance(signature.get("declaration"), str) or not signature["declaration"].strip().endswith(";"):
+            errors.append(f"c_api_model.json function_signatures.{symbol}.declaration must be a C declaration")
+        return_type = signature.get("return_type")
+        if not isinstance(return_type, dict) or not isinstance(return_type.get("raw"), str) or not return_type.get("raw"):
+            errors.append(f"c_api_model.json function_signatures.{symbol}.return_type.raw must be present")
+        params = signature.get("params")
+        if not isinstance(params, list):
+            errors.append(f"c_api_model.json function_signatures.{symbol}.params must be a list")
+            continue
+        indexes = [param.get("index") for param in params if isinstance(param, dict)]
+        if indexes != list(range(len(params))):
+            errors.append(f"c_api_model.json function_signatures.{symbol}.params indexes must be contiguous")
+        for param in params:
+            if not isinstance(param, dict):
+                errors.append(f"c_api_model.json function_signatures.{symbol}.params entries must be objects")
+                continue
+            for key in ["name", "raw_type", "canonical", "pointer_depth", "const"]:
+                if key not in param:
+                    errors.append(f"c_api_model.json function_signatures.{symbol}.params[{param.get('index', '?')}] missing {key}")
+
+    for field in ["unresolved_signatures", "unresolved_types"]:
+        unresolved = api_model.get(field, [])
+        if not isinstance(unresolved, list):
+            errors.append(f"c_api_model.json {field} must be a list")
+            continue
+        for index, item in enumerate(unresolved):
+            if not isinstance(item, dict):
+                errors.append(f"c_api_model.json {field}[{index}] must be an object")
+                continue
+            for key in ["symbol", "reason", "source"]:
+                if not isinstance(item.get(key), str) or not item.get(key):
+                    errors.append(f"c_api_model.json {field}[{index}] must include {key}")
+            symbol = item.get("symbol")
+            if isinstance(symbol, str) and symbol in required_symbols:
+                errors.append(f"c_api_model.json {field} cannot contain required symbol {symbol}")
+    return errors
+
+
 def check_c_abi_facade_contract(design: dict[str, Any], api_model: dict[str, Any]) -> list[str]:
     layouts = api_model.get("abi_layouts")
     if not isinstance(layouts, list) or not layouts:
@@ -198,6 +312,71 @@ def check_c_abi_facade_contract(design: dict[str, Any], api_model: dict[str, Any
             errors.append(f"rust_api_design.json c_abi_facade {c_name} fields must be a non-empty list")
         if not isinstance(item.get("notes"), list) or not item.get("notes"):
             errors.append(f"rust_api_design.json c_abi_facade {c_name} notes must be a non-empty list")
+
+    symbol_map = design.get("c_to_rust_symbol_map")
+    mapped_symbols = set(symbol_map) if isinstance(symbol_map, dict) else set()
+    required_symbols = mapped_symbols | {
+        item
+        for key in ["kvdb_symbols", "tsdb_symbols"]
+        for item in api_model.get(key, [])
+        if isinstance(item, str)
+    }
+    signatures = api_model.get("function_signatures")
+    if isinstance(signatures, dict):
+        required_symbols &= set(signatures)
+
+    functions = facade.get("functions") if isinstance(facade, dict) else None
+    if not isinstance(functions, list):
+        errors.append("rust_api_design.json c_abi_facade.functions must be a list")
+        functions = []
+    actual_functions = {
+        item.get("c_symbol"): item
+        for item in functions
+        if isinstance(item, dict) and isinstance(item.get("c_symbol"), str)
+    }
+    for symbol in sorted(required_symbols):
+        function = actual_functions.get(symbol)
+        if not isinstance(function, dict):
+            errors.append(f"rust_api_design.json c_abi_facade.functions must cover required symbol {symbol}")
+            continue
+        if function.get("rust_export") != symbol:
+            errors.append(f"rust_api_design.json c_abi_facade.functions {symbol} rust_export must equal c_symbol")
+        if function.get("source_signature") != f"c_api_model.function_signatures.{symbol}":
+            errors.append(f"rust_api_design.json c_abi_facade.functions {symbol} must bind source_signature")
+        return_info = function.get("return")
+        if not isinstance(return_info, dict) or not isinstance(return_info.get("rust_ffi_type"), str) or not return_info.get("rust_ffi_type"):
+            errors.append(f"rust_api_design.json c_abi_facade.functions {symbol} return.rust_ffi_type must be present")
+        params = function.get("params")
+        if not isinstance(params, list):
+            errors.append(f"rust_api_design.json c_abi_facade.functions {symbol} params must be a list")
+        else:
+            for index, param in enumerate(params):
+                if not isinstance(param, dict):
+                    errors.append(f"rust_api_design.json c_abi_facade.functions {symbol} params[{index}] must be an object")
+                    continue
+                for key in ["name", "c_type", "rust_ffi_type"]:
+                    if not isinstance(param.get(key), str) or not param.get(key):
+                        errors.append(f"rust_api_design.json c_abi_facade.functions {symbol} params[{index}] must include {key}")
+
+    type_map = facade.get("c_type_map") if isinstance(facade, dict) else None
+    if not isinstance(type_map, dict):
+        errors.append("rust_api_design.json c_abi_facade.c_type_map must be an object")
+    else:
+        if not isinstance(type_map.get("rules"), list):
+            errors.append("rust_api_design.json c_abi_facade.c_type_map.rules must be a list")
+        if not isinstance(type_map.get("resolved"), dict):
+            errors.append("rust_api_design.json c_abi_facade.c_type_map.resolved must be an object")
+        unresolved = type_map.get("unresolved")
+        if not isinstance(unresolved, list):
+            errors.append("rust_api_design.json c_abi_facade.c_type_map.unresolved must be a list")
+        else:
+            for index, item in enumerate(unresolved):
+                if not isinstance(item, dict):
+                    errors.append(f"rust_api_design.json c_abi_facade.c_type_map.unresolved[{index}] must be an object")
+                    continue
+                symbol = item.get("symbol")
+                if isinstance(symbol, str) and symbol in required_symbols:
+                    errors.append(f"rust_api_design.json c_abi_facade.c_type_map.unresolved cannot contain required symbol {symbol}")
     return errors
 
 
@@ -402,6 +581,85 @@ def check_no_c_sources_in_src(root: Path) -> list[str]:
     return []
 
 
+def check_typed_ffi_scaffold(project: Path, design: dict[str, Any]) -> list[str]:
+    facade = design.get("c_abi_facade")
+    if not isinstance(facade, dict):
+        return []
+    structs = facade.get("structs")
+    functions = facade.get("functions")
+    if not isinstance(structs, list):
+        structs = []
+    if not isinstance(functions, list):
+        functions = []
+    if not structs and not functions:
+        return []
+
+    errors: list[str] = []
+    ffi_mod = project / "src" / "ffi" / "mod.rs"
+    c_types = project / "src" / "ffi" / "c_types.rs"
+    c_abi = project / "src" / "ffi" / "c_abi.rs"
+    layout_probe = project / "src" / "ffi" / "layout_probe.rs"
+    for path in [ffi_mod, c_types, c_abi, layout_probe]:
+        if not path.exists():
+            errors.append(f"missing {path.relative_to(project)}")
+    if errors:
+        return errors
+
+    ffi_mod_text = ffi_mod.read_text(encoding="utf-8", errors="ignore")
+    c_types_text = c_types.read_text(encoding="utf-8", errors="ignore")
+    c_abi_text = c_abi.read_text(encoding="utf-8", errors="ignore")
+    layout_text = layout_probe.read_text(encoding="utf-8", errors="ignore")
+    for module in ["c_types", "c_abi", "layout_probe"]:
+        if f"pub mod {module};" not in ffi_mod_text:
+            errors.append(f"src/ffi/mod.rs missing pub mod {module};")
+
+    for item in structs:
+        if not isinstance(item, dict) or not isinstance(item.get("c_name"), str):
+            continue
+        rust_name = safe_rust_type(str(item.get("rust_name") or item["c_name"]), "CAbiStruct")
+        if "#[repr(C)]" not in c_types_text or f"pub struct {rust_name}" not in c_types_text:
+            errors.append(f"src/ffi/c_types.rs must define #[repr(C)] struct {rust_name}")
+        if "_opaque" in c_types_text:
+            errors.append("src/ffi/c_types.rs must not use opaque placeholder layout fields")
+        if f"core::mem::size_of::<{rust_name}>()" not in layout_text:
+            errors.append(f"src/ffi/layout_probe.rs must export size probe for {rust_name}")
+        fields = item.get("fields")
+        if not isinstance(fields, list):
+            continue
+        for field in fields:
+            if not isinstance(field, dict) or not isinstance(field.get("name"), str):
+                continue
+            field_name = safe_rust_ident(field["name"])
+            if f"pub {field_name}:" not in c_types_text:
+                errors.append(f"src/ffi/c_types.rs must include field {rust_name}.{field_name}")
+            if f"offset_of!({rust_name}, {field_name})" not in layout_text:
+                errors.append(f"src/ffi/layout_probe.rs must export offset probe for {rust_name}.{field_name}")
+
+    for function in functions:
+        if not isinstance(function, dict) or not isinstance(function.get("rust_export"), str):
+            continue
+        export = safe_rust_ident(function["rust_export"])
+        if f'pub extern "C" fn {export}(' not in c_abi_text:
+            errors.append(f"src/ffi/c_abi.rs must export typed C ABI function {export}")
+        empty_c_void_signature = f"fn {export}() -> *mut c_void"
+        if empty_c_void_signature in c_abi_text or f"fn {export}() -> *mut std::ffi::c_void" in c_abi_text:
+            errors.append(f"src/ffi/c_abi.rs must not use untyped c_void placeholder for {export}")
+        params = function.get("params")
+        if isinstance(params, list):
+            for index, param in enumerate(params):
+                if not isinstance(param, dict):
+                    continue
+                name = safe_rust_ident(str(param.get("name") or f"arg{index}"))
+                rust_type = str(param.get("rust_ffi_type") or "").strip()
+                if rust_type and f"{name}: {rust_type}" not in c_abi_text:
+                    errors.append(f"src/ffi/c_abi.rs must preserve typed param {export}.{name}")
+        return_info = function.get("return")
+        return_type = str(return_info.get("rust_ffi_type") or "").strip() if isinstance(return_info, dict) else ""
+        if return_type and return_type != "()" and f"fn {export}(" in c_abi_text and f") -> {return_type}" not in c_abi_text:
+            errors.append(f"src/ffi/c_abi.rs must preserve typed return for {export}")
+    return errors
+
+
 def require_state(
     root: Path,
     required_keys: set[str],
@@ -556,6 +814,7 @@ def check_build_c_model(root: Path) -> list[str]:
     if not api_model.get("tsdb_symbols"):
         errors.append("c_api_model.json tsdb_symbols must be non-empty")
     errors.extend(check_abi_layout_contract(api_model))
+    errors.extend(check_function_signature_contract(api_model, test_model))
 
     if not isinstance(test_model.get("test_functions"), list) or not test_model.get("test_functions"):
         errors.append("c_test_model.json test_functions must be non-empty")
@@ -769,6 +1028,7 @@ def check_generate_rust_scaffold(root: Path) -> list[str]:
                         errors.append(f"missing flashDB_rust/src/{module}.rs")
                     if f"pub mod {module};" not in lib_text:
                         errors.append(f"src/lib.rs missing pub mod {module};")
+            errors.extend(check_typed_ffi_scaffold(project, design))
 
     stage_log = root / "logs" / "trace" / "05-generate-rust-scaffold.md"
     if not stage_log.exists():
@@ -916,6 +1176,18 @@ def check_validation_matrix(root: Path, *, allow_not_supported: bool = True) -> 
         if has_blocking_value:
             diagnosis = item.get("diagnosis")
             log_path = item.get("log")
+            failure_layer = item.get("failure_layer")
+            handoff = item.get("handoff")
+            source_runner = item.get("source_runner")
+            source_test = item.get("source_test")
+            if not isinstance(failure_layer, str) or failure_layer not in VALID_FAILURE_LAYERS:
+                errors.append(f"validation-matrix.json failure_layer must be present for scenario {scenario_id}")
+            if not isinstance(handoff, str) or handoff not in VALID_HANDOFFS or handoff == "none":
+                errors.append(f"validation-matrix.json handoff must be present for scenario {scenario_id}")
+            if not isinstance(source_runner, str) or not source_runner:
+                errors.append(f"validation-matrix.json source_runner must be present for scenario {scenario_id}")
+            if not isinstance(source_test, str) or not source_test:
+                errors.append(f"validation-matrix.json source_test must be present for scenario {scenario_id}")
             if not isinstance(diagnosis, str) or diagnosis not in VALID_DIAGNOSES:
                 errors.append(f"validation-matrix.json diagnosis must be a known value for scenario {scenario_id}")
             if not isinstance(log_path, str) or not log_path:
@@ -932,6 +1204,93 @@ def check_validation_matrix(root: Path, *, allow_not_supported: bool = True) -> 
             + ", ".join(sorted(rust_impl_failures))
         )
 
+    return errors
+
+
+def check_c_cross_layered_evidence(root: Path) -> list[str]:
+    errors: list[str] = []
+    trace = root / "logs" / "trace"
+    c_cross = trace / "c-cross"
+    required = [
+        c_cross / "build-check.json",
+        c_cross / "layout-check.json",
+        c_cross / "link-check.json",
+        c_cross / "case-results.jsonl",
+        c_cross / "diagnostics.jsonl",
+    ]
+    for path in required:
+        if not path.exists():
+            errors.append(f"missing {path.relative_to(root)}")
+    if errors:
+        return errors
+
+    matrix, matrix_error = load_json(trace / "validation-matrix.json")
+    if matrix_error:
+        return [f"validation-matrix.json: {matrix_error}"]
+    if matrix.get("mode") != "full":
+        errors.append("validation-matrix.json mode must be full for VERIFY_RUST_WITH_C_TESTS")
+
+    for filename, expected_phase in [
+        ("build-check.json", "build"),
+        ("layout-check.json", "layout"),
+        ("link-check.json", "link"),
+    ]:
+        data, data_error = load_json(c_cross / filename)
+        if data_error:
+            errors.append(f"{filename}: {data_error}")
+            continue
+        if data.get("phase") != expected_phase:
+            errors.append(f"{filename} phase must be {expected_phase}")
+        if data.get("status") != "pass":
+            errors.append(f"{filename} status must be pass for VERIFY_RUST_WITH_C_TESTS")
+
+    case_rows, case_error = load_jsonl(c_cross / "case-results.jsonl")
+    if case_error:
+        errors.append(f"case-results.jsonl: {case_error}")
+        case_rows = []
+    diagnostics, diag_error = load_jsonl(c_cross / "diagnostics.jsonl")
+    if diag_error:
+        errors.append(f"diagnostics.jsonl: {diag_error}")
+        diagnostics = []
+
+    scenarios = matrix.get("scenarios")
+    if isinstance(scenarios, list):
+        matrix_ids = {
+            item.get("scenario_id")
+            for item in scenarios
+            if isinstance(item, dict) and isinstance(item.get("scenario_id"), str)
+        }
+        case_ids = {
+            item.get("scenario_id")
+            for item in case_rows or []
+            if isinstance(item, dict) and isinstance(item.get("scenario_id"), str)
+        }
+        if matrix_ids != case_ids:
+            errors.append("case-results.jsonl scenario_id set must match validation-matrix.json scenarios")
+    for index, row in enumerate(case_rows or [], start=1):
+        if not isinstance(row, dict):
+            errors.append(f"case-results.jsonl record {index} must be an object")
+            continue
+        if row.get("phase") not in {"build", "layout", "link", "full"}:
+            errors.append(f"case-results.jsonl record {index} has invalid phase")
+        if row.get("phase") != "full" or row.get("rust_impl_c_test") != "pass":
+            errors.append(f"case-results.jsonl record {index} must be full/pass for VERIFY_RUST_WITH_C_TESTS")
+
+    for index, row in enumerate(diagnostics or [], start=1):
+        if not isinstance(row, dict):
+            errors.append(f"diagnostics.jsonl record {index} must be an object")
+            continue
+        if row.get("phase") not in {"build", "layout", "link", "full"}:
+            errors.append(f"diagnostics.jsonl record {index} has invalid phase")
+        diagnosis = row.get("diagnosis")
+        if not isinstance(diagnosis, str) or not diagnosis:
+            errors.append(f"diagnostics.jsonl record {index} must include diagnosis")
+        handoff = row.get("handoff")
+        if not isinstance(handoff, str) or handoff not in VALID_HANDOFFS or handoff == "none":
+            errors.append(f"diagnostics.jsonl record {index} must include actionable handoff")
+        log_path = row.get("log")
+        if isinstance(log_path, str) and log_path and not is_c_cross_owned_log_path(log_path):
+            errors.append(f"diagnostics.jsonl record {index} log must stay under logs/trace/c-cross/")
     return errors
 
 
@@ -952,6 +1311,7 @@ def check_verify_rust_with_c_tests(root: Path) -> list[str]:
     if state is None:
         return errors
     errors.extend(check_validation_matrix(root, allow_not_supported=False))
+    errors.extend(check_c_cross_layered_evidence(root))
     if not (root / "logs" / "trace" / "c-cross" / "layout-check.log").exists():
         errors.append("missing logs/trace/c-cross/layout-check.log")
     if not (root / "logs" / "trace" / "06-5-verify-rust-with-c-tests.md").exists():

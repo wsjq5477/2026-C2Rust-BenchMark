@@ -550,6 +550,31 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertIn("fdb_tsdb_init", api_model["public_functions"])
         self.assertIn("fdb_kvdb_init", api_model["kvdb_symbols"])
         self.assertIn("fdb_tsdb_init", api_model["tsdb_symbols"])
+        signatures = api_model["function_signatures"]
+        for symbol in ["fdb_kvdb_init", "fdb_tsdb_init"]:
+            self.assertIn(symbol, signatures)
+            signature = signatures[symbol]
+            self.assertEqual(symbol, signature["name"])
+            self.assertEqual("public_header", signature["source"])
+            self.assertEqual("compiler_accepted", signature["confidence"])
+            self.assertIsInstance(signature["declaration"], str)
+            self.assertTrue(signature["declaration"].endswith(";"))
+            self.assertIn("raw", signature["return_type"])
+            self.assertIsInstance(signature["params"], list)
+            self.assertTrue(signature["params"])
+            self.assertEqual(
+                list(range(len(signature["params"]))),
+                [param["index"] for param in signature["params"]],
+            )
+            for param in signature["params"]:
+                self.assertIn("raw_type", param)
+                self.assertIn("canonical", param)
+                self.assertIn("pointer_depth", param)
+                self.assertIn("const", param)
+        self.assertIn("typedef_map", api_model)
+        self.assertIn("enum_map", api_model)
+        self.assertEqual([], api_model["unresolved_signatures"])
+        self.assertEqual([], api_model["unresolved_types"])
         self.assertIn("FDB_NO_ERR", api_model["enum_values"])
         self.assertTrue(any(item["name"] == "fdb_kvdb" for item in api_model["structs"]))
         self.assertIn("abi_layouts", api_model)
@@ -710,6 +735,47 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 self.assertIn("malformed scorer_standard_cases entry", item["reason"])
                 self.assertTrue(item["log"].startswith("logs/trace/c-cross/"))
 
+    def test_c_cross_run_times_out_without_hanging(self):
+        cross = load_tool("c_cross_validate.py")
+
+        code, output = cross._run(
+            [sys.executable, "-c", "import time; print('started'); time.sleep(2)"],
+            timeout=0.1,
+        )
+
+        self.assertEqual(-124, code)
+        self.assertIn("TIMEOUT: killed after 0.1s", output)
+
+    def test_c_cross_suite_runner_cleans_run_dir_and_writes_runner_log(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            c_cross = Path(td) / "c-cross"
+            c_cross.mkdir()
+            run_dir = c_cross / "kvdb_run"
+            run_dir.mkdir()
+            (run_dir / "stale.txt").write_text("stale", encoding="utf-8")
+            runner = c_cross / "kvdb_runner_script.sh"
+            runner.write_text(
+                "#!/bin/sh\n"
+                "if [ -e stale.txt ]; then echo stale-present; exit 9; fi\n"
+                "pwd\n"
+                "echo runner-output\n"
+                "exit 3\n",
+                encoding="utf-8",
+            )
+            runner.chmod(0o755)
+
+            ok, output, reason = cross._run_suite_runner("kvdb", runner, c_cross)
+
+            self.assertFalse(ok)
+            self.assertFalse((run_dir / "stale.txt").exists())
+            self.assertIn("runner-output", output)
+            self.assertIn("kvdb_run", output)
+            log_path = c_cross / "kvdb_runner.log"
+            self.assertTrue(log_path.is_file())
+            self.assertIn("runner-output", log_path.read_text(encoding="utf-8"))
+            self.assertEqual(f"kvdb runner failed, see {log_path}", reason)
+
     def test_c_cross_validate_compiles_and_runs_c_harness_against_rust_staticlib(self):
         cross = load_tool("c_cross_validate.py")
         with tempfile.TemporaryDirectory() as td:
@@ -757,6 +823,22 @@ pub extern "C" fn fdb_probe() -> i32 {
             )
             (trace / "workflow_state.json").write_text(json.dumps({"input_path": str(c_root)}), encoding="utf-8")
             (trace / "c_test_model.json").write_text(json.dumps({
+                "registered_test_invocations": [
+                    {
+                        "suite": "kvdb",
+                        "runner": "tests/kvdb_main.c",
+                        "test_function": "test_fdb_kvdb_init",
+                        "order": 1,
+                        "scenarios": ["test_fdb_kvdb_init"],
+                    },
+                    {
+                        "suite": "tsdb",
+                        "runner": "tests/tsdb_main.c",
+                        "test_function": "test_fdb_tsl_append",
+                        "order": 1,
+                        "scenarios": ["test_fdb_tsl_append"],
+                    },
+                ],
                 "scorer_standard_cases": [
                     {"case_id": "1", "scenario_id": "test_fdb_kvdb_init", "suite": "kvdb"},
                     {"case_id": "2", "scenario_id": "test_fdb_tsl_append", "suite": "tsdb"},
@@ -774,9 +856,31 @@ pub extern "C" fn fdb_probe() -> i32 {
             compile_log = (trace / "c-cross" / "cross-compile.log").read_text(encoding="utf-8")
             self.assertIn("cargo build --release", compile_log)
             self.assertIn("cc ", compile_log)
+            build_check = json.loads((trace / "c-cross" / "build-check.json").read_text(encoding="utf-8"))
+            self.assertEqual("pass", build_check["status"])
+            self.assertEqual("build", build_check["phase"])
+            layout_check = json.loads((trace / "c-cross" / "layout-check.json").read_text(encoding="utf-8"))
+            self.assertEqual("pass", layout_check["status"])
+            link_check = json.loads((trace / "c-cross" / "link-check.json").read_text(encoding="utf-8"))
+            self.assertEqual("pass", link_check["status"])
+            self.assertEqual({"kvdb": "pass", "tsdb": "pass"}, link_check["suites"])
+            case_results = [
+                json.loads(line)
+                for line in (trace / "c-cross" / "case-results.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(["test_fdb_kvdb_init", "test_fdb_tsl_append"], [item["scenario_id"] for item in case_results])
+            self.assertTrue(all(item["phase"] == "full" for item in case_results))
+            self.assertEqual(["test_fdb_kvdb_init", "test_fdb_tsl_append"], [item["source_test"] for item in case_results])
+            self.assertEqual(["tests/kvdb_main.c", "tests/tsdb_main.c"], [item["source_runner"] for item in case_results])
+            self.assertTrue((trace / "c-cross" / "diagnostics.jsonl").is_file())
             for item in matrix["scenarios"]:
                 self.assertEqual("pass", item["rust_impl_c_test"])
                 self.assertEqual("rust_implementation_matches_c_baseline_for_scenario", item["diagnosis"])
+                self.assertEqual("full", item["failure_layer"])
+                self.assertEqual("none", item["handoff"])
+                self.assertIn("source_runner", item)
+                self.assertIn("source_test", item)
 
     def test_c_cross_validate_fails_fast_on_layout_mismatch(self):
         cross = load_tool("c_cross_validate.py")
@@ -834,11 +938,41 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             )
             (trace / "workflow_state.json").write_text(json.dumps({"input_path": str(c_root)}), encoding="utf-8")
             (trace / "c_test_model.json").write_text(json.dumps({
+                "registered_test_invocations": [
+                    {
+                        "suite": "kvdb",
+                        "runner": "tests/kvdb_main.c",
+                        "test_function": "test_layout_guard",
+                        "order": 1,
+                        "scenarios": ["test_layout_guard"],
+                    }
+                ],
                 "scorer_standard_cases": [
                     {"case_id": "1", "scenario_id": "test_layout_guard", "suite": "kvdb"},
                 ],
             }), encoding="utf-8")
             (trace / "c_api_model.json").write_text(json.dumps({
+                "public_functions": ["fdb_kvdb_init", "fdb_tsdb_init"],
+                "kvdb_symbols": ["fdb_kvdb_init"],
+                "tsdb_symbols": ["fdb_tsdb_init"],
+                "function_signatures": {
+                    "fdb_kvdb_init": {
+                        "name": "fdb_kvdb_init",
+                        "declaration": "fdb_err_t fdb_kvdb_init(struct fdb_kvdb *db);",
+                        "return_type": {"raw": "fdb_err_t"},
+                        "params": [
+                            {"index": 0, "name": "db", "raw_type": "struct fdb_kvdb *", "canonical": "pointer:struct fdb_kvdb", "pointer_depth": 1, "const": False}
+                        ],
+                    },
+                    "fdb_tsdb_init": {
+                        "name": "fdb_tsdb_init",
+                        "declaration": "fdb_err_t fdb_tsdb_init(struct fdb_tsdb *db);",
+                        "return_type": {"raw": "fdb_err_t"},
+                        "params": [
+                            {"index": 0, "name": "db", "raw_type": "struct fdb_tsdb *", "canonical": "pointer:struct fdb_tsdb", "pointer_depth": 1, "const": False}
+                        ],
+                    },
+                },
                 "abi_layouts": [
                     {
                         "name": "fdb_db",
@@ -877,7 +1011,20 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             layout_log = (trace / "c-cross" / "layout-check.log").read_text(encoding="utf-8")
             self.assertIn("[LAYOUT MISMATCH]", layout_log)
             self.assertIn("field=fdb_db.storage", layout_log)
+            layout_check = json.loads((trace / "c-cross" / "layout-check.json").read_text(encoding="utf-8"))
+            self.assertEqual("fail", layout_check["status"])
+            self.assertEqual("c_abi_layout_mismatch", layout_check["diagnosis"])
+            diagnostics = [
+                json.loads(line)
+                for line in (trace / "c-cross" / "diagnostics.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(any(item["phase"] == "layout" and item["diagnosis"] == "c_abi_layout_mismatch" and item["handoff"] == "rust-implementer" for item in diagnostics))
             self.assertIn("layout mismatch", matrix["scenarios"][0]["reason"])
+            self.assertEqual("layout", matrix["scenarios"][0]["failure_layer"])
+            self.assertEqual("rust-implementer", matrix["scenarios"][0]["handoff"])
+            self.assertEqual("tests/kvdb_main.c", matrix["scenarios"][0]["source_runner"])
+            self.assertEqual("test_layout_guard", matrix["scenarios"][0]["source_test"])
 
     def test_verify_rust_with_c_tests_rejects_not_supported_matrix(self):
         gate = load_tool("gate.py")
@@ -900,6 +1047,9 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                         "scenario_id": "test_fdb_kvdb_init",
                         "scorer_case_id": "1",
                         "suite": "kvdb",
+                        "failure_layer": "build",
+                        "source_runner": "tests/kvdb_main.c",
+                        "source_test": "test_fdb_kvdb_init",
                         "c_impl_c_test": "baseline",
                         "rust_impl_c_test": "not_supported",
                         "c_impl_rust_test": "not_run",
@@ -907,6 +1057,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                         "diagnosis": "c_cross_harness_not_supported",
                         "reason": "fixture unsupported harness",
                         "log": "logs/trace/c-cross/test_fdb_kvdb_init.log",
+                        "handoff": "c-analyzer",
                     }
                 ],
             }), encoding="utf-8")
@@ -917,6 +1068,104 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 "validation-matrix.json not_supported is not allowed for scenario test_fdb_kvdb_init",
                 errors,
             )
+
+    def test_verify_rust_with_c_tests_requires_layered_c_cross_evidence(self):
+        gate = load_tool("gate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            c_cross = root / "logs" / "trace" / "c-cross"
+            c_cross.mkdir(parents=True)
+            (root / "logs" / "trace" / "validation-matrix.json").write_text(json.dumps({
+                "stage": "VERIFY_RUST_WITH_C_TESTS",
+                "policy": "strict",
+                "mode": "full",
+                "total_scenarios": 1,
+                "summary": {"rust_impl_c_test": {"pass": 1}},
+                "scenarios": [
+                    {
+                        "scenario_id": "test_fdb_kvdb_init",
+                        "scorer_case_id": "1",
+                        "suite": "kvdb",
+                        "phase": "full",
+                        "failure_layer": "full",
+                        "source_runner": "tests/kvdb_main.c",
+                        "source_test": "test_fdb_kvdb_init",
+                        "c_impl_c_test": "baseline",
+                        "rust_impl_c_test": "pass",
+                        "c_impl_rust_test": "not_run",
+                        "rust_impl_rust_test": "pending",
+                        "diagnosis": "rust_implementation_matches_c_baseline_for_scenario",
+                        "reason": "kvdb original C runner passed",
+                        "log": "logs/trace/c-cross/test_fdb_kvdb_init.log",
+                        "handoff": "none",
+                    }
+                ],
+            }), encoding="utf-8")
+
+            missing = gate.check_c_cross_layered_evidence(root)
+
+            self.assertIn("missing logs/trace/c-cross/build-check.json", missing)
+            self.assertIn("missing logs/trace/c-cross/case-results.jsonl", missing)
+
+            (c_cross / "build-check.json").write_text(json.dumps({"phase": "build", "status": "pass"}), encoding="utf-8")
+            (c_cross / "layout-check.json").write_text(json.dumps({"phase": "layout", "status": "pass"}), encoding="utf-8")
+            (c_cross / "link-check.json").write_text(json.dumps({"phase": "link", "status": "pass", "suites": {"kvdb": "pass"}}), encoding="utf-8")
+            (c_cross / "case-results.jsonl").write_text(json.dumps({
+                "scenario_id": "test_fdb_kvdb_init",
+                "scorer_case_id": "1",
+                "suite": "kvdb",
+                "phase": "full",
+                "failure_layer": "full",
+                "source_runner": "tests/kvdb_main.c",
+                "source_test": "test_fdb_kvdb_init",
+                "rust_impl_c_test": "pass",
+                "handoff": "none",
+            }) + "\n", encoding="utf-8")
+            (c_cross / "diagnostics.jsonl").write_text("", encoding="utf-8")
+
+            valid = gate.check_c_cross_layered_evidence(root)
+
+            self.assertEqual([], valid)
+
+    def test_validation_matrix_rejects_blocking_rows_without_handoff_context(self):
+        gate = load_tool("gate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            trace.mkdir(parents=True)
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "scorer_standard_cases": [
+                    {"case_id": "1", "scenario_id": "test_fdb_kvdb_init", "suite": "kvdb"},
+                ],
+            }), encoding="utf-8")
+            (trace / "validation-matrix.json").write_text(json.dumps({
+                "stage": "VERIFY_RUST_WITH_C_TESTS",
+                "policy": "strict",
+                "mode": "full",
+                "total_scenarios": 1,
+                "summary": {"rust_impl_c_test": {"fail": 1}},
+                "scenarios": [
+                    {
+                        "scenario_id": "test_fdb_kvdb_init",
+                        "scorer_case_id": "1",
+                        "suite": "kvdb",
+                        "c_impl_c_test": "baseline",
+                        "rust_impl_c_test": "fail",
+                        "c_impl_rust_test": "not_run",
+                        "rust_impl_rust_test": "pending",
+                        "diagnosis": "c_runner_link_failed",
+                        "reason": "undefined reference",
+                        "log": "logs/trace/c-cross/test_fdb_kvdb_init.log",
+                    }
+                ],
+            }), encoding="utf-8")
+
+            errors = gate.check_validation_matrix(root, allow_not_supported=False)
+
+            self.assertIn("validation-matrix.json failure_layer must be present for scenario test_fdb_kvdb_init", errors)
+            self.assertIn("validation-matrix.json handoff must be present for scenario test_fdb_kvdb_init", errors)
+            self.assertIn("validation-matrix.json source_runner must be present for scenario test_fdb_kvdb_init", errors)
+            self.assertIn("validation-matrix.json source_test must be present for scenario test_fdb_kvdb_init", errors)
 
     def test_gate_build_c_model_rejects_missing_models_and_accepts_valid_models(self):
         gate = PROJECT / "work" / "tools" / "gate.py"
@@ -1054,6 +1303,85 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 stderr=subprocess.STDOUT,
                 text=True,
             )
+            self.assertNotEqual(0, passed.returncode)
+            self.assertIn("c_api_model.json function_signatures must cover required symbol fdb_kvdb_init", passed.stdout)
+
+            (root / "logs" / "trace" / "c_api_model.json").write_text(json.dumps({
+                "public_functions": ["fdb_kvdb_init", "fdb_tsdb_init"],
+                "kvdb_symbols": ["fdb_kvdb_init"],
+                "tsdb_symbols": ["fdb_tsdb_init"],
+                "public_headers": ["inc/flashdb.h"],
+                "structs": [{"name": "fdb_kvdb", "file": "inc/fdb_def.h"}],
+                "abi_layouts": [
+                    {
+                        "name": "fdb_kvdb",
+                        "sizeof": 32,
+                        "alignof": 8,
+                        "active_macros": ["FDB_USING_FILE_MODE"],
+                        "fields": [
+                            {"name": "parent", "ctype": "struct fdb_db", "offset": 0, "sizeof": 16}
+                        ],
+                    }
+                ],
+                "function_signatures": {
+                    "fdb_kvdb_init": {
+                        "name": "fdb_kvdb_init",
+                        "header": "inc/flashdb.h",
+                        "declaration": "fdb_err_t fdb_kvdb_init(struct fdb_kvdb *db);",
+                        "return_type": {"raw": "fdb_err_t", "canonical": "typedef:fdb_err_t", "category": "status_code"},
+                        "params": [
+                            {
+                                "index": 0,
+                                "name": "db",
+                                "raw_type": "struct fdb_kvdb *",
+                                "canonical": "pointer:struct fdb_kvdb",
+                                "pointer_depth": 1,
+                                "const": False,
+                                "nullable": "unknown",
+                                "ownership": "borrowed_mut",
+                            }
+                        ],
+                        "varargs": False,
+                        "source": "public_header",
+                        "confidence": "compiler_accepted",
+                    },
+                    "fdb_tsdb_init": {
+                        "name": "fdb_tsdb_init",
+                        "header": "inc/flashdb.h",
+                        "declaration": "fdb_err_t fdb_tsdb_init(struct fdb_tsdb *db);",
+                        "return_type": {"raw": "fdb_err_t", "canonical": "typedef:fdb_err_t", "category": "status_code"},
+                        "params": [
+                            {
+                                "index": 0,
+                                "name": "db",
+                                "raw_type": "struct fdb_tsdb *",
+                                "canonical": "pointer:struct fdb_tsdb",
+                                "pointer_depth": 1,
+                                "const": False,
+                                "nullable": "unknown",
+                                "ownership": "borrowed_mut",
+                            }
+                        ],
+                        "varargs": False,
+                        "source": "public_header",
+                        "confidence": "compiler_accepted",
+                    },
+                },
+                "typedef_map": {},
+                "enum_map": {},
+                "unresolved_signatures": [],
+                "unresolved_types": [],
+                "typedefs": [],
+                "macros": [],
+                "enums": [],
+                "enum_values": ["FDB_NO_ERR"],
+            }), encoding="utf-8")
+            passed = subprocess.run(
+                [sys.executable, str(gate), "--stage", "BUILD_C_MODEL", "--root", str(root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
             self.assertEqual(0, passed.returncode, passed.stdout)
             self.assertIn("BUILD_C_MODEL: PASS", passed.stdout)
 
@@ -1090,6 +1418,27 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             self.assertIn("alignof", struct)
             self.assertIn("fields", struct)
             self.assertIn("notes", struct)
+        facade = design["c_abi_facade"]
+        facade_functions = {item["c_symbol"]: item for item in facade["functions"]}
+        for symbol in design["c_to_rust_symbol_map"]:
+            self.assertIn(symbol, facade_functions)
+            function = facade_functions[symbol]
+            self.assertEqual(symbol, function["rust_export"])
+            self.assertEqual(f"c_api_model.function_signatures.{symbol}", function["source_signature"])
+            self.assertIn("rust_ffi_type", function["return"])
+            self.assertIn("params", function)
+            self.assertIsInstance(function["params"], list)
+            for param in function["params"]:
+                self.assertIn("rust_ffi_type", param)
+                self.assertIn("ownership", param)
+                self.assertIn("nullable", param)
+            self.assertIn("safe_target", function)
+            self.assertIn("required_by", function)
+        type_map = facade["c_type_map"]
+        self.assertIn("resolved", type_map)
+        self.assertIn("unresolved", type_map)
+        self.assertIn("rules", type_map)
+        self.assertEqual([], type_map["unresolved"])
 
     def test_design_rust_api_cli_writes_design(self):
         scanner = load_tool("scan_c_project.py")
@@ -1216,6 +1565,45 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 ]
             }
             (trace / "rust_api_design.json").write_text(json.dumps(valid_design), encoding="utf-8")
+            missing_facade_functions = subprocess.run(
+                [sys.executable, str(gate), "--stage", "DESIGN_RUST_API", "--root", str(root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertNotEqual(0, missing_facade_functions.returncode)
+            self.assertIn("rust_api_design.json c_abi_facade.functions must cover required symbol fdb_kvdb_init", missing_facade_functions.stdout)
+
+            valid_design["c_abi_facade"]["functions"] = [
+                {
+                    "c_symbol": "fdb_kvdb_init",
+                    "rust_export": "fdb_kvdb_init",
+                    "source_signature": "c_api_model.function_signatures.fdb_kvdb_init",
+                    "return": {"c_type": "fdb_err_t", "rust_ffi_type": "i32"},
+                    "params": [{"name": "db", "c_type": "struct fdb_kvdb *", "rust_ffi_type": "*mut FdbKvdb"}],
+                    "safe_target": "KvDb::open",
+                    "required_by": ["c_runner", "scorer_case"],
+                },
+                {
+                    "c_symbol": "fdb_tsdb_init",
+                    "rust_export": "fdb_tsdb_init",
+                    "source_signature": "c_api_model.function_signatures.fdb_tsdb_init",
+                    "return": {"c_type": "fdb_err_t", "rust_ffi_type": "i32"},
+                    "params": [{"name": "db", "c_type": "struct fdb_tsdb *", "rust_ffi_type": "*mut FdbTsdb"}],
+                    "safe_target": "TsDb::open",
+                    "required_by": ["c_runner", "scorer_case"],
+                },
+            ]
+            valid_design["c_abi_facade"]["c_type_map"] = {
+                "rules": ["fixture"],
+                "resolved": {
+                    "fdb_err_t": {"rust_ffi_type": "i32"},
+                    "struct fdb_kvdb *": {"rust_ffi_type": "*mut FdbKvdb"},
+                    "struct fdb_tsdb *": {"rust_ffi_type": "*mut FdbTsdb"},
+                },
+                "unresolved": [],
+            }
+            (trace / "rust_api_design.json").write_text(json.dumps(valid_design), encoding="utf-8")
             (trace / "04-design-rust-api.md").write_text("# API Design\n\nEnglish only log.\n", encoding="utf-8")
             english_log = subprocess.run(
                 [sys.executable, str(gate), "--stage", "DESIGN_RUST_API", "--root", str(root)],
@@ -1264,7 +1652,28 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                             ],
                             "notes": ["active macro FDB_USING_FILE_MODE"],
                         }
-                    ]
+                    ],
+                    "functions": [
+                        {
+                            "c_symbol": "fdb_kvdb_init",
+                            "rust_export": "fdb_kvdb_init",
+                            "source_signature": "c_api_model.function_signatures.fdb_kvdb_init",
+                            "return": {"c_type": "fdb_err_t", "rust_ffi_type": "i32"},
+                            "params": [
+                                {"name": "db", "c_type": "struct fdb_db *", "rust_ffi_type": "*mut FdbDb", "ownership": "borrowed_mut", "nullable": "unknown"}
+                            ],
+                            "safe_target": "KvDb::init",
+                            "required_by": ["c_runner", "scorer_case"],
+                        }
+                    ],
+                    "c_type_map": {
+                        "rules": ["fixture"],
+                        "resolved": {
+                            "fdb_err_t": {"rust_ffi_type": "i32"},
+                            "struct fdb_db *": {"rust_ffi_type": "*mut FdbDb"},
+                        },
+                        "unresolved": [],
+                    },
                 },
                 "unmapped_symbols": [],
                 "excluded_sources": [],
@@ -1312,11 +1721,24 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 "src/kvdb.rs",
                 "src/tsdb.rs",
                 "src/ffi/mod.rs",
+                "src/ffi/c_types.rs",
+                "src/ffi/c_abi.rs",
                 "src/ffi/layout_probe.rs",
             ]:
                 self.assertTrue((root / "flashDB_rust" / rel_path).is_file(), rel_path)
+            c_types = (root / "flashDB_rust" / "src" / "ffi" / "c_types.rs").read_text(encoding="utf-8")
+            self.assertIn("#[repr(C)]", c_types)
+            self.assertIn("pub struct FdbDb", c_types)
+            self.assertIn("pub status:", c_types)
+            self.assertIn("pub storage:", c_types)
+            self.assertNotIn("_opaque: [u8; 16]", c_types)
+            c_abi = (root / "flashDB_rust" / "src" / "ffi" / "c_abi.rs").read_text(encoding="utf-8")
+            self.assertIn('pub extern "C" fn fdb_kvdb_init(db: *mut FdbDb) -> i32', c_abi)
+            self.assertNotIn("fn fdb_kvdb_init() -> *mut c_void", c_abi)
             layout_probe = (root / "flashDB_rust" / "src" / "ffi" / "layout_probe.rs").read_text(encoding="utf-8")
             self.assertIn("rust_sizeof_fdb_db", layout_probe)
+            self.assertIn("core::mem::size_of::<FdbDb>()", layout_probe)
+            self.assertIn("offset_of!(FdbDb, storage)", layout_probe)
             self.assertIn("rust_alignof_fdb_db", layout_probe)
             self.assertIn("rust_offsetof_fdb_db_storage", layout_probe)
 
@@ -1393,7 +1815,16 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                             "alignof": 8,
                             "fields": [{"name": "state", "offset": 0, "sizeof": 4}],
                         }
-                    ]
+                    ],
+                    "functions": [
+                        {
+                            "c_symbol": "fdb_alpha_open",
+                            "rust_export": "fdb_alpha_open",
+                            "source_signature": "fixture",
+                            "return": {"c_type": "int", "rust_ffi_type": "i32"},
+                            "params": [],
+                        }
+                    ],
                 },
             }
             design_path = root / "rust_api_design.json"
@@ -1407,12 +1838,15 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             )
 
             self.assertEqual(0, completed.returncode, completed.stdout)
-            c_abi = (root / "flashDB_rust" / "src" / "c_abi.rs").read_text(encoding="utf-8")
+            c_types = (root / "flashDB_rust" / "src" / "ffi" / "c_types.rs").read_text(encoding="utf-8")
+            c_abi = (root / "flashDB_rust" / "src" / "ffi" / "c_abi.rs").read_text(encoding="utf-8")
+            compat = (root / "flashDB_rust" / "src" / "c_abi.rs").read_text(encoding="utf-8")
             error_rs = (root / "flashDB_rust" / "src" / "error.rs").read_text(encoding="utf-8")
-            self.assertIn("pub struct FdbAlpha", c_abi)
+            self.assertIn("pub struct FdbAlpha", c_types)
             self.assertIn("pub extern \"C\" fn fdb_alpha_open", c_abi)
+            self.assertIn("pub use crate::ffi::c_abi::*;", compat)
             self.assertNotIn("pub extern \"C\" fn fdb_kvdb_init", c_abi)
-            self.assertNotIn("pub struct FdbBlob", c_abi)
+            self.assertNotIn("pub struct FdbBlob", c_types)
             self.assertIn("StatusFailure(String)", error_rs)
             self.assertNotIn("InvalidInput", error_rs)
             self.assertNotIn("OperationFailed", error_rs)
@@ -1425,6 +1859,133 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 text=True,
             )
             self.assertEqual(0, cargo_check.returncode, cargo_check.stdout)
+
+    def test_gate_generate_scaffold_requires_typed_ffi_outputs(self):
+        gate = PROJECT / "work" / "tools" / "gate.py"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            project = root / "flashDB_rust"
+            (root / "result" / "issues").mkdir(parents=True)
+            trace.mkdir(parents=True)
+            (root / "logs" / "interaction.md").write_text("", encoding="utf-8")
+            (project / "src").mkdir(parents=True)
+            (project / "tests").mkdir(parents=True)
+            (project / "Cargo.toml").write_text("[package]\nname = \"flashdb_rust\"\nversion = \"0.1.0\"\nedition = \"2021\"\n", encoding="utf-8")
+            (project / "src" / "lib.rs").write_text("pub mod error;\npub mod ffi;\n", encoding="utf-8")
+            (project / "src" / "error.rs").write_text("pub type Result<T> = std::result::Result<T, String>;\n", encoding="utf-8")
+            state = {
+                "current_stage": "GENERATE_RUST_SCAFFOLD",
+                "completed_stages": [
+                    "BOOTSTRAP",
+                    "INIT_WORKSPACE",
+                    "READ_C_PROJECT",
+                    "BUILD_C_MODEL",
+                    "DESIGN_RUST_API",
+                    "GENERATE_RUST_SCAFFOLD",
+                ],
+                "checkpoint": "GENERATE_RUST_SCAFFOLD",
+                "rust_project_path": "flashDB_rust",
+                "input_path_candidates": ["/app/code/judge-assets/02_02_c_to_rust/code/FlashDB"],
+                "input_path": "/tmp/fake/FlashDB",
+                "input_manifest": "logs/trace/input_manifest.json",
+                "c_project_model": "logs/trace/c_project_model.json",
+                "c_api_model": "logs/trace/c_api_model.json",
+                "c_test_model": "logs/trace/c_test_model.json",
+                "rust_api_design": "logs/trace/rust_api_design.json",
+                "build_status": "not_started",
+                "test_status": "not_started",
+                "unsafe_ratio": None,
+                "repair_rounds": 0,
+                "blocked_issues": [],
+            }
+            design = {
+                "crate_name": "flashdb_rust",
+                "modules": ["error"],
+                "c_abi_facade": {
+                    "structs": [
+                        {
+                            "c_name": "fdb_db",
+                            "rust_name": "FdbDb",
+                            "sizeof": 16,
+                            "alignof": 8,
+                            "fields": [
+                                {"name": "status", "offset": 0, "sizeof": 4},
+                                {"name": "storage", "offset": 8, "sizeof": 8},
+                            ],
+                        }
+                    ],
+                    "functions": [
+                        {
+                            "c_symbol": "fdb_kvdb_init",
+                            "rust_export": "fdb_kvdb_init",
+                            "return": {"c_type": "fdb_err_t", "rust_ffi_type": "i32"},
+                            "params": [
+                                {"name": "db", "c_type": "struct fdb_db *", "rust_ffi_type": "*mut FdbDb"}
+                            ],
+                        }
+                    ],
+                },
+            }
+            (trace / "workflow_state.json").write_text(json.dumps(state), encoding="utf-8")
+            (trace / "rust_api_design.json").write_text(json.dumps(design), encoding="utf-8")
+            for name in [
+                "01-init-workspace.md",
+                "02-read-c-project.md",
+                "03-build-c-model.md",
+                "04-design-rust-api.md",
+                "05-generate-rust-scaffold.md",
+                "input_manifest.json",
+                "c_project_model.json",
+                "c_api_model.json",
+                "c_test_model.json",
+            ]:
+                (trace / name).write_text("{}" if name.endswith(".json") else "# 阶段\n", encoding="utf-8")
+
+            missing = subprocess.run(
+                [sys.executable, str(gate), "--stage", "GENERATE_RUST_SCAFFOLD", "--root", str(root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertNotEqual(0, missing.returncode)
+            self.assertIn("missing src/ffi/c_types.rs", missing.stdout)
+
+            ffi = project / "src" / "ffi"
+            ffi.mkdir()
+            (ffi / "mod.rs").write_text("pub mod c_types;\npub mod c_abi;\npub mod layout_probe;\n", encoding="utf-8")
+            (ffi / "c_types.rs").write_text("#[repr(C)]\npub struct FdbDb { pub _opaque: [u8; 16], }\n", encoding="utf-8")
+            (ffi / "c_abi.rs").write_text("use std::ffi::c_void;\npub extern \"C\" fn fdb_kvdb_init() -> *mut c_void { std::ptr::null_mut() }\n", encoding="utf-8")
+            (ffi / "layout_probe.rs").write_text("", encoding="utf-8")
+            placeholder = subprocess.run(
+                [sys.executable, str(gate), "--stage", "GENERATE_RUST_SCAFFOLD", "--root", str(root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertNotEqual(0, placeholder.returncode)
+            self.assertIn("must not use opaque placeholder layout fields", placeholder.stdout)
+            self.assertIn("must preserve typed param fdb_kvdb_init.db", placeholder.stdout)
+
+            (ffi / "c_types.rs").write_text(
+                "#[repr(C)]\npub struct FdbDb {\n    pub status: u32,\n    pub _pad_0: [u8; 4],\n    pub storage: *mut std::ffi::c_void,\n}\n",
+                encoding="utf-8",
+            )
+            (ffi / "c_abi.rs").write_text(
+                "use super::c_types::*;\n#[no_mangle]\npub extern \"C\" fn fdb_kvdb_init(db: *mut FdbDb) -> i32 { 0 }\n",
+                encoding="utf-8",
+            )
+            (ffi / "layout_probe.rs").write_text(
+                "use super::c_types::*;\nuse core::mem::offset_of;\npub extern \"C\" fn rust_sizeof_fdb_db() -> usize { core::mem::size_of::<FdbDb>() }\npub extern \"C\" fn rust_offsetof_fdb_db_status() -> usize { offset_of!(FdbDb, status) }\npub extern \"C\" fn rust_offsetof_fdb_db_storage() -> usize { offset_of!(FdbDb, storage) }\n",
+                encoding="utf-8",
+            )
+            valid = subprocess.run(
+                [sys.executable, str(gate), "--stage", "GENERATE_RUST_SCAFFOLD", "--root", str(root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertEqual(0, valid.returncode, valid.stdout)
 
     def test_migrate_tests_uses_scorer_standard_cases_when_present(self):
         migrator = load_tool("migrate_tests.py")
@@ -1750,6 +2311,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             (trace / "validation-matrix.json").write_text(json.dumps({
                 "stage": "VERIFY_RUST_WITH_C_TESTS",
                 "policy": "advisory",
+                "mode": "full",
                 "total_scenarios": 2,
                 "summary": {"rust_impl_c_test": {"not_supported": 2}},
                 "scenarios": [
@@ -1757,6 +2319,9 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                         "scenario_id": "test_fdb_gc",
                         "scorer_case_id": "10",
                         "suite": "kvdb",
+                        "failure_layer": "link",
+                        "source_runner": "tests/kvdb_main.c",
+                        "source_test": "test_fdb_gc",
                         "c_impl_c_test": "baseline",
                         "rust_impl_c_test": "not_supported",
                         "c_impl_rust_test": "not_run",
@@ -1764,11 +2329,15 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                         "diagnosis": "c_cross_harness_not_supported",
                         "reason": "fixture advisory matrix",
                         "log": "logs/trace/c-cross/test_fdb_gc.log",
+                        "handoff": "rust-implementer",
                     },
                     {
                         "scenario_id": "test_fdb_tsl_append",
                         "scorer_case_id": "15",
                         "suite": "tsdb",
+                        "failure_layer": "link",
+                        "source_runner": "tests/tsdb_main.c",
+                        "source_test": "test_fdb_tsl_append",
                         "c_impl_c_test": "baseline",
                         "rust_impl_c_test": "not_supported",
                         "c_impl_rust_test": "not_run",
@@ -1776,9 +2345,35 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                         "diagnosis": "c_cross_harness_not_supported",
                         "reason": "fixture advisory matrix",
                         "log": "logs/trace/c-cross/test_fdb_tsl_append.log",
+                        "handoff": "rust-implementer",
                     },
                 ],
             }), encoding="utf-8")
+            (trace / "c-cross").mkdir(exist_ok=True)
+            (trace / "c-cross" / "diagnostics.jsonl").write_text(
+                "\n".join([
+                    json.dumps({
+                        "phase": "link",
+                        "diagnosis": "c_runner_link_failed",
+                        "scenario_id": "test_fdb_gc",
+                        "suite": "kvdb",
+                        "handoff": "rust-implementer",
+                        "reason": "fixture link failure",
+                        "log": "logs/trace/c-cross/test_fdb_gc.log",
+                    }),
+                    json.dumps({
+                        "phase": "link",
+                        "diagnosis": "c_runner_link_failed",
+                        "scenario_id": "test_fdb_tsl_append",
+                        "suite": "tsdb",
+                        "handoff": "rust-implementer",
+                        "reason": "fixture link failure",
+                        "log": "logs/trace/c-cross/test_fdb_tsl_append.log",
+                    }),
+                ])
+                + "\n",
+                encoding="utf-8",
+            )
             (trace / "agent-registry.json").write_text(json.dumps({
                 "subagents": {
                     "c-analyzer": {
@@ -1836,6 +2431,10 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             self.assertIn("STATUS: SUCCESS", output_text)
             self.assertIn("Cross Validation Matrix", output_text)
             self.assertIn("C tests on Rust", output_text)
+            self.assertIn("Cross Validation Diagnostics", output_text)
+            self.assertIn("failure_layers: `link=2`", output_text)
+            self.assertIn("handoff: `rust-implementer=2`", output_text)
+            self.assertIn("diagnostics: `c_runner_link_failed=2`", output_text)
 
             final_gate = subprocess.run(
                 [sys.executable, str(gate), "--stage", "REPORT_AND_VERIFY", "--root", str(root)],

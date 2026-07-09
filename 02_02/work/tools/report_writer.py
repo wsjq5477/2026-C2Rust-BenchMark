@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 from typing import Any
+from collections import Counter
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -15,6 +16,24 @@ def load_json(path: Path) -> dict[str, Any]:
     except FileNotFoundError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            rows.append(data)
+    return rows
 
 
 def validation_matrix_summary(matrix: dict[str, Any]) -> list[str]:
@@ -31,6 +50,36 @@ def validation_matrix_summary(matrix: dict[str, Any]) -> list[str]:
     ]
 
 
+def _counter_line(label: str, counts: Counter[str]) -> str:
+    parts = [f"{key}={value}" for key, value in sorted(counts.items())]
+    return f"- {label}: `{', '.join(parts) if parts else 'none'}`"
+
+
+def cross_diagnostics_summary(matrix: dict[str, Any], diagnostics: list[dict[str, Any]]) -> list[str]:
+    scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else []
+    rows = [item for item in scenarios if isinstance(item, dict)] if isinstance(scenarios, list) else []
+    blocking = [
+        item
+        for item in rows
+        if item.get("rust_impl_c_test") in {"fail", "not_supported"}
+        or item.get("c_impl_c_test") in {"fail", "not_supported"}
+    ]
+    failure_layers = Counter(str(item.get("failure_layer")) for item in blocking if isinstance(item.get("failure_layer"), str))
+    handoffs = Counter(str(item.get("handoff")) for item in blocking if isinstance(item.get("handoff"), str))
+    diag_counts = Counter(
+        str(item.get("diagnosis"))
+        for item in diagnostics
+        if isinstance(item.get("diagnosis"), str)
+    )
+    if not diag_counts:
+        diag_counts = Counter(str(item.get("diagnosis")) for item in blocking if isinstance(item.get("diagnosis"), str))
+    return [
+        _counter_line("failure_layers", failure_layers),
+        _counter_line("handoff", handoffs),
+        _counter_line("diagnostics", diag_counts),
+    ]
+
+
 def write_report(root: Path, output: Path, issues: Path) -> None:
     trace = root / "logs" / "trace"
     state = load_json(trace / "workflow_state.json")
@@ -38,8 +87,10 @@ def write_report(root: Path, output: Path, issues: Path) -> None:
     ratio = load_json(trace / "unsafe-ratio.json")
     design = load_json(trace / "rust_api_design.json")
     matrix = load_json(trace / "validation-matrix.json")
+    diagnostics = load_jsonl(trace / "c-cross" / "diagnostics.jsonl")
     mapping = load_json(trace / "rust_test_mapping.json")
     matrix_lines = "\n".join(validation_matrix_summary(matrix))
+    diagnostics_lines = "\n".join(cross_diagnostics_summary(matrix, diagnostics))
 
     success = (
         state.get("current_stage") == "DONE"
@@ -88,6 +139,10 @@ STATUS: {status}
 ## Cross Validation Matrix
 
 {matrix_lines}
+
+## Cross Validation Diagnostics
+
+{diagnostics_lines}
 """,
         encoding="utf-8",
     )

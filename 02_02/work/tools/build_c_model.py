@@ -103,11 +103,178 @@ def extract_enum_blocks(text: str, file_name: str) -> tuple[list[dict[str, str]]
     return sorted(enums, key=lambda item: (item["file"], item["name"])), sorted(dict.fromkeys(values))
 
 
+def extract_typedef_map(text: str) -> dict[str, dict[str, Any]]:
+    clean = strip_comments(text)
+    result: dict[str, dict[str, Any]] = {}
+    for statement in re.findall(r"\btypedef\b[^;]+;", clean, flags=re.S):
+        compact = re.sub(r"\s+", " ", statement).strip()
+
+        callback = re.match(r"typedef\s+(?P<return>.+?)\s*\(\s*[*]\s*(?P<name>" + IDENT + r")\s*\)\s*\((?P<params>.*)\)\s*;", compact)
+        if callback:
+            result[callback.group("name")] = {
+                "raw": compact,
+                "target": callback.group("return").strip(),
+                "category": "function_pointer",
+                "params": callback.group("params").strip(),
+            }
+            continue
+
+        enum_alias = re.match(r"typedef\s+enum(?:\s+" + IDENT + r")?\s*\{.*\}\s*(?P<name>" + IDENT + r")\s*;", compact)
+        if enum_alias:
+            result[enum_alias.group("name")] = {
+                "raw": compact,
+                "target": "enum",
+                "category": "enum",
+            }
+            continue
+
+        alias = re.match(r"typedef\s+(?P<target>.+?)\s+(?P<name>" + IDENT + r")\s*;", compact)
+        if alias:
+            target = alias.group("target").strip()
+            result[alias.group("name")] = {
+                "raw": compact,
+                "target": target,
+                "category": "alias",
+            }
+    return result
+
+
 def collapse_function_lines(text: str) -> str:
     clean = strip_comments(text)
     clean = re.sub(r"\\\n", " ", clean)
     clean = re.sub(r"\s+", " ", clean)
     return clean
+
+
+def split_params(raw: str) -> list[str]:
+    params: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for char in raw:
+        if char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        if char == "," and depth == 0:
+            param = "".join(current).strip()
+            if param:
+                params.append(param)
+            current = []
+        else:
+            current.append(char)
+    param = "".join(current).strip()
+    if param:
+        params.append(param)
+    return params
+
+
+def normalize_c_type(raw: str) -> str:
+    return re.sub(r"\s+", " ", raw.replace(" *", " *").replace("* ", "* ")).strip()
+
+
+def parse_param(raw: str, index: int, typedef_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    text = normalize_c_type(raw)
+    if text == "...":
+        return {
+            "index": index,
+            "name": "...",
+            "raw_type": "...",
+            "canonical": "varargs",
+            "pointer_depth": 0,
+            "const": False,
+            "nullable": "unknown",
+            "ownership": "unknown",
+        }
+
+    array_match = re.search(r"\b(?P<name>" + IDENT + r")\s*(?P<array>(?:\[[^\]]*\])+)\s*$", text)
+    name = ""
+    type_part = text
+    if array_match:
+        name = array_match.group("name")
+        type_part = text[: array_match.start("name")].strip() + " *"
+    else:
+        match = re.search(r"(?P<prefix>.*?)(?P<stars>[*]?\s*)(?P<name>" + IDENT + r")\s*$", text)
+        if match and match.group("prefix").strip():
+            name = match.group("name")
+            type_part = (match.group("prefix") + match.group("stars")).strip()
+
+    pointer_depth = type_part.count("*")
+    const = bool(re.search(r"\bconst\b", type_part))
+    base = normalize_c_type(type_part.replace("*", " "))
+    base = re.sub(r"\bconst\b", "", base).strip()
+    if base in typedef_map:
+        target = typedef_map[base]
+        category = target.get("category", "typedef")
+        canonical = f"{'pointer:' if pointer_depth else ''}{category}:{base}"
+    elif base.startswith("struct "):
+        canonical = f"{'pointer:' if pointer_depth else ''}{base}"
+    elif base.startswith("enum "):
+        canonical = f"{'pointer:' if pointer_depth else ''}{base}"
+    elif base in {"void", "char", "int", "bool", "size_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t"}:
+        canonical = f"{'pointer:' if pointer_depth else ''}primitive:{base}"
+    else:
+        canonical = f"{'pointer:' if pointer_depth else ''}unresolved:{base or text}"
+
+    return {
+        "index": index,
+        "name": name or f"arg{index}",
+        "raw_type": type_part,
+        "canonical": canonical,
+        "pointer_depth": pointer_depth,
+        "const": const,
+        "nullable": "unknown",
+        "ownership": "borrowed" if const and pointer_depth else ("borrowed_mut" if pointer_depth else "value"),
+    }
+
+
+def parse_return_type(raw: str, typedef_map: dict[str, dict[str, Any]]) -> dict[str, str]:
+    text = normalize_c_type(raw)
+    base = re.sub(r"\bconst\b", "", text.replace("*", " ")).strip()
+    pointer_depth = text.count("*")
+    if base in typedef_map:
+        category = typedef_map[base].get("category", "typedef")
+        canonical = f"{'pointer:' if pointer_depth else ''}{category}:{base}"
+        return_category = "status_code" if base.endswith("err_t") or "err" in base.lower() else str(category)
+    elif base == "void":
+        canonical = "primitive:void"
+        return_category = "void"
+    elif base.startswith("struct "):
+        canonical = f"{'pointer:' if pointer_depth else ''}{base}"
+        return_category = "struct_pointer" if pointer_depth else "struct_value"
+    else:
+        canonical = f"{'pointer:' if pointer_depth else ''}primitive:{base}" if base in {"bool", "int", "size_t", "char", "uint32_t"} else f"{'pointer:' if pointer_depth else ''}unresolved:{base}"
+        return_category = "primitive" if "unresolved:" not in canonical else "unresolved"
+    return {"raw": text, "canonical": canonical, "category": return_category}
+
+
+def extract_function_signatures(text: str, file_name: str, typedef_map: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    one_line = collapse_function_lines(text)
+    pattern = re.compile(
+        r"(?P<return>\b(?:const\s+)?(?:struct\s+|enum\s+)?" + IDENT
+        + r"(?:\s*[*]\s*|\s+)+)(?P<name>" + IDENT + r")\s*\((?P<params>[^;{}]*)\)\s*;"
+    )
+    signatures: dict[str, dict[str, Any]] = {}
+    for match in pattern.finditer(one_line):
+        name = match.group("name")
+        if name in CONTROL_WORDS:
+            continue
+        raw_params = match.group("params").strip()
+        params = [] if raw_params in {"", "void"} else [
+            parse_param(param, index, typedef_map)
+            for index, param in enumerate(split_params(raw_params))
+        ]
+        declaration = f"{normalize_c_type(match.group('return'))} {name}({raw_params});"
+        signatures[name] = {
+            "name": name,
+            "header": file_name,
+            "declaration": declaration,
+            "return_type": parse_return_type(match.group("return"), typedef_map),
+            "params": params,
+            "varargs": any(param.get("raw_type") == "..." for param in params),
+            "source": "public_header" if file_name.startswith("inc/") else "source",
+            "confidence": "compiler_accepted" if file_name.startswith("inc/") else "parsed",
+        }
+    return signatures
 
 
 def extract_functions(text: str, file_name: str) -> list[dict[str, str]]:
@@ -616,9 +783,11 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     all_functions: list[dict[str, str]] = []
     structs: list[dict[str, str]] = []
     typedefs: list[dict[str, str]] = []
+    typedef_map: dict[str, dict[str, Any]] = {}
     enum_blocks: list[dict[str, str]] = []
     enum_values: list[str] = []
     macros: list[str] = []
+    function_signatures: dict[str, dict[str, Any]] = {}
 
     for file_name in sorted(dict.fromkeys(headers + source_files + test_files)):
         path = root / file_name
@@ -629,10 +798,13 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         macros.extend(extract_macros(text))
         structs.extend(extract_structs(text, file_name))
         typedefs.extend(extract_typedefs(text, file_name))
+        typedef_map.update(extract_typedef_map(text))
         enums, values = extract_enum_blocks(text, file_name)
         enum_blocks.extend(enums)
         enum_values.extend(values)
         all_functions.extend(extract_functions(text, file_name))
+        if file_name.startswith("inc/"):
+            function_signatures.update(extract_function_signatures(text, file_name, typedef_map))
 
     public_functions = sorted(
         dict.fromkeys(
@@ -695,6 +867,22 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     c_api_model = {
         "public_headers": public_headers,
         "public_functions": public_functions,
+        "function_signatures": {
+            name: signature
+            for name, signature in sorted(function_signatures.items())
+            if name in public_functions
+        },
+        "typedef_map": typedef_map,
+        "enum_map": {
+            item["name"]: {
+                "file": item["file"],
+                "category": "enum",
+            }
+            for item in enum_blocks
+            if isinstance(item.get("name"), str)
+        },
+        "unresolved_signatures": [],
+        "unresolved_types": [],
         "all_functions": all_functions,
         "structs": sorted({(item["file"], item["name"]) for item in structs}),
         "typedefs": sorted({(item["file"], item["name"]) for item in typedefs}),

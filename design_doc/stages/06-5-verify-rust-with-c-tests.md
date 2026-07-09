@@ -28,8 +28,13 @@ flashDB_rust/
 
 ```text
 logs/trace/c-cross/cross-compile.log
+logs/trace/c-cross/build-check.json
 logs/trace/c-cross/layout-check.log
+logs/trace/c-cross/layout-check.json
+logs/trace/c-cross/link-check.json
 logs/trace/c-cross/cross-test.log
+logs/trace/c-cross/case-results.jsonl
+logs/trace/c-cross/diagnostics.jsonl
 logs/trace/validation-matrix.json
 logs/trace/06-5-verify-rust-with-c-tests.md
 logs/trace/workflow_state.json
@@ -40,11 +45,20 @@ logs/trace/workflow_state.json
 运行：
 
 ```bash
-python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```
 
-`c_cross_validate.py` 必须执行真实 C harness：先编译 Rust `staticlib`，再生成并运行 `logs/trace/c-cross/layout_checker.c`。layout checker 必须链接 Rust staticlib，比较 C/Rust 两侧 ABI struct 的 `sizeof`、`alignof` 和关键字段 offset。
+`c_cross_validate.py` 必须执行真实 C harness，并支持分层 checkpoint：
+
+```bash
+--mode build   # 只编译 Rust staticlib，写 build-check.json
+--mode layout  # build + layout checker，写 layout-check.json
+--mode link    # build + layout + C runner 编译/链接，写 link-check.json
+--mode full    # build + layout + link + 运行 C runner，写 case-results.jsonl 和 validation-matrix.json
+```
+
+默认和最终 gate 使用 `--mode full`。工具先编译 Rust `staticlib`，再生成并运行 `logs/trace/c-cross/layout_checker.c`。layout checker 必须链接 Rust staticlib，比较 C/Rust 两侧 ABI struct 的 `sizeof`、`alignof` 和关键字段 offset。
 
 layout checker 通过后，才允许用系统 C 编译器编译 `tests/kvdb_main.c` 和 `tests/tsdb_main.c`，把原始 C 测试 runner 链接到 Rust C ABI facade。临时 checker、runner、二进制和运行目录只能写入 `logs/trace/c-cross/`。
 
@@ -58,6 +72,14 @@ layout checker 通过后，才允许用系统 C 编译器编译 `tests/kvdb_main
 
 第一版 runner 以 suite 为执行粒度：KVDB 原始测试 runner 通过则 KVDB scorer cases 通过，TSDB runner 通过则 TSDB scorer cases 通过；任一 suite 编译或运行失败，必须把该 suite 对应 scorer cases 写成 `fail`。不得把全量 unsupported 当作阶段通过。
 
+分层证据要求：
+
+- `build-check.json.status` 表示 Rust staticlib 编译结果；
+- `layout-check.json.status` 表示 C/Rust ABI layout checker 结果，layout mismatch 使用 `diagnosis: c_abi_layout_mismatch`；
+- `link-check.json.status` 和 `suites` 表示每个 suite 的 C runner 编译/链接结果；
+- `case-results.jsonl` 一行一个 scorer scenario，记录 `scenario_id`、`scorer_case_id`、`suite`、`phase`、`rust_impl_c_test`、`reason` 和 `log`；
+- `diagnostics.jsonl` 只记录失败或阻断项，必须包含 `phase`、`diagnosis`、`reason` 和 `logs/trace/c-cross/` 下的 log。
+
 ## validation-matrix.json
 
 矩阵必须覆盖 `c_test_model.json.scorer_standard_cases`：
@@ -66,6 +88,7 @@ layout checker 通过后，才允许用系统 C 编译器编译 `tests/kvdb_main
 {
   "stage": "VERIFY_RUST_WITH_C_TESTS",
   "policy": "strict",
+  "mode": "full",
   "total_scenarios": 24,
   "summary": {
     "rust_impl_c_test": {
@@ -99,7 +122,11 @@ log
 - `workflow_state.json.checkpoint == VERIFY_RUST_WITH_C_TESTS`；
 - `completed_stages` 包含从 `BOOTSTRAP` 到 `VERIFY_RUST_WITH_C_TESTS` 的连续阶段；
 - `validation-matrix.json` 存在且合法；
+- `validation-matrix.json.mode == full`；
 - matrix scenario 与 scorer case 一一对应；
+- `build-check.json`、`layout-check.json`、`link-check.json` 存在且 `status == pass`；
+- `case-results.jsonl` 存在，scenario 集合与 `validation-matrix.json.scenarios` 一致，且最终 gate 下每条记录是 `phase == full` / `rust_impl_c_test == pass`；
+- `diagnostics.jsonl` 存在且格式合法；任一诊断 log 必须位于 `logs/trace/c-cross/`；
 - `logs/trace/c-cross/layout-check.log` 存在；
 - `rust_impl_c_test == fail` 必须阻断后续阶段；
 - `not_supported` 在本阶段 strict gate 中不允许通过；

@@ -128,6 +128,11 @@ python3 work/tools/build_c_model.py \
 {
   "public_headers": [],
   "public_functions": [],
+  "function_signatures": {},
+  "typedef_map": {},
+  "enum_map": {},
+  "unresolved_signatures": [],
+  "unresolved_types": [],
   "all_functions": [],
   "structs": [],
   "abi_layouts": [],
@@ -140,6 +145,40 @@ python3 work/tools/build_c_model.py \
   "unmapped_public_symbols": []
 }
 ```
+
+`function_signatures` 记录 public header 中当前输入实际声明的 C ABI 函数签名。键为函数名，值至少包含：
+
+```json
+{
+  "name": "fdb_kvdb_init",
+  "header": "inc/flashdb.h",
+  "declaration": "fdb_err_t fdb_kvdb_init(fdb_kvdb_t db, const char *name);",
+  "return_type": {
+    "raw": "fdb_err_t",
+    "canonical": "enum:fdb_err_t",
+    "category": "status_code"
+  },
+  "params": [
+    {
+      "index": 0,
+      "name": "db",
+      "raw_type": "fdb_kvdb_t",
+      "canonical": "alias:fdb_kvdb_t",
+      "pointer_depth": 0,
+      "const": false,
+      "nullable": "unknown",
+      "ownership": "value"
+    }
+  ],
+  "varargs": false,
+  "source": "public_header",
+  "confidence": "compiler_accepted"
+}
+```
+
+`typedef_map` 和 `enum_map` 记录当前输入中可抽取的 typedef/enum 事实，用于后续 `DESIGN_RUST_API` 建立 `c_type_map`。本阶段使用轻量 parser + C compiler probe：parser 提取声明和候选事实，compiler probe 确认 ABI layout 和类型可编译性；不引入 `libclang` / Clang AST 作为必需依赖。
+
+`unresolved_signatures` / `unresolved_types` 是错误证据，不是通过路径。当前 C runner、scorer case 或 layout checker 依赖的函数和类型不得 unresolved；非关键扩展符号可以记录 unresolved，但必须包含 `symbol`、`reason`、`source` 和后续处理去向。
 
 `abi_layouts` 是 C 编译器确认的 ABI 布局事实，由 `work/tools/abi_layout_extractor.py` 通过 C probe 生成。第一版记录：
 
@@ -202,6 +241,7 @@ fdb_tsdb_init
 {
   "test_files": [],
   "test_functions": [],
+  "registered_test_invocations": [],
   "kvdb_tests": [],
   "tsdb_tests": [],
   "extension_tests": [],
@@ -211,6 +251,8 @@ fdb_tsdb_init
 ```
 
 测试函数可通过 `test_` 前缀、测试注册表、文件名和 main 调用关系识别。新增测试文件如果不属于 KVDB/TSDB，必须进入 `extension_tests` 或 `unclassified_tests`，并在阶段日志中说明后续处理策略。
+
+`registered_test_invocations` 必须保留 `TEST_RUN(...)` 的动态注册顺序、来源 runner 和测试函数名，后续 `VERIFY_RUST_WITH_C_TESTS` 用它把 C runner 输出映射回 C test function 与 scorer scenario。场景数量来自当前输入的注册测试和 scorer 映射，不得固定写死。
 
 `semantic_facts` 不得只记录“调用了什么函数”和“有几个 assert”。每个 scorer case 在可提取时必须保留深语义事实：
 
@@ -242,9 +284,13 @@ python3 work/tools/gate.py --stage BUILD_C_MODEL
 - manifest 中递归发现的 `.c/.h` 都被模型覆盖、分类、标记 unknown 或显式忽略；
 - `c_api_model.json.public_functions` 非空；
 - `c_api_model.json` 包含 `fdb_kvdb_init` 和 `fdb_tsdb_init`；
+- `c_api_model.json.function_signatures` 非空，且覆盖 C runner、scorer case 和 KVDB/TSDB 关键路径需要的 public symbols；
+- `function_signatures` 每个参数必须包含连续 `index`、`name`、`raw_type`、`canonical`、`pointer_depth`、`const`；
+- `unresolved_signatures` / `unresolved_types` 必须是结构化列表；其中不得包含关键路径需要的函数或类型；
 - `c_api_model.json.abi_layouts` 非空，且每个布局包含 `name`、`sizeof`、`alignof`、`fields[].offset` 和 `fields[].sizeof`；
 - 新增 `fdb_*` public 符号不能静默丢弃，必须进入 `public_functions`，并按情况进入核心域、扩展域或未映射清单；
 - `c_test_model.json.test_functions` 非空；
+- `c_test_model.json.registered_test_invocations` 必须覆盖动态注册的 C tests，并保留来源文件和顺序；
 - 高风险 scorer case 的 `semantic_obligations` 应包含可验证的 `verify_*`、`data_shape:*` 或 `scenario:*` 义务，而不是只停留在 `assertion_intent`；
 - `workflow_state.json.current_stage == BUILD_C_MODEL`；
 - `flashDB_rust` 不存在。

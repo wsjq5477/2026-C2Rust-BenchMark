@@ -136,50 +136,156 @@ def c_abi_symbols(design: dict[str, Any]) -> list[str]:
     ]
 
 
-def generate_c_abi_facade(design: dict[str, Any]) -> str:
+def rust_field_type(field: dict[str, Any]) -> str:
+    ctype = str(field.get("ctype", "")).strip()
+    size = field.get("sizeof")
+    name = str(field.get("name", "")).lower()
+    if "void" in ctype and "*" in ctype:
+        return "*mut std::ffi::c_void"
+    if "char" in ctype and "*" in ctype:
+        return "*mut std::ffi::c_char"
+    if "bool" in ctype:
+        return "bool"
+    if "uint8_t" in ctype:
+        return "u8"
+    if "uint16_t" in ctype:
+        return "u16"
+    if "uint32_t" in ctype:
+        return "u32"
+    if "uint64_t" in ctype:
+        return "u64"
+    if "int8_t" in ctype:
+        return "i8"
+    if "int16_t" in ctype:
+        return "i16"
+    if "int32_t" in ctype or ctype == "int":
+        return "i32"
+    if "int64_t" in ctype:
+        return "i64"
+    if "storage" in name and size == 8:
+        return "*mut std::ffi::c_void"
+    if size == 1:
+        return "u8"
+    if size == 2:
+        return "u16"
+    if size == 4:
+        return "u32"
+    if size == 8:
+        return "u64"
+    return f"[u8; {size if isinstance(size, int) and size > 0 else 1}]"
+
+
+def generate_c_types(design: dict[str, Any]) -> str:
     lines = [
-        "//! Temporary C ABI facade used by VERIFY_RUST_WITH_C_TESTS.",
-        "//!",
-        "//! Exports are derived from rust_api_design.json. The rust-implementer",
-        "//! stage must replace these generic placeholders with typed ABI wrappers",
-        "//! backed by the safe Rust implementation before the C cross-validation",
-        "//! gate can pass.",
+        "//! Typed C ABI structs generated from rust_api_design.json.",
         "",
-        "use std::ffi::c_void;",
+        "#![allow(non_camel_case_types)]",
         "",
     ]
     for struct in facade_structs(design):
         rust_name = safe_rust_type(str(struct.get("rust_name") or struct["c_name"]), "CAbiStruct")
+        fields = struct.get("fields", [])
+        if not isinstance(fields, list):
+            fields = []
+        sorted_fields = sorted(
+            [
+                field
+                for field in fields
+                if isinstance(field, dict)
+                and isinstance(field.get("name"), str)
+                and isinstance(field.get("offset"), int)
+                and isinstance(field.get("sizeof"), int)
+            ],
+            key=lambda field: (field["offset"], field["name"]),
+        )
+        lines.extend(["#[repr(C)]", f"pub struct {rust_name} {{"])
+        cursor = 0
+        pad_index = 0
+        for field in sorted_fields:
+            offset = int(field["offset"])
+            size = int(field["sizeof"])
+            if offset > cursor:
+                lines.append(f"    pub _pad_{pad_index}: [u8; {offset - cursor}],")
+                pad_index += 1
+                cursor = offset
+            field_name = safe_rust_ident(field["name"])
+            lines.append(f"    pub {field_name}: {rust_field_type(field)},")
+            cursor = max(cursor, offset + max(size, 0))
         sizeof = struct.get("sizeof")
-        size = sizeof if isinstance(sizeof, int) and sizeof > 0 else 1
-        lines.extend(
-            [
-                "#[repr(C)]",
-                f"pub struct {rust_name} {{",
-                f"    _opaque: [u8; {size}],",
-                "}",
-                "",
-            ]
-        )
-    symbols = c_abi_symbols(design)
-    if not symbols:
-        lines.extend(
-            [
-                "#[no_mangle]",
-                "pub extern \"C\" fn rust_c_abi_facade_available() -> usize { 1 }",
-                "",
-            ]
-        )
-    for symbol in symbols:
-        lines.extend(
-            [
-                "#[no_mangle]",
-                f"pub extern \"C\" fn {symbol}() -> *mut c_void {{",
-                "    std::ptr::null_mut()",
-                "}",
-                "",
-            ]
-        )
+        if isinstance(sizeof, int) and sizeof > cursor:
+            lines.append(f"    pub _pad_{pad_index}: [u8; {sizeof - cursor}],")
+        if not sorted_fields:
+            lines.append("    pub _layout_unresolved: [u8; 1],")
+        lines.extend(["}", ""])
+    if len(lines) == 4:
+        lines.extend(["#[repr(C)]", "pub struct CAbiUnavailable {", "    pub _unused: u8,", "}", ""])
+    return "\n".join(lines)
+
+
+def facade_functions(design: dict[str, Any]) -> list[dict[str, Any]]:
+    facade = design.get("c_abi_facade")
+    functions = facade.get("functions") if isinstance(facade, dict) else []
+    return [
+        item
+        for item in functions
+        if isinstance(item, dict) and isinstance(item.get("rust_export"), str)
+    ] if isinstance(functions, list) else []
+
+
+def neutral_return(rust_type: str) -> str:
+    stripped = rust_type.strip()
+    if stripped == "()":
+        return ""
+    if stripped == "bool":
+        return "false"
+    if stripped.startswith("*const"):
+        return "std::ptr::null()"
+    if stripped.startswith("*mut"):
+        return "std::ptr::null_mut()"
+    return "0"
+
+
+def generate_typed_c_abi(design: dict[str, Any]) -> str:
+    lines = [
+        "//! Typed C ABI facade generated from rust_api_design.json.",
+        "",
+        "use super::c_types::*;",
+        "",
+    ]
+    functions = facade_functions(design)
+    if not functions:
+        lines.extend(["#[no_mangle]", "pub extern \"C\" fn rust_c_abi_facade_available() -> usize { 1 }", ""])
+        return "\n".join(lines)
+    for function in functions:
+        export = safe_rust_ident(function["rust_export"])
+        raw_params = function.get("params", [])
+        params: list[str] = []
+        if isinstance(raw_params, list):
+            for index, param in enumerate(raw_params):
+                if not isinstance(param, dict):
+                    continue
+                name = safe_rust_ident(str(param.get("name") or f"arg{index}"))
+                rust_type = str(param.get("rust_ffi_type") or "*mut std::ffi::c_void")
+                params.append(f"{name}: {rust_type}")
+        return_info = function.get("return")
+        return_type = str(return_info.get("rust_ffi_type", "()")) if isinstance(return_info, dict) else "()"
+        value = neutral_return(return_type)
+        lines.extend(["#[no_mangle]"])
+        if return_type == "()":
+            lines.extend([f"pub extern \"C\" fn {export}({', '.join(params)}) {{", "}"])
+        else:
+            lines.extend([f"pub extern \"C\" fn {export}({', '.join(params)}) -> {return_type} {{", f"    {value}", "}"])
+        lines.append("")
+    return "\n".join(lines)
+
+
+def generate_c_abi_facade(design: dict[str, Any]) -> str:
+    lines = [
+        "//! Compatibility re-export for the typed C ABI facade.",
+        "",
+        "pub use crate::ffi::c_abi::*;",
+        "",
+    ]
     return "\n".join(lines)
 
 
@@ -190,11 +296,9 @@ def generate_layout_probe(design: dict[str, Any]) -> str:
         structs = []
     lines = [
         "//! C ABI layout probe exports used by VERIFY_RUST_WITH_C_TESTS.",
-        "//!",
-        "//! The scaffold initializes these from rust_api_design.json so the symbols",
-        "//! exist early. rust-implementer must replace constants with actual",
-        "//! core::mem::size_of/align_of and offset calculations once FFI structs",
-        "//! are implemented.",
+        "",
+        "use super::c_types::*;",
+        "use core::mem::offset_of;",
         "",
         "pub const RUST_MISSING_FIELD_OFFSET: usize = usize::MAX;",
         "",
@@ -204,17 +308,14 @@ def generate_layout_probe(design: dict[str, Any]) -> str:
             continue
         c_name = struct["c_name"]
         suffix = c_symbol_suffix(c_name)
-        sizeof = struct.get("sizeof")
-        alignof = struct.get("alignof")
-        sizeof_value = sizeof if isinstance(sizeof, int) and sizeof >= 0 else 0
-        alignof_value = alignof if isinstance(alignof, int) and alignof >= 0 else 0
+        rust_name = safe_rust_type(str(struct.get("rust_name") or c_name), "CAbiStruct")
         lines.extend(
             [
                 "#[no_mangle]",
-                f"pub extern \"C\" fn rust_sizeof_{suffix}() -> usize {{ {sizeof_value} }}",
+                f"pub extern \"C\" fn rust_sizeof_{suffix}() -> usize {{ core::mem::size_of::<{rust_name}>() }}",
                 "",
                 "#[no_mangle]",
-                f"pub extern \"C\" fn rust_alignof_{suffix}() -> usize {{ {alignof_value} }}",
+                f"pub extern \"C\" fn rust_alignof_{suffix}() -> usize {{ core::mem::align_of::<{rust_name}>() }}",
                 "",
             ]
         )
@@ -225,12 +326,11 @@ def generate_layout_probe(design: dict[str, Any]) -> str:
             if not isinstance(field, dict) or not isinstance(field.get("name"), str):
                 continue
             field_suffix = c_symbol_suffix(field["name"])
-            offset = field.get("offset")
-            offset_value = offset if isinstance(offset, int) and offset >= 0 else "RUST_MISSING_FIELD_OFFSET"
+            field_name = safe_rust_ident(field["name"])
             lines.extend(
                 [
                     "#[no_mangle]",
-                    f"pub extern \"C\" fn rust_offsetof_{suffix}_{field_suffix}() -> usize {{ {offset_value} }}",
+                    f"pub extern \"C\" fn rust_offsetof_{suffix}_{field_suffix}() -> usize {{ offset_of!({rust_name}, {field_name}) }}",
                     "",
                 ]
             )
@@ -290,7 +390,9 @@ pub fn {function_name}() -> bool {{
 
     write(project / "src" / "c_abi.rs", generate_c_abi_facade(design))
 
-    write(project / "src" / "ffi" / "mod.rs", "pub mod layout_probe;\n")
+    write(project / "src" / "ffi" / "mod.rs", "pub mod c_types;\npub mod c_abi;\npub mod layout_probe;\n")
+    write(project / "src" / "ffi" / "c_types.rs", generate_c_types(design))
+    write(project / "src" / "ffi" / "c_abi.rs", generate_typed_c_abi(design))
     write(project / "src" / "ffi" / "layout_probe.rs", generate_layout_probe(design))
 
     (project / "tests").mkdir(parents=True, exist_ok=True)

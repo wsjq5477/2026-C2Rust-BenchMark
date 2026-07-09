@@ -51,7 +51,13 @@ opencode 根据 C 模型和架构知识写出 `rust_api_design.json`，至少包
   "extension_api": [],
   "test_api": {},
   "c_abi_facade": {
-    "structs": []
+    "structs": [],
+    "functions": [],
+    "c_type_map": {
+      "rules": [],
+      "resolved": {},
+      "unresolved": []
+    }
   },
   "error_model": {},
   "storage_model": {},
@@ -84,6 +90,9 @@ opencode 根据 C 模型和架构知识写出 `rust_api_design.json`，至少包
 - `storage_constraints` 必须记录后端约束。如果 C 输入启用 POSIX file mode 或包含 file storage 源码，应声明 `backend: "file_sector_mode"`、sector 文件模式和 fd cache 约束。
 - `c_abi_facade.structs` 必须完全来自 `c_api_model.json.abi_layouts`，每个结构体记录 `c_name`、`rust_name`、`sizeof`、`alignof`、`fields` 和 `notes`；
 - `notes` 必须记录影响布局的 active macros 或条件编译说明，禁止在 Rust API 设计阶段重新猜测字段。
+- `c_abi_facade.functions` 必须来自 `c_api_model.json.function_signatures`，覆盖 C runner、scorer case 和 `c_to_rust_symbol_map` 需要的 C symbols。每个函数必须记录 `c_symbol`、`rust_export`、`source_signature`、`return.rust_ffi_type`、`params[].rust_ffi_type`、`safe_target` 和 `required_by`；
+- `c_abi_facade.c_type_map` 必须记录中等粒度的 C->Rust FFI 类型映射：primitive、typedef 链、enum/status code、struct value/pointer、`const char *`、`void *`、buffer + length、ownership/nullability。callback/function pointer 必须明确支持或进入 unresolved；
+- `c_type_map.unresolved` 不得包含 C runner、scorer case 或 layout checker 依赖的关键路径类型。
 
 扩展兼容项必须明确：
 
@@ -126,6 +135,9 @@ python3 work/tools/gate.py --stage DESIGN_RUST_API
 - 如果 C 测试义务包含 `use_control_interface`，`test_api.controls` 必须包含 control 等价接口；
 - 如果 C 测试义务包含跨 sector 数据规模，`storage_constraints.backend` 必须为 `file_sector_mode`；
 - 如果 `c_api_model.json.abi_layouts` 非空，`rust_api_design.json.c_abi_facade.structs` 必须一一覆盖并保留布局字段；
+- `rust_api_design.json.c_abi_facade.functions` 必须覆盖 `c_to_rust_symbol_map`、KVDB/TSDB 关键路径和当前 scorer/test 需要的 C symbols；
+- 每个 facade function 必须绑定 `source_signature`，且 return/params 必须声明 `rust_ffi_type`；
+- `rust_api_design.json.c_abi_facade.c_type_map` 必须包含 `rules`、`resolved` 和 `unresolved`，关键路径类型不得 unresolved；
 - `workflow_state.json.current_stage == DESIGN_RUST_API`；
 - `flashDB_rust` 不存在或只允许在后续阶段创建。
 

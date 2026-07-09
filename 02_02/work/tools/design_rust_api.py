@@ -61,6 +61,152 @@ def rust_type_name_from_c_struct(name: str) -> str:
     return "Fdb" + "".join(part[:1].upper() + part[1:] for part in parts)
 
 
+def rust_ffi_base_type(c_type: str) -> str:
+    normalized = re.sub(r"\bconst\b", "", c_type.replace("*", " ")).strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    primitive = {
+        "void": "std::ffi::c_void",
+        "char": "std::ffi::c_char",
+        "bool": "bool",
+        "int": "std::ffi::c_int",
+        "size_t": "usize",
+        "uint8_t": "u8",
+        "uint16_t": "u16",
+        "uint32_t": "u32",
+        "uint64_t": "u64",
+        "int8_t": "i8",
+        "int16_t": "i16",
+        "int32_t": "i32",
+        "int64_t": "i64",
+        "fdb_err_t": "i32",
+        "fdb_time_t": "i64",
+    }
+    if normalized in primitive:
+        return primitive[normalized]
+    if normalized.startswith("struct "):
+        return rust_type_name_from_c_struct(normalized.split(" ", 1)[1])
+    if normalized.endswith("_t") and normalized.startswith("fdb_"):
+        return rust_type_name_from_c_struct(normalized[:-2])
+    return "std::ffi::c_void"
+
+
+def rust_ffi_type(raw_type: str, pointer_depth: int, is_const: bool) -> str:
+    base = rust_ffi_base_type(raw_type)
+    if pointer_depth <= 0:
+        return "()" if base == "std::ffi::c_void" else base
+    pointer = "*const" if is_const else "*mut"
+    result = base
+    for depth in range(pointer_depth):
+        result = f"{pointer} {result}" if depth == 0 else f"*mut {result}"
+    return result
+
+
+def c_type_map_from_signatures(function_signatures: dict[str, Any]) -> dict[str, Any]:
+    resolved: dict[str, dict[str, Any]] = {}
+    unresolved: list[dict[str, str]] = []
+    for symbol, signature in sorted(function_signatures.items()):
+        if not isinstance(signature, dict):
+            continue
+        return_type = signature.get("return_type")
+        if isinstance(return_type, dict) and isinstance(return_type.get("raw"), str):
+            raw = return_type["raw"]
+            resolved.setdefault(
+                raw,
+                {
+                    "c_type": raw,
+                    "rust_ffi_type": rust_ffi_type(raw, raw.count("*"), "const" in raw.split()),
+                    "category": return_type.get("category", "return"),
+                    "source": f"function_signatures.{symbol}.return_type",
+                },
+            )
+        params = signature.get("params")
+        if not isinstance(params, list):
+            continue
+        for param in params:
+            if not isinstance(param, dict) or not isinstance(param.get("raw_type"), str):
+                continue
+            raw = param["raw_type"]
+            rust_type = rust_ffi_type(raw, int(param.get("pointer_depth", 0) or 0), bool(param.get("const")))
+            if rust_type == "std::ffi::c_void" and raw not in {"void", "void *", "const void *"}:
+                unresolved.append(
+                    {
+                        "symbol": symbol,
+                        "c_type": raw,
+                        "reason": "no safe ABI mapping rule for current C type",
+                        "source": f"function_signatures.{symbol}.params[{param.get('index', '?')}]",
+                    }
+                )
+                continue
+            resolved.setdefault(
+                raw,
+                {
+                    "c_type": raw,
+                    "rust_ffi_type": rust_type,
+                    "category": param.get("canonical", "param"),
+                    "ownership": param.get("ownership", "unknown"),
+                    "nullable": param.get("nullable", "unknown"),
+                    "source": f"function_signatures.{symbol}.params[{param.get('index', '?')}]",
+                },
+            )
+    return {
+        "rules": [
+            "primitive C integers and bool map to Rust FFI primitives",
+            "typedef chains keep their raw C name and map through the current ABI rule",
+            "struct pointers map to pointers to #[repr(C)] Rust facade structs",
+            "const pointers map to *const; mutable pointers map to *mut",
+            "unknown critical-path types must be reported as unresolved",
+        ],
+        "resolved": resolved,
+        "unresolved": unresolved,
+    }
+
+
+def facade_functions_from_signatures(
+    function_signatures: dict[str, Any],
+    c_to_rust_symbol_map: dict[str, str],
+) -> list[dict[str, Any]]:
+    functions: list[dict[str, Any]] = []
+    for symbol in sorted(c_to_rust_symbol_map):
+        signature = function_signatures.get(symbol)
+        if not isinstance(signature, dict):
+            continue
+        return_type = signature.get("return_type") if isinstance(signature.get("return_type"), dict) else {}
+        raw_return = str(return_type.get("raw", "void"))
+        params: list[dict[str, Any]] = []
+        raw_params = signature.get("params")
+        if isinstance(raw_params, list):
+            for param in raw_params:
+                if not isinstance(param, dict):
+                    continue
+                raw_type = str(param.get("raw_type", "void"))
+                params.append(
+                    {
+                        "name": str(param.get("name", f"arg{len(params)}")),
+                        "c_type": raw_type,
+                        "rust_ffi_type": rust_ffi_type(raw_type, int(param.get("pointer_depth", 0) or 0), bool(param.get("const"))),
+                        "safe_role": str(param.get("canonical", "param")),
+                        "nullable": param.get("nullable", "unknown"),
+                        "ownership": param.get("ownership", "unknown"),
+                    }
+                )
+        functions.append(
+            {
+                "c_symbol": symbol,
+                "rust_export": symbol,
+                "source_signature": f"c_api_model.function_signatures.{symbol}",
+                "return": {
+                    "c_type": raw_return,
+                    "rust_ffi_type": rust_ffi_type(raw_return, raw_return.count("*"), "const" in raw_return.split()),
+                    "safe_mapping": str(return_type.get("category", "return")),
+                },
+                "params": params,
+                "safe_target": c_to_rust_symbol_map[symbol],
+                "required_by": ["c_runner", "scorer_case"],
+            }
+        )
+    return functions
+
+
 def api_items_from_symbols(module: str, c_symbols: list[str]) -> list[dict[str, Any]]:
     type_name = type_name_from_module(module)
     items: list[dict[str, Any]] = []
@@ -245,6 +391,11 @@ def design_api(
         if isinstance(item.get("c_symbols"), list) and item["c_symbols"]
     }
     core_types = [type_name_from_module(module) for module in modules]
+    facade = design_c_abi_facade(c_api_model)
+    raw_signatures = c_api_model.get("function_signatures")
+    function_signatures = raw_signatures if isinstance(raw_signatures, dict) else {}
+    facade["functions"] = facade_functions_from_signatures(function_signatures, c_to_rust_symbol_map)
+    facade["c_type_map"] = c_type_map_from_signatures(function_signatures)
 
     return {
         "stage": "DESIGN_RUST_API",
@@ -266,7 +417,7 @@ def design_api(
             ],
         },
         "storage_constraints": design_storage_constraints(c_project_model, c_api_model),
-        "c_abi_facade": design_c_abi_facade(c_api_model),
+        "c_abi_facade": facade,
         "kvdb_api": kvdb_api,
         "tsdb_api": tsdb_api,
         "test_api": design_test_api(
