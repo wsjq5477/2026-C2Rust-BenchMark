@@ -942,6 +942,129 @@ suite runner timeout after 60s
 
 保存超时前输出。
 
+### 15.6 Deferred 机制与修复收敛
+
+#### 失败指纹
+
+每个失败至少形成稳定指纹：
+
+```text
+failure_layer | suite | source_test | normalized_assertion_or_error
+```
+
+`failure_layer` 取值：`build`、`layout`、`link`、`full`、`model`、`scaffold`、`parse`。
+
+#### 修复尝试
+
+一次有效修复尝试必须同时包含：
+
+1. 对允许范围内文件做定向修改；
+2. 清理对应 c-cross run directory；
+3. 使用同一输入重跑受影响 suite；
+4. 由 `c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行，自动写入 `attempts.jsonl`。
+
+禁止 subagent 手写 `deferred.jsonl` 和 `attempts.jsonl`。
+
+#### 有进展判定
+
+- 至少一个失败 test 变成 pass；
+- 失败层次向后推进；
+- 通过集合严格增加且无严重回归。
+
+有进展时相关指纹的无进展计数清零。
+
+#### 无进展判定
+
+- 同一指纹在同一断言上失败；
+- 通过集合未增加；
+- 修改导致 build 回退或原通过 test 失败。
+
+#### Deferred 规则
+
+同一指纹连续 3 次无进展后：
+
+- 标记 `status: deferred`；
+- 写入 `deferred.jsonl`，格式与 gate.py `_gate_failure_fingerprint()` 一致；
+- 引用 3 条 repair attempt 的 `attempt_id`；
+- 中间 gate 允许 deferred 场景进入后续阶段；
+- 只有相关 Rust 实现变化或新 C-cross 证据才可重新激活；
+- 最终 full C-cross 不接受 deferred，必须转为 pass。
+
+### 15.7 Gate Contract
+
+#### 产物与消费关系
+
+`c_cross_validate.py` 生成以下产物，`gate.py` 消费这些产物：
+
+```text
+validation-matrix.json → gate.py check_validation_matrix / check_c_cross_intermediate_evidence / check_c_cross_final_evidence
+diagnostics.jsonl → gate.py parse_failed 豁免检查
+attempts.jsonl → gate.py repair attempt 格式检查
+deferred.jsonl → gate.py deferred 证据检查
+case-results.jsonl → gate.py scenario_id 集合一致性检查
+build-check.json / layout-check.json / link-check.json → gate.py 分层状态检查
+```
+
+#### Handoff 映射表
+
+所有 `VALID_DIAGNOSES` 必须有对应的 handoff 映射，不允许 `"none"` 出现在 blocking scenario 上：
+
+```text
+c_model_signature_gap → c-analyzer
+c_cross_harness_not_supported → c-analyzer
+c_cross_result_parse_failed → c-analyzer
+rust_staticlib_build_failed → rust-implementer
+c_abi_layout_mismatch → rust-implementer
+c_runner_link_failed → rust-implementer
+c_runner_runtime_failed → rust-implementer
+c_test_case_failed → rust-implementer
+rust_implementation_failed_c_baseline → rust-implementer
+rust_implementation_matches_c_baseline_for_scenario → none (pass scenario, 不要求 handoff)
+```
+
+#### diagnostics.jsonl 覆盖范围
+
+- suite 级诊断：`c_runner_runtime_failed`（runner 整体失败）
+- per-scenario 诊断：`c_cross_result_parse_failed`（每个 parse_failed scenario 必须有一条）
+- 分层诊断：`rust_staticlib_build_failed`、`c_abi_layout_mismatch`、`c_runner_link_failed`
+
+#### deferred.jsonl 格式要求
+
+每条 deferred 记录必须包含：
+
+```json
+{
+  "fingerprint": "full|kvdb|test_fdb_gc|normalized_reason",
+  "status": "deferred",
+  "no_progress_count": 3,
+  "attempt_ids": ["attempt-id-1", "attempt-id-2", "attempt-id-3"],
+  "reactivation": "related Rust implementation change followed by changed C-cross evidence",
+  "final_requirement": "must pass final full C-cross"
+}
+```
+
+`fingerprint` 必须与 gate.py `_gate_failure_fingerprint()` 格式一致（`failure_layer|suite|source_test|normalized_reason`），`normalized_reason` 中地址替换为 `<addr>`。
+
+#### attempts.jsonl repair 记录要求
+
+每条 `kind=repair` 记录必须包含：
+
+```json
+{
+  "attempt_id": "dynamic-id",
+  "kind": "repair",
+  "changed_files": ["flashDB_rust/src/example.rs"],
+  "progress": true/false,
+  "no_progress_counts": { "fingerprint": N }
+}
+```
+
+`changed_files` 必须非空且全部在 `flashDB_rust/` 下。
+
+#### 中间 gate 豁免
+
+中间 gate 对 parse_failed 场景：只要有 diagnostics 证据 + handoff ≠ "none"，即允许进入 MIGRATE_TESTS。最终 gate 不允许 parse_failed，必须得到完整可解析结果。
+
 ---
 
 ## 16. 开发分阶段计划
