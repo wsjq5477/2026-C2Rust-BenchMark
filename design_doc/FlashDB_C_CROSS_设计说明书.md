@@ -585,7 +585,32 @@ pub unsafe extern "C" fn c_cross_get_oldest_addr(
 - 不参与生产接口；
 - 不能返回硬编码结果。
 
----
+### 9.7 opaque handle vs #[repr(C)] 策略重新评估
+
+#### 前置变化
+
+C 测试筛选机制（§6.4-6.5 + B1 优化）已将直接访问私有字段的 GC 测试标记为 `c_cross.enabled = false`。剩余 `enabled = true` 的 C 测试只通过 FlashDB 公共 API（如 `fdb_kv_set`、`fdb_kv_get`、`fdb_tsl_append` 等）触发行为验证，不再直接访问 `db.parent.oldest_addr`、`db.cur_sec` 等私有嵌套字段。
+
+#### 策略选择
+
+鉴于筛选后字段访问需求大幅降低，回归 opaque handle + selective observation API 方案：
+
+- `enabled = true` 的测试只通过公共 API 和少量 observation getter 验证行为
+- 不需要暴露 `oldest_addr` 等私有字段给 C runner（因为 GC 测试被排除）
+- layout check 只检查 opaque handle 的 sizeof/alignof，不检查内部字段 offset
+- `#[repr(C)]` 全布局 struct 仅用于 C runner 需要直接构造或访问字段的结构体（如 `fdb_tsl`，因为 `fdb_tsl_iter` 回调直接访问 `tsl.status` 和 `tsl.time`）
+
+#### 混合策略
+
+实际执行时采用混合策略：
+
+1. **Opaque handle**：`fdb_kvdb_t`、`fdb_tsdb_t` 使用 opaque handle（`*mut CDbHandle`），C 测试通过公共 API 操作句柄
+2. **#[repr(C)] 按需**：`fdb_tsl`、`fdb_kv` 等被 C 测试回调直接访问的结构体使用 `#[repr(C)]` 全布局
+3. **Observation API**：对 `enabled = true` 测试需要但无法通过公共 API 读取的状态（如 `fdb_tsl_iter` 回调中 `tsl->time`），通过 observation getter 暴露
+
+#### 与筛选的联动
+
+如果后续新增 `enabled = true` 的测试需要访问更多字段，优先提供 observation API；只有当 observation API 规模接近重建完整 C struct 公共接口时，才考虑将该测试标记为 `enabled = false`。
 
 ## 10. C Runner 设计
 
