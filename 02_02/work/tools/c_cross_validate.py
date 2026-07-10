@@ -759,7 +759,7 @@ def _expected_tests_by_suite(
 
 
 def _handoff_for_diagnosis(diagnosis: str) -> str:
-    if diagnosis in {"c_model_signature_gap", "c_cross_harness_not_supported"}:
+    if diagnosis in {"c_model_signature_gap", "c_cross_harness_not_supported", "c_cross_result_parse_failed"}:
         return "c-analyzer"
     if diagnosis in {
         "rust_staticlib_build_failed",
