@@ -80,21 +80,7 @@ def cross_diagnostics_summary(matrix: dict[str, Any], diagnostics: list[dict[str
     ]
 
 
-def _active_deferred_count(rows: list[dict[str, Any]]) -> int:
-    latest: dict[str, str] = {}
-    for row in rows:
-        fingerprint = row.get("fingerprint")
-        status = row.get("status")
-        if isinstance(fingerprint, str) and isinstance(status, str):
-            latest[fingerprint] = status
-    return sum(status == "deferred" for status in latest.values())
-
-
-def final_c_cross_verified(
-    matrix: dict[str, Any],
-    deferred: list[dict[str, Any]],
-    attempts: list[dict[str, Any]],
-) -> bool:
+def final_c_cross_verified(matrix: dict[str, Any], attempts: list[dict[str, Any]]) -> bool:
     scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else None
     latest_attempt = attempts[-1] if attempts else {}
     return (
@@ -104,7 +90,6 @@ def final_c_cross_verified(
         and isinstance(scenarios, list)
         and bool(scenarios)
         and all(isinstance(row, dict) and row.get("rust_impl_c_test") == "pass" for row in scenarios)
-        and _active_deferred_count(deferred) == 0
         and latest_attempt.get("attempt_id") == matrix.get("execution_id")
         and latest_attempt.get("kind") == "final"
     )
@@ -113,7 +98,6 @@ def final_c_cross_verified(
 def cross_convergence_summary(
     matrix: dict[str, Any],
     attempts: list[dict[str, Any]],
-    deferred: list[dict[str, Any]],
     workbench_issues: list[dict[str, Any]],
 ) -> list[str]:
     scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else []
@@ -128,10 +112,9 @@ def cross_convergence_summary(
     return [
         _counter_line("per_test", per_test),
         f"- attempts: `progress={progress_count}, no_progress={no_progress_count}`",
-        f"- active_deferred: `{_active_deferred_count(deferred)}`",
         f"- workbench_issues: `{len(workbench_issues)}`",
         f"- latest_attempt_kind: `{latest_attempt_kind}`",
-        f"- final_c_cross: `{'verified' if final_c_cross_verified(matrix, deferred, attempts) else 'not_verified'}`",
+        f"- final_c_cross: `{'verified' if final_c_cross_verified(matrix, attempts) else 'not_verified'}`",
     ]
 
 
@@ -144,19 +127,18 @@ def write_report(root: Path, output: Path, issues: Path) -> None:
     matrix = load_json(trace / "validation-matrix.json")
     diagnostics = load_jsonl(trace / "c-cross" / "diagnostics.jsonl")
     attempts = load_jsonl(trace / "c-cross" / "attempts.jsonl")
-    deferred = load_jsonl(trace / "c-cross" / "deferred.jsonl")
-    workbench_issues = load_jsonl(trace / "workbench-issues.jsonl")
+    workbench_issues = load_jsonl(trace / "c-cross" / "workbench-issues.jsonl")
     mapping = load_json(trace / "rust_test_mapping.json")
     matrix_lines = "\n".join(validation_matrix_summary(matrix))
     diagnostics_lines = "\n".join(cross_diagnostics_summary(matrix, diagnostics))
-    convergence_lines = "\n".join(cross_convergence_summary(matrix, attempts, deferred, workbench_issues))
+    convergence_lines = "\n".join(cross_convergence_summary(matrix, attempts, workbench_issues))
 
     success = (
         state.get("current_stage") == "DONE"
         and state.get("build_status") == "pass"
         and state.get("test_status") == "pass"
         and float(ratio.get("unsafe_ratio", 1.0)) <= 0.10
-        and final_c_cross_verified(matrix, deferred, attempts)
+        and final_c_cross_verified(matrix, attempts)
     )
     status = "SUCCESS" if success else "FAILED"
 

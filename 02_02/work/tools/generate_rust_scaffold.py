@@ -211,6 +211,12 @@ def generate_c_types(design: dict[str, Any]) -> str:
         lines.append("")
     for struct in facade_structs(design):
         rust_name = safe_rust_type(str(struct.get("rust_name") or struct["c_name"]), "CAbiStruct")
+        is_opaque = bool(struct.get("opaque"))
+        sizeof = struct.get("sizeof")
+        sizeof_int = sizeof if isinstance(sizeof, int) else 0
+        if is_opaque and sizeof_int > 0:
+            lines.extend(["#[repr(C)]", f"pub struct {rust_name} {{", f"    _opaque_storage: [u8; {sizeof_int}],", "}", ""])
+            continue
         fields = struct.get("fields", [])
         if not isinstance(fields, list):
             fields = []
@@ -238,7 +244,6 @@ def generate_c_types(design: dict[str, Any]) -> str:
             field_name = safe_rust_ident(field["name"])
             lines.append(f"    pub {field_name}: {rust_field_type(field)},")
             cursor = max(cursor, offset + max(size, 0))
-        sizeof = struct.get("sizeof")
         if isinstance(sizeof, int) and sizeof > cursor:
             lines.append(f"    pub _pad_{pad_index}: [u8; {sizeof - cursor}],")
         if not sorted_fields:

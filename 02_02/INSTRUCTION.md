@@ -23,7 +23,7 @@ opencode 不能在会话中把当前 primary agent 自切换为另一个 primary
 
 主控传给 subagent 的提示词必须是短调度单，只允许包含动态上下文：作品根目录、当前 checkpoint、目标阶段族、`$FLASHDB_SOURCE`、必须先读取 `work/skills/{subagent}.md`、需要读取的 trace/state 文件、停止条件和回写证据路径。如果调度提示与 subagent Markdown 冲突，以 subagent Markdown 为准。禁止在调度提示中复制或改写 subagent 的业务细节，禁止写入固定 API 清单、固定源码文件清单或实现策略。
 
-所有运行时代理的调度提示必须明确编辑边界：只允许修改当前职责内的 `flashDB_rust/**`、`logs/trace/**` 和规定的 `result/issues/**` 运行产物；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时不得现场修脚本，只能追加一条结构化记录到 `logs/trace/workbench-issues.jsonl` 后继续可执行流程或按 gate 失败退出。
+所有运行时代理的调度提示必须明确编辑边界：只允许修改当前职责内的 `flashDB_rust/**`、`logs/trace/**` 和规定的 `result/issues/**` 运行产物；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时由主控追加一条结构化记录到 `logs/trace/c-cross/workbench-issues.jsonl`，并继续可执行比赛流程。
 
 `logs/trace` 是机器证据仓库，不是默认上下文输入。除 `workflow_state.json`、短阶段日志和必要错误 tail 外，subagent 默认不得全文读取 `c_api_model.json`、`c_test_model.json`、`rust_api_design.json`、`validation-matrix.json`、总设计文档或历史报告；需要模型事实时只能读取与当前阶段直接相关的局部片段。
 
@@ -150,8 +150,8 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 2. 默认只读取 `flashDB_rust/`、验证命令输出、失败 tail 和必要的 layout/API 局部片段；不得全文读取 `logs/trace/c_test_model.json`、`c_api_model.json`、`rust_api_design.json` 或 C 源码。
 3. 运行 `python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind checkpoint --trigger core_complete`。局部实现期间可根据模型动态发现的 suite 重复传入 `--suite <suite>` 做检查点，不得硬编码 suite 名或用例总数。
 4. `c_cross_validate.py` 必须编译 Rust `staticlib`，再编译并运行动态发现的原始 C 测试 runner 链接到 Rust C ABI facade，并解析 runner 的 `Running:` / `FAIL` 输出形成逐测试结果。
-5. 写入 `logs/trace/c-cross/cross-compile.log`、`cross-test.log`、`case-results.jsonl`、`attempts.jsonl`、`deferred.jsonl` 和 `logs/trace/validation-matrix.json`。
-6. 中间 C-cross 是诊断检查点：相同失败指纹只有在连续 3 次无进展的 `repair` 尝试后才可标记为 `deferred`；有新通过场景、失败层级前移或断言证据增加即算有进展并清零。`not_supported`、无法归因的 runner 失败和缺少逐测试输出不能伪装为通过。build/layout/link 必须通过，非 deferred 失败必须阻断；满足证据链的 deferred 场景可进入 `MIGRATE_TESTS`。
+5. 写入 `logs/trace/c-cross/cross-compile.log`、`cross-test.log`、`case-results.jsonl`、`attempts.jsonl`、`workbench-issues.jsonl` 和 `logs/trace/validation-matrix.json`。
+6. 中间 C-cross 是诊断检查点：全量 runner invocation 必须都有结果和证据；阶段结果为 `PASS` 或 `CONTINUE_WITH_FAILURES`。任何编译、layout、链接、运行、解析或测试失败都不得伪装为通过，但必须继续 `MIGRATE_TESTS`、Rust 测试、评分和最终报告。
 7. 写入中文 `logs/trace/06-5-verify-rust-with-c-tests.md`。
 8. 更新 `workflow_state.json`，`current_stage` 为 `VERIFY_RUST_WITH_C_TESTS`。
 9. 运行 `python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS`。
@@ -160,7 +160,7 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 
 ### MIGRATE_TESTS
 
-1. 必须在 `VERIFY_RUST_WITH_C_TESTS` 中间 gate 通过后执行；该 gate 允许证据完整的 deferred 场景可进入 `MIGRATE_TESTS`，不代表最终 C-cross 已通过。
+1. 必须在 `VERIFY_RUST_WITH_C_TESTS` 写出完整证据后执行；`PASS` 与 `CONTINUE_WITH_FAILURES` 都允许进入 `MIGRATE_TESTS`，后者不代表最终 C-cross 已通过。
 2. 优先调用 `test-migrator` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/test-migrator.md` 后执行；连续 3 次失败后才允许主控 fallback。
 3. 读取 `work/skills/test-migrator.md` 和 `work/skills/flashdb-test-migration/SKILL.md`。
 4. 读取 `logs/trace/validation-matrix.json` 的结论或相关局部片段；不得全文读取无关 trace 大 JSON。Rust 源码已由 C 原始测试证据验证，Rust 测试失败默认先怀疑测试迁移或 harness。
@@ -188,7 +188,7 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 
 ### REPORT_AND_VERIFY
 
-1. 在所有 Rust 修复和测试完成后，最后一次运行 `python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind final --trigger final_verification`。这是最终全量 C-cross，不得带 `--suite`，所有场景必须通过且不得存在 active deferred。
+1. 在所有 Rust 修复和测试完成后，最后一次运行 `python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind final --trigger final_verification`。这是最终全量 C-cross，不得带 `--suite`；所有场景通过才可报告 C-cross PASS，失败时仍必须输出最终报告和真实部分成绩。
 2. 运行 `python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json`。
 3. 运行 `python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json`。
 4. 写入中文 `logs/trace/final-verification.md` 和 `logs/trace/09-report-and-verify.md`。
@@ -226,4 +226,4 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 - 不得把测试改成恒真。
 - 不得在最终 Rust 项目中链接或编译 C 源码。
 - 不得超过 unsafe 比例限制。
-- 不得手写 `deferred.jsonl` 或 `attempts.jsonl`。所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行，由 `record_attempt` 函数自动写入格式和引用关系。手写会导致 fingerprint、status、no_progress_count、attempt_ids 与 gate.py 期望不一致。
+- 不得手写 `attempts.jsonl` 或 `workbench-issues.jsonl`。repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 记录；平台问题由主控工具生成。

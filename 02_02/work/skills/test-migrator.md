@@ -16,11 +16,11 @@ permission:
 
 如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
 
-编辑边界：只允许修改 `flashDB_rust/tests/**`、规定的测试 mapping 和 `logs/trace/**` 运行证据；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时，只能追加到 `logs/trace/workbench-issues.jsonl`，不得自行修改工作台。
+编辑边界：只允许修改 `flashDB_rust/tests/**`、规定的测试 mapping 和 `logs/trace/**` 运行证据；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。平台脚本或契约问题由主控登记到 `logs/trace/c-cross/workbench-issues.jsonl`，不得自行修改工作台。
 
 ## 前置条件
 
-`VERIFY_RUST_WITH_C_TESTS` 中间 gate 必须已经通过。build/layout/link 已通过；全部通过或有完整三次无进展证据的 deferred 场景可进入 `MIGRATE_TESTS`。这不是最终 C-cross 结论，迁移测试可以为 deferred 场景补充新的语义和断言证据，随后由修复流程重新激活验证。
+`VERIFY_RUST_WITH_C_TESTS` 必须已经写出全量 invocation 证据。`PASS` 与 `CONTINUE_WITH_FAILURES` 都可进入 `MIGRATE_TESTS`；后者不是最终 C-cross 结论，失败与 unresolved 必须保留到最终报告。
 
 ## 职责范围
 
@@ -54,4 +54,4 @@ permission:
 - 不得用 `is_ok()`、`is_some()`、`is_none()` 这类状态/存在性断言替代 C 测试中的属性断言。
 - 不得只按注册测试名判断评分覆盖。
 - 不得只修改 mapping 状态而保留 `MIGRATION_PENDING`。
-- 不得手写 `deferred.jsonl` 或 `attempts.jsonl`。
+- 不得手写 `attempts.jsonl` 或 `workbench-issues.jsonl`。

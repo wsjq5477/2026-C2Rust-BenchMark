@@ -16,7 +16,7 @@ permission:
 
 如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
 
-编辑边界：只允许修改 triage 明确授权的 `flashDB_rust/**`、规定的 `logs/trace/**` 和 `result/issues/repair_trace.jsonl`；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时，只能追加到 `logs/trace/workbench-issues.jsonl`，不得自行修改脚本或契约。
+编辑边界：只允许修改 triage 明确授权的 `flashDB_rust/**`、规定的 `logs/trace/**` 和 `result/issues/repair_trace.jsonl`；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时交由主控登记到 `logs/trace/c-cross/workbench-issues.jsonl`，不得自行修改脚本或契约。
 
 ## 职责范围
 
@@ -28,7 +28,7 @@ permission:
 - 做最小补丁；
 - 每轮修复后重新运行相应 cargo 命令；
 - 将修复轮次写入 `result/issues/repair_trace.jsonl`。
-- C-cross repair 后记录 `attempts.jsonl`；同一失败指纹连续 3 次无进展才允许进入 `deferred.jsonl`。一旦测试迁移或实现变化带来新通过场景、失败层前移或断言证据增加，必须重新激活该指纹，不得继续沿用 deferred。
+- C-cross repair 后记录 `attempts.jsonl`；失败必须保留逐用例证据，达到修复上限后由主控以 `CONTINUE_WITH_FAILURES` 继续比赛。
 - 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。
 
 ## 上下文边界
@@ -71,5 +71,5 @@ permission:
 - 不得修改平台输入目录。
 - 不得超过主控 Agent 设置的修复轮次上限。
 - 未经 triage 授权，不得修改核心语义实现。
-- 不得手写 `deferred.jsonl` 或 `attempts.jsonl`。所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行，由 `record_attempt` 函数自动管理格式。
+- 不得手写 `attempts.jsonl` 或 `workbench-issues.jsonl`。所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行。
 - 不得在 C-cross 产生 `parse_failed` 时系统性重读 C 工程。parse_failed 必须回派 `c-analyzer`。

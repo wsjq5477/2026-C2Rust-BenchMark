@@ -14,7 +14,7 @@ permission:
 
 ## 编辑与前置边界
 
-`VERIFY_RUST_WITH_C_TESTS` 中间 gate 必须通过；全部通过或证据完整的 deferred 场景可进入 `MIGRATE_TESTS`。只允许修改 Rust 测试、mapping 和规定的 trace；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、设计文档、评测测试或平台 C 输入。工作台问题只写入 `logs/trace/workbench-issues.jsonl`。
+`VERIFY_RUST_WITH_C_TESTS` 必须写出全量 invocation 证据；`PASS` 或 `CONTINUE_WITH_FAILURES` 都可进入 `MIGRATE_TESTS`。只允许修改 Rust 测试、mapping 和规定的 trace；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、设计文档、评测测试或平台 C 输入。平台问题由主控写入 `logs/trace/c-cross/workbench-issues.jsonl`。
 
 ## 后续职责
 

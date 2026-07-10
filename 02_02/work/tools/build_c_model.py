@@ -316,6 +316,28 @@ def extract_registered_tests(text: str) -> list[str]:
     return re.findall(r"\bTEST_RUN\s*\(\s*(" + IDENT + r")\s*\)", text)
 
 
+def extract_registered_test_calls(text: str) -> list[tuple[str, int]]:
+    """Return each TEST_RUN target with its physical source line."""
+    calls: list[tuple[str, int]] = []
+    pattern = re.compile(r"\bTEST_RUN\s*\(\s*(" + IDENT + r")\s*\)")
+    for match in pattern.finditer(strip_comments(text)):
+        calls.append((match.group(1), text.count("\n", 0, match.start()) + 1))
+    return calls
+
+
+def _invocation_test_function(invocation: dict[str, Any]) -> str:
+    value = invocation.get("test_function", invocation.get("name"))
+    return str(value)
+
+
+def _invocation_scenario_id(invocation: dict[str, Any], occurrence: int) -> str:
+    value = invocation.get("scenario_id")
+    if isinstance(value, str) and value:
+        return value
+    name = _invocation_test_function(invocation)
+    return name if occurrence == 1 else f"{name}__{occurrence}"
+
+
 def extract_function_bodies(text: str) -> dict[str, str]:
     clean = strip_comments(text)
     pattern = re.compile(r"\b(test_[A-Za-z0-9_]+)\s*\([^;{}]*\)\s*\{")
@@ -589,9 +611,9 @@ def build_standard_scenarios(
     scenarios: list[dict[str, Any]] = []
     occurrences: dict[str, int] = {}
     for index, invocation in enumerate(registered_invocations, start=1):
-        name = str(invocation["name"])
+        name = _invocation_test_function(invocation)
         occurrences[name] = occurrences.get(name, 0) + 1
-        scenario_id = name if occurrences[name] == 1 else f"{name}__{occurrences[name]}"
+        scenario_id = _invocation_scenario_id(invocation, occurrences[name])
         tags = scenario_tags.get(name, tag_test(name))
         suite = scenario_suite(name, tags)
         scenarios.append(
@@ -753,9 +775,9 @@ def build_scorer_standard_cases(
     cases: list[dict[str, Any]] = []
     occurrences: dict[str, int] = {}
     for index, invocation in enumerate(registered_invocations, start=1):
-        name = str(invocation["name"])
+        name = _invocation_test_function(invocation)
         occurrences[name] = occurrences.get(name, 0) + 1
-        scenario_id = name if occurrences[name] == 1 else f"{name}__{occurrences[name]}"
+        scenario_id = _invocation_scenario_id(invocation, occurrences[name])
         tags = scenario_tags.get(name, tag_test(name))
         facts = merge_semantic_facts(related_test_names(name, test_semantics), test_semantics)
         cases.append(
@@ -842,44 +864,58 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     registered_invocations: list[dict[str, Any]] = []
     scenario_tags: dict[str, list[str]] = {}
     test_semantics: dict[str, dict[str, Any]] = {}
+    test_source_text: dict[str, str] = {}
+    test_function_sources: dict[str, str] = {}
     for file_name in test_files:
         path = root / file_name
         if not path.is_file():
             continue
         text = read_text(path)
+        test_source_text[file_name] = text
         funcs = [item["name"] for item in extract_functions(text, file_name) if item["name"].startswith("test_")]
         bodies = extract_function_bodies(text)
         test_functions.extend(funcs)
-        registered = extract_registered_tests(text)
-        registered_tests.extend(registered)
-        suite_from_file = "kvdb" if "kvdb" in file_name else ("tsdb" if "tsdb" in file_name else "unknown")
-        runner_from_file = file_name
-        # Track invocation count per test function name within this file for invocation_index
-        invocation_counter_in_file: dict[str, int] = {}
-        for name in registered:
-            invocation_counter_in_file.setdefault(name, 0)
-            invocation_counter_in_file[name] += 1
-        invocation_seen: dict[str, int] = {}
-        for index, name in enumerate(registered, start=1):
-            invocation_idx = invocation_seen.get(name, 0) + 1
-            invocation_seen[name] = invocation_idx
-            # Derive scenario_id from invocation_index for duplicate calls
-            scenarios = [name]
-            if invocation_idx > 1:
-                scenarios = [f"{name}__{invocation_idx}"]
-            registered_invocations.append({
-                "name": name,
-                "suite": suite_from_file,
-                "runner": runner_from_file,
-                "invocation_index": invocation_idx,
-                "source_file": file_name,
-                "source_index": index,
-                "scenarios": scenarios,
-            })
-        for name in funcs + registered:
+        for name in funcs:
+            test_function_sources.setdefault(name, file_name)
+        for name in funcs + extract_registered_tests(text):
             scenario_tags[name] = tag_test(name)
         for name, body in bodies.items():
             test_semantics[name] = extract_test_semantics(body)
+
+    runner_sources: dict[str, list[str]] = {}
+    for candidate, text in test_source_text.items():
+        if not re.search(r"\bmain\s*\(", strip_comments(text)):
+            continue
+        for included in extract_includes(text):
+            included_name = Path(included).name
+            for source_file in test_source_text:
+                if Path(source_file).name == included_name:
+                    runner_sources.setdefault(source_file, []).append(candidate)
+
+    scenario_occurrences: dict[str, int] = {}
+    for registration_file, text in test_source_text.items():
+        calls = extract_registered_test_calls(text)
+        if not calls:
+            continue
+        candidates = sorted(dict.fromkeys(runner_sources.get(registration_file, [])))
+        runner = candidates[0] if len(candidates) == 1 else registration_file
+        runner_seen: dict[str, int] = {}
+        for runner_order, (name, source_line) in enumerate(calls, start=1):
+            runner_seen[name] = runner_seen.get(name, 0) + 1
+            scenario_occurrences[name] = scenario_occurrences.get(name, 0) + 1
+            scenario_id = name if scenario_occurrences[name] == 1 else f"{name}__{scenario_occurrences[name]}"
+            registered_tests.append(name)
+            tags = scenario_tags.get(name, tag_test(name))
+            registered_invocations.append({
+                "suite": scenario_suite(name, tags),
+                "runner": runner,
+                "test_function": name,
+                "invocation_index": runner_seen[name],
+                "runner_order": runner_order,
+                "scenario_id": scenario_id,
+                "source_file": test_function_sources.get(name, registration_file),
+                "source_line": source_line,
+            })
 
     test_functions = sorted(dict.fromkeys(test_functions))
     registered_tests = sorted(dict.fromkeys(registered_tests))

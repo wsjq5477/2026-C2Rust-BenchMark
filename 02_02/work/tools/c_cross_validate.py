@@ -88,15 +88,16 @@ def parse_runner_test_results(output: str, expected_tests: list[str], exit_code:
     # Map each "Running: <name>" to a specific scenario_id using invocation order
     started_scenarios: list[str] = []
     invocation_counter: dict[str, int] = {}
+    unexpected_repeated_starts: list[str] = []
     for name in started:
         scenarios_for_name = invocation_order.get(name, [name])
         idx = invocation_counter.get(name, 0)
         if idx < len(scenarios_for_name):
             started_scenarios.append(scenarios_for_name[idx])
-            invocation_counter[name] = idx + 1
         else:
             started_scenarios.append(name)
-            invocation_counter[name] = idx + 1
+            unexpected_repeated_starts.append(name)
+        invocation_counter[name] = idx + 1
 
     # Map FAIL lines similarly
     failures: dict[str, str] = {}
@@ -120,6 +121,8 @@ def parse_runner_test_results(output: str, expected_tests: list[str], exit_code:
     reasons: list[str] = []
     if unknown_started:
         reasons.append("unknown started tests: " + ", ".join(unknown_started))
+    if unexpected_repeated_starts:
+        reasons.append("unexpected repeated start: " + ", ".join(sorted(unexpected_repeated_starts)))
     if unknown_failed:
         reasons.append("unknown failed tests: " + ", ".join(unknown_failed))
     if failed_without_start:
@@ -274,47 +277,18 @@ def record_attempt(
                 "repair changed_files must stay under flashDB_rust/: " + ", ".join(sorted(invalid_changes))
             )
 
-    comparison = compare_attempt(previous, current)
     attempts_path = c_cross / "attempts.jsonl"
     prior_attempts = _read_jsonl(attempts_path)
-    current_fingerprints = comparison["fingerprints_after"]
-    recent_fingerprints = {
-        fingerprint
-        for row in prior_attempts[-2:]
-        for fingerprint in row.get("fingerprints_after", [])
-        if isinstance(fingerprint, str)
-    }
-    cycle_detected = bool(current_fingerprints) and any(
-        fingerprint in recent_fingerprints and fingerprint not in comparison["fingerprints_before"]
-        for fingerprint in current_fingerprints
-    )
-    if cycle_detected:
-        comparison["progress"] = False
-        comparison["progress_reasons"] = ["failure fingerprint cycle detected"]
-
-    previous_counts: dict[str, int] = {}
-    if prior_attempts:
-        raw_counts = prior_attempts[-1].get("no_progress_counts")
-        if isinstance(raw_counts, dict):
-            previous_counts = {
-                str(key): int(value)
-                for key, value in raw_counts.items()
-                if isinstance(value, int)
-            }
-    no_progress_counts: dict[str, int] = {}
-    comparable_fingerprints = set(comparison["comparable_fingerprints"])
-    for fingerprint in current_fingerprints:
-        if attempt_kind != "repair" or comparison["progress"] or fingerprint not in comparable_fingerprints:
-            no_progress_counts[fingerprint] = 0
-        else:
-            no_progress_counts[fingerprint] = previous_counts.get(fingerprint, 0) + 1
-
     attempt_id = str(current.get("execution_id") or f"attempt-{time.time_ns()}")
-    deferred_fingerprints = sorted(
-        fingerprint for fingerprint, count in no_progress_counts.items() if count >= 3
+    outcomes = Counter(
+        str(row.get("rust_impl_c_test") or "unresolved")
+        for row in current.get("scenarios", [])
+        if isinstance(row, dict)
     )
     record = {
         "attempt_id": attempt_id,
+        "attempt": len(prior_attempts) + 1,
+        "stage": "VERIFY_RUST_WITH_C_TESTS",
         "kind": attempt_kind,
         "trigger": trigger,
         "suite": sorted({
@@ -323,65 +297,12 @@ def record_attempt(
             if isinstance(row, dict) and row.get("suite")
         }),
         "changed_files": list(changed_files),
-        **comparison,
-        "no_progress_counts": no_progress_counts,
-        "next_action": "defer" if deferred_fingerprints else ("continue" if current_fingerprints else "pass"),
+        "result": "pass" if outcomes and set(outcomes) == {"pass"} else "continue_with_failures",
+        "summary": dict(sorted(outcomes.items())),
         "matrix_snapshot": f"logs/trace/c-cross/checkpoints/{attempt_id}.json",
     }
     _append_jsonl(attempts_path, record)
 
-    deferred_path = c_cross / "deferred.jsonl"
-    existing_deferred = _read_jsonl(deferred_path)
-    latest_deferred: dict[str, dict[str, Any]] = {}
-    for row in existing_deferred:
-        fingerprint = row.get("fingerprint")
-        if isinstance(fingerprint, str):
-            latest_deferred[fingerprint] = row
-    active_deferred = {
-        fingerprint: row
-        for fingerprint, row in latest_deferred.items()
-        if row.get("status") == "deferred"
-    }
-    for fingerprint in deferred_fingerprints:
-        if fingerprint in active_deferred:
-            continue
-        attempt_ids = [
-            str(row.get("attempt_id"))
-            for row in prior_attempts + [record]
-            if fingerprint in row.get("fingerprints_after", [])
-        ][-3:]
-        _append_jsonl(
-            deferred_path,
-            {
-                "fingerprint": fingerprint,
-                "status": "deferred",
-                "no_progress_count": no_progress_counts[fingerprint],
-                "attempt_ids": attempt_ids,
-                "reactivation": "related Rust implementation change followed by changed C-cross evidence",
-                "final_requirement": "must pass final full C-cross",
-            },
-        )
-
-    for fingerprint, deferred_row in active_deferred.items():
-        if fingerprint in current_fingerprints:
-            continue
-        if current.get("scope") == "selected":
-            fingerprint_parts = fingerprint.split("|", 3)
-            fingerprint_suite = fingerprint_parts[1] if len(fingerprint_parts) > 1 else ""
-            selected = current.get("selected_suites")
-            selected_suites = {str(item) for item in selected} if isinstance(selected, list) else set()
-            if fingerprint_suite not in selected_suites:
-                continue
-        _append_jsonl(
-            deferred_path,
-            {
-                "fingerprint": fingerprint,
-                "status": "reactivated",
-                "reactivated_by": attempt_id,
-                "reason": "related execution produced changed evidence",
-                "deferred_attempt_ids": deferred_row.get("attempt_ids", []),
-            },
-        )
     return record
 
 
@@ -474,27 +395,113 @@ def _discover_suite_runner(suite: str, c_root: Path) -> Path | None:
     return sorted(candidates, key=lambda item: (-item[0], item[1].as_posix()))[0][1]
 
 
+def _included_c_sources(source: Path, tests_dir: Path, seen: set[Path] | None = None) -> set[Path]:
+    seen = seen or set()
+    source = source.resolve()
+    if source in seen or not source.is_file():
+        return seen
+    seen.add(source)
+    text = source.read_text(encoding="utf-8", errors="ignore")
+    for included in re.findall(r'^\s*#\s*include\s+"([^"/]+\.c)"', text, flags=re.MULTILINE):
+        _included_c_sources(tests_dir / included, tests_dir, seen)
+    return seen
+
+
+def _test_side_sources(c_root: Path, runner: Path, cases: list[dict[str, Any]]) -> list[Path]:
+    tests_dir = c_root / "tests"
+    included = _included_c_sources(runner, tests_dir)
+    sources = set(included)
+    for case in cases:
+        source_file = case.get("source_file")
+        if not isinstance(source_file, str):
+            continue
+        source = c_root / source_file
+        if source.is_file() and source.resolve() not in included:
+            sources.add(source.resolve())
+    return sorted(sources)
+
+
+def _write_ffi_manifest(c_root: Path, c_cross: Path, trace: Path, objects: list[Path], root: Path) -> str:
+    manifest_path = trace / "ffi_manifest.json"
+    public_api: set[str] = set()
+    api_path = trace / "c_api_model.json"
+    if api_path.exists():
+        api = load_json(api_path)
+        public_api = {item for item in api.get("public_functions", []) if isinstance(item, str)}
+    linker = shutil.which("ld")
+    symbol_tool = shutil.which("nm") or shutil.which("llvm-nm")
+    if not objects or linker is None or symbol_tool is None:
+        _write_json(manifest_path, {"required_ffi_apis": [], "reason": "partial-link tools or test objects unavailable"})
+        return "ffi manifest skipped: partial-link tools or test objects unavailable\n"
+    combined = c_cross / "test-side-combined.o"
+    code, output = _run([linker, "-r", *[str(path) for path in objects], "-o", str(combined)])
+    log = f"$ {_command_text([linker, '-r', *[str(path) for path in objects], '-o', str(combined)])}\n{output}\n"
+    if code != 0:
+        _write_json(manifest_path, {"required_ffi_apis": [], "reason": "test-side partial link failed"})
+        return log
+    code, output = _run([symbol_tool, "-u", str(combined)])
+    log += f"$ {_command_text([symbol_tool, '-u', str(combined)])}\n{output}\n"
+    symbols = set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)$", output, flags=re.MULTILINE))
+    required = sorted(symbols & public_api)
+    _write_json(manifest_path, {"required_ffi_apis": required, "source": "test_side_undefined_symbols", "object": _relative_log_path(combined, root)})
+    return log
+
+
 def _compile_suite_runner(
     suite: str,
     c_root: Path,
     c_cross: Path,
     rust_lib: Path,
+    cases: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, Path | None, str]:
-    source = _discover_suite_runner(suite, c_root)
+    source = None
+    if cases:
+        runner_names = {str(case.get("runner")) for case in cases if isinstance(case.get("runner"), str)}
+        if len(runner_names) == 1:
+            candidate = c_root / next(iter(runner_names))
+            if candidate.is_file():
+                source = candidate
+    source = source or _discover_suite_runner(suite, c_root)
     if source is None:
         return False, None, f"missing discovered C test runner for suite: {suite}\n"
     binary = c_cross / f"{suite}_runner"
     cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if cc is None:
         return False, None, "missing C compiler: cc/gcc/clang not found\n"
+    sources = _test_side_sources(c_root, source, cases or [])
+    runner_dir = c_cross / "runners" / _safe_c_suffix(source.stem)
+    runner_dir.mkdir(parents=True, exist_ok=True)
+    objects: list[Path] = []
+    output_parts: list[str] = []
+    for index, test_source in enumerate(sources):
+        obj = runner_dir / f"{index}-{_safe_c_suffix(test_source.stem)}.o"
+        compile_command = [
+            cc,
+            "-O0",
+            "-g3",
+            "-Wall",
+            "-Wno-format",
+            *_c_include_args(c_root, c_cross),
+            "-c",
+            str(test_source),
+            "-o",
+            str(obj),
+        ]
+        code, output = _run(compile_command)
+        output_parts.append(f"$ {_command_text(compile_command)}\n{output}\n")
+        if code != 0:
+            return False, binary, "".join(output_parts) + f"cc exited with {code}\n"
+        objects.append(obj)
+    trace = c_cross.parent
+    workbench_root = trace.parent.parent
+    output_parts.append(_write_ffi_manifest(c_root, c_cross, trace, objects, workbench_root))
     command = [
         cc,
         "-O0",
         "-g3",
         "-Wall",
         "-Wno-format",
-        *_c_include_args(c_root, c_cross),
-        str(source),
+        *[str(obj) for obj in objects],
         str(rust_lib),
         "-o",
         str(binary),
@@ -503,7 +510,7 @@ def _compile_suite_runner(
         "-lm",
     ]
     code, output = _run(command)
-    text = f"$ {_command_text(command)}\n{output}\n"
+    text = "".join(output_parts) + f"$ {_command_text(command)}\n{output}\n"
     if code != 0:
         text += f"cc exited with {code}\n"
         return False, binary, text
@@ -736,6 +743,35 @@ def _malformed_row(index: int, case: Any, c_cross: Path, root: Path) -> dict[str
     }
 
 
+def _malformed_invocation_row(index: int, invocation: Any, c_cross: Path, root: Path) -> dict[str, Any]:
+    scenario_id = f"malformed_invocation_{index}"
+    log = c_cross / f"{scenario_id}.log"
+    required = ["suite", "runner", "test_function", "scenario_id", "source_file"]
+    missing = [key for key in required if not isinstance(invocation, dict) or not isinstance(invocation.get(key), str) or not invocation.get(key)]
+    reason = (
+        f"malformed registered_test_invocations entry at index {index}: missing or non-string {', '.join(missing)}"
+        if isinstance(invocation, dict)
+        else f"malformed registered_test_invocations entry at index {index}: expected object, got {type(invocation).__name__}"
+    )
+    _write(log, reason + "\n")
+    return {
+        "scenario_id": scenario_id,
+        "suite": "unknown",
+        "phase": "model",
+        "failure_layer": "model",
+        "source_runner": "unknown",
+        "source_test": scenario_id,
+        "c_impl_c_test": "baseline",
+        "rust_impl_c_test": "unresolved",
+        "c_impl_rust_test": "not_run",
+        "rust_impl_rust_test": "pending",
+        "diagnosis": "c_model_signature_gap",
+        "reason": reason,
+        "log": _relative_log_path(log, root),
+        "handoff": "controller",
+    }
+
+
 def _source_evidence_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[str, str]]:
     raw = test_model.get("registered_test_invocations")
     if not isinstance(raw, list):
@@ -747,7 +783,8 @@ def _source_evidence_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[s
             continue
         runner = item.get("runner")
         test_function = item.get("test_function") or item.get("name")
-        scenarios = item.get("scenarios")
+        scenario_id = item.get("scenario_id")
+        scenarios = [scenario_id] if isinstance(scenario_id, str) and scenario_id else item.get("scenarios")
         invocation_index = item.get("invocation_index")
         if not isinstance(scenarios, list) and isinstance(test_function, str):
             # Derive scenario from invocation_index if not provided
@@ -859,7 +896,6 @@ def _suite_result_rows(
         rows.append(
             {
                 "scenario_id": scenario_id,
-                "scorer_case_id": str(case["case_id"]),
                 "suite": suite,
                 "phase": phase,
                 "failure_layer": phase,
@@ -875,7 +911,20 @@ def _suite_result_rows(
                 "handoff": _handoff_for_diagnosis(diagnosis),
             }
         )
+        if isinstance(case.get("case_id"), str) and case["case_id"]:
+            rows[-1]["scorer_case_id"] = case["case_id"]
     return rows
+
+
+def _verification_results(scenarios: list[dict[str, Any]]) -> tuple[str, str]:
+    outcomes = [str(item.get("rust_impl_c_test") or "unresolved") for item in scenarios]
+    if outcomes and all(value == "pass" for value in outcomes):
+        return "PASS", "pass"
+    if any(value in {"unresolved", "parse_failed"} for value in outcomes):
+        return "CONTINUE_WITH_FAILURES", "unresolved"
+    if any(value == "pass" for value in outcomes):
+        return "CONTINUE_WITH_FAILURES", "partial"
+    return "CONTINUE_WITH_FAILURES", "failed"
 
 
 def build_matrix(
@@ -893,25 +942,75 @@ def build_matrix(
     trace = out
     c_cross = trace / "c-cross"
     c_cross.mkdir(parents=True, exist_ok=True)
+    # Deferred convergence is no longer part of the C-CROSS contract. Remove a
+    # stale artifact from older workbench runs so it cannot be mistaken for
+    # current evidence.
+    (c_cross / "deferred.jsonl").unlink(missing_ok=True)
 
     test_model = load_json(trace / "c_test_model.json")
-    raw_cases = test_model.get("scorer_standard_cases")
-    if not isinstance(raw_cases, list):
-        raise ValueError("c_test_model.json scorer_standard_cases must be a list")
-
     malformed = []
     valid_cases: list[dict[str, Any]] = []
-    for index, case in enumerate(raw_cases):
-        if (
-            not isinstance(case, dict)
-            or not isinstance(case.get("scenario_id"), str)
-            or not isinstance(case.get("case_id"), str)
-            or not isinstance(case.get("suite"), str)
-            or not case.get("suite")
-        ):
-            malformed.append(_malformed_row(index, case, c_cross, root))
-        else:
+    raw_invocations = test_model.get("registered_test_invocations")
+    scorer_cases = test_model.get("scorer_standard_cases")
+    scorer_case_by_scenario = {
+        item.get("scenario_id"): item.get("case_id")
+        for item in scorer_cases
+        if isinstance(item, dict)
+        and isinstance(item.get("scenario_id"), str)
+        and isinstance(item.get("case_id"), str)
+    } if isinstance(scorer_cases, list) else {}
+    if isinstance(raw_invocations, list) and raw_invocations:
+        legacy_occurrences: dict[tuple[str, str], int] = {}
+        for index, invocation in enumerate(raw_invocations):
+            case = dict(invocation) if isinstance(invocation, dict) else invocation
+            if isinstance(case, dict):
+                scenarios = case.get("scenarios")
+                if not isinstance(case.get("scenario_id"), str) and isinstance(scenarios, list) and len(scenarios) == 1 and isinstance(scenarios[0], str):
+                    case["scenario_id"] = scenarios[0]
+                if not isinstance(case.get("source_file"), str) and isinstance(case.get("runner"), str):
+                    case["source_file"] = case["runner"]
+                if not isinstance(case.get("runner_order"), int):
+                    case["runner_order"] = case.get("order", index + 1)
+                key = (str(case.get("runner") or ""), str(case.get("test_function") or ""))
+                legacy_occurrences[key] = legacy_occurrences.get(key, 0) + 1
+                if not isinstance(case.get("invocation_index"), int):
+                    case["invocation_index"] = legacy_occurrences[key]
+                if not isinstance(case.get("source_line"), int):
+                    case["source_line"] = case["runner_order"]
+            if (
+                not isinstance(case, dict)
+                or not isinstance(case.get("suite"), str)
+                or not case.get("suite")
+                or not isinstance(case.get("runner"), str)
+                or not case.get("runner")
+                or not isinstance(case.get("test_function"), str)
+                or not case.get("test_function")
+                or not isinstance(case.get("scenario_id"), str)
+                or not case.get("scenario_id")
+                or not isinstance(case.get("source_file"), str)
+                or not case.get("source_file")
+            ):
+                malformed.append(_malformed_invocation_row(index, invocation, c_cross, root))
+                continue
+            scorer_case_id = scorer_case_by_scenario.get(case["scenario_id"])
+            if isinstance(scorer_case_id, str):
+                case["case_id"] = scorer_case_id
             valid_cases.append(case)
+    else:
+        raw_cases = scorer_cases
+        if not isinstance(raw_cases, list):
+            raise ValueError("c_test_model.json registered_test_invocations must be a non-empty list")
+        for index, case in enumerate(raw_cases):
+            if (
+                not isinstance(case, dict)
+                or not isinstance(case.get("scenario_id"), str)
+                or not isinstance(case.get("case_id"), str)
+                or not isinstance(case.get("suite"), str)
+                or not case.get("suite")
+            ):
+                malformed.append(_malformed_row(index, case, c_cross, root))
+            else:
+                valid_cases.append(case)
 
     available_suites = {_suite_for_case(case) for case in valid_cases}
     if selected_suites is not None:
@@ -1054,7 +1153,8 @@ def build_matrix(
                 link_reasons: dict[str, str] = {}
                 compiled_binaries: dict[str, Path] = {}
                 for suite in suites:
-                    ok, binary, output = _compile_suite_runner(suite, c_root, c_cross, rust_lib)
+                    suite_cases = [case for case in enabled_cases if _suite_for_case(case) == suite]
+                    ok, binary, output = _compile_suite_runner(suite, c_root, c_cross, rust_lib, suite_cases)
                     compile_log.append(output)
                     if not ok or binary is None:
                         reason = f"{suite} original C runner failed to compile"
@@ -1154,7 +1254,23 @@ def build_matrix(
                 "log": scenario_row.get("log"),
             })
     _write_jsonl(c_cross / "diagnostics.jsonl", diagnostics)
+    workbench_issues = [
+        {
+            "stage": "VERIFY_RUST_WITH_C_TESTS",
+            "type": "toolchain_defect",
+            "owner": "controller",
+            "tool": "c_cross_validate.py",
+            "reason": row.get("reason"),
+            "evidence": row.get("log"),
+            "affected_scenarios": [row.get("scenario_id")],
+            "status": "unresolved",
+        }
+        for row in scenarios
+        if row.get("rust_impl_c_test") == "unresolved"
+    ]
+    _write_jsonl(c_cross / "workbench-issues.jsonl", workbench_issues)
     summary = Counter(item["rust_impl_c_test"] for item in scenarios)
+    stage_result, verification_result = _verification_results(scenarios)
     return {
         "stage": "VERIFY_RUST_WITH_C_TESTS",
         "policy": "strict",
@@ -1166,6 +1282,8 @@ def build_matrix(
         "changed_files": list(changed_files or []),
         "total_scenarios": len(scenarios),
         "summary": {"rust_impl_c_test": dict(sorted(summary.items()))},
+        "stage_result": stage_result,
+        "verification_result": verification_result,
         "scenarios": scenarios,
     }
 
@@ -1211,11 +1329,10 @@ def main(argv: list[str] | None = None) -> int:
         trigger=args.trigger,
         changed_files=args.changed_file,
     )
-    matrix["convergence"] = {
-        "progress": attempt["progress"],
-        "regression": attempt["regression"],
-        "no_progress_counts": attempt["no_progress_counts"],
-        "next_action": attempt["next_action"],
+    matrix["attempt"] = {
+        "attempt_id": attempt["attempt_id"],
+        "number": attempt["attempt"],
+        "result": attempt["result"],
     }
     _write_json(out / "c-cross" / "checkpoints" / f"{execution_id}.json", matrix)
     _write_json(matrix_path, matrix)

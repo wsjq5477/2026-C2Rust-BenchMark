@@ -14,7 +14,7 @@ permission:
 
 ## 编辑边界
 
-只允许修改 triage 授权的 `flashDB_rust/**` 和规定的 trace/issues 产物；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、设计文档、评测测试或平台 C 输入。工作台问题只写入 `logs/trace/workbench-issues.jsonl`。
+只允许修改 triage 授权的 `flashDB_rust/**` 和规定的 trace/issues 产物；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、设计文档、评测测试或平台 C 输入。平台问题由主控写入 `logs/trace/c-cross/workbench-issues.jsonl`。
 
 ## 后续职责
 
@@ -27,7 +27,7 @@ permission:
 - 做最小补丁；
 - 每轮修复后重新运行相应 cargo 命令；
 - 将修复轮次写入 `result/issues/repair_trace.jsonl`。
-- C-cross 同一失败指纹连续 3 次无进展才可 deferred；出现新通过场景、失败层前移或断言证据增加时必须重新激活。
+- C-cross repair 只记录 `attempts.jsonl`；失败保留逐用例证据，达到修复上限后以 `CONTINUE_WITH_FAILURES` 继续比赛。
 
 ## 测试失败归因约束
 

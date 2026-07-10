@@ -10,7 +10,7 @@ permission:
 
 ## 编辑边界
 
-只允许修改本职责规定的 `logs/trace/**` 模型和阶段证据；不得修改 `flashDB_rust/**`，不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时，只能追加到 `logs/trace/workbench-issues.jsonl`，不得自行修改工作台。
+只允许修改本职责规定的 `logs/trace/**` 模型和阶段证据；不得修改 `flashDB_rust/**`，不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。工作台脚本或契约问题由主控登记到 `logs/trace/c-cross/workbench-issues.jsonl`，不得自行修改工作台。
 
 ## 角色
 

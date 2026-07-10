@@ -16,7 +16,7 @@ permission:
 
 如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
 
-编辑边界：只允许修改本职责内的 `flashDB_rust/**` 和规定的 `logs/trace/**` 运行证据；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时，不得自行修复，只能追加到 `logs/trace/workbench-issues.jsonl`。
+编辑边界：只允许修改本职责内的 `flashDB_rust/**` 和规定的 `logs/trace/**` 运行证据；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时，不得自行修复；由主控追加到 `logs/trace/c-cross/workbench-issues.jsonl`。
 
 ## 职责范围
 
@@ -40,7 +40,7 @@ python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out log
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```
 
-`VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。工具按 build/layout/link/full 分层执行并解析 runner 的逐测试输出。实现期间可按动态发现的 suite 使用 `--suite <suite>`，不得硬编码 suite 名或用例总数。相同失败指纹只有连续 3 次无进展的 `repair` 尝试后才可写入 `deferred`；出现新通过场景、失败层前移或断言证据增加必须重置计数。中间 gate 要求 build/layout/link 通过，允许证据完整的 deferred 场景进入测试迁移；不得把 `not_supported`、解析失败或无归因 runner 失败当作通过。最终全量 C-cross 由 `REPORT_AND_VERIFY` 在所有修复后另行执行。
+`VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。工具按 build/layout/link/full 分层执行并解析 runner 的逐测试输出；全量 invocation 必须都有真实结果或 unresolved 证据。实现期间可按动态发现的 suite 使用 `--suite <suite>`，不得硬编码 suite 名或用例总数。阶段只输出 `PASS` 或 `CONTINUE_WITH_FAILURES`；失败不得伪装为通过，但后者仍允许测试迁移、Rust 测试、评分和最终报告。平台问题由主控登记到 `logs/trace/c-cross/workbench-issues.jsonl`。最终全量 C-cross 由 `REPORT_AND_VERIFY` 在所有修复后另行执行。
 
 ## 上下文边界
 
@@ -83,5 +83,5 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 - 不让最终 Rust 项目链接或编译 FlashDB C 实现。
 - 不写 `todo!()`、`unimplemented!()`。
 - 不写最终 `STATUS: SUCCESS`。
-- 不手写 `deferred.jsonl` 或 `attempts.jsonl`。所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行，由 `record_attempt` 函数自动管理格式和引用关系。
+- 不手写 `attempts.jsonl` 或 `workbench-issues.jsonl`。所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行。
 - 不在 `VERIFY_RUST_WITH_C_TESTS` 或 `repairer` 阶段系统性重读 C 工程解决 parse_failed 问题。parse_failed 必须回派 `c-analyzer`。

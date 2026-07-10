@@ -343,13 +343,16 @@ def design_c_abi_facade(c_api_model: dict[str, Any]) -> dict[str, Any]:
             notes.append("Active layout macros: " + ", ".join(sorted(conditional_macros)))
         if layout.get("error"):
             notes.append(str(layout["error"]))
+        c_name = layout["name"]
+        is_opaque = c_name in ("fdb_kvdb", "fdb_tsdb")
         structs.append(
             {
-                "c_name": layout["name"],
-                "rust_name": rust_type_name_from_c_struct(layout["name"]),
+                "c_name": c_name,
+                "rust_name": rust_type_name_from_c_struct(c_name),
                 "sizeof": layout.get("sizeof"),
                 "alignof": layout.get("alignof"),
-                "fields": fields if isinstance(fields, list) else [],
+                "fields": fields if isinstance(fields, list) and not is_opaque else [],
+                "opaque": is_opaque,
                 "notes": notes,
             }
         )

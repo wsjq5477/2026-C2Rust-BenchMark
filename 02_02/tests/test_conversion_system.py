@@ -335,18 +335,15 @@ class FrameworkCheckpointTests(unittest.TestCase):
             self.assertIn("不得修改 `work/**`", text)
             self.assertIn("不得修改 `INSTRUCTION.md`", text)
             self.assertIn("不得修改 `.opencode/**`", text)
-            self.assertIn("logs/trace/workbench-issues.jsonl", text)
+            self.assertIn("logs/trace/c-cross/workbench-issues.jsonl", text)
 
-        for text in [instruction, orchestrator, implementer, repairer]:
-            self.assertIn("连续 3 次无进展", text)
-            self.assertIn("deferred", text)
-
-        self.assertIn("deferred 场景可进入 `MIGRATE_TESTS`", instruction)
-        self.assertIn("deferred 场景可进入 `MIGRATE_TESTS`", migrator)
+        for text in [instruction, orchestrator, implementer, migrator, repairer]:
+            self.assertIn("CONTINUE_WITH_FAILURES", text)
+            self.assertNotIn("deferred.jsonl", text)
         self.assertIn("--attempt-kind final --trigger final_verification", instruction)
         self.assertIn("--attempt-kind final --trigger final_verification", orchestrator)
         self.assertIn("最终全量 C-cross", instruction)
-        self.assertIn("所有场景必须通过", instruction)
+        self.assertIn("所有场景通过才可报告 C-cross PASS", instruction)
 
     def test_project_local_skills_have_valid_frontmatter_and_clear_scope(self):
         expected = ["flashdb-migration", "flashdb-test-migration", "rust-compile-repair", "flashdb-report"]
@@ -630,6 +627,19 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertIsInstance(gc["semantic_facts"]["called_functions"], list)
         self.assertIsInstance(gc["semantic_facts"]["observed_c_symbols"], list)
 
+        invocation = next(
+            item
+            for item in test_model["registered_test_invocations"]
+            if item.get("name") == "test_fdb_gc" or item.get("test_function") == "test_fdb_gc"
+        )
+        self.assertIn("test_function", invocation)
+        self.assertEqual("tests/kvdb_main.c", invocation["runner"])
+        self.assertEqual("tests/fdb_kvdb_tc.c", invocation["source_file"])
+        self.assertIsInstance(invocation["runner_order"], int)
+        self.assertGreater(invocation["source_line"], 0)
+        self.assertNotIn("name", invocation)
+        self.assertNotIn("source_index", invocation)
+
     def test_build_c_model_extracts_test_semantic_facts_without_fixed_case_list(self):
         builder = load_tool("build_c_model.py")
         bodies = builder.extract_function_bodies(
@@ -767,6 +777,49 @@ class FrameworkCheckpointTests(unittest.TestCase):
             missing_suite = next(item for item in malformed if "suite" in item["reason"])
             self.assertIn("missing or non-string suite", missing_suite["reason"])
 
+    def test_c_cross_uses_registered_invocations_when_scorer_cases_are_absent(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            trace.mkdir(parents=True)
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "registered_test_invocations": [
+                    {
+                        "suite": "alpha",
+                        "runner": "tests/alpha_main.c",
+                        "test_function": "test_alpha",
+                        "invocation_index": 1,
+                        "runner_order": 1,
+                        "scenario_id": "test_alpha",
+                        "source_file": "tests/alpha_case.c",
+                        "source_line": 12,
+                    },
+                    {
+                        "suite": "alpha",
+                        "runner": "tests/alpha_main.c",
+                        "test_function": "test_alpha",
+                        "invocation_index": 2,
+                        "runner_order": 2,
+                        "scenario_id": "test_alpha__2",
+                        "source_file": "tests/alpha_case.c",
+                        "source_line": 13,
+                    },
+                ],
+                "scorer_standard_cases": [],
+            }), encoding="utf-8")
+
+            matrix = cross.build_matrix(root, trace)
+
+            self.assertEqual(2, matrix["total_scenarios"])
+            self.assertEqual(
+                {"test_alpha", "test_alpha__2"},
+                {row["scenario_id"] for row in matrix["scenarios"]},
+            )
+            self.assertTrue(all("scorer_case_id" not in row for row in matrix["scenarios"]))
+            self.assertEqual("CONTINUE_WITH_FAILURES", matrix.get("stage_result"))
+            self.assertEqual("failed", matrix.get("verification_result"))
+
     def test_c_cross_parses_partial_suite_results_per_test(self):
         cross = load_tool("c_cross_validate.py")
 
@@ -787,7 +840,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertEqual(["test_c"], result["not_run"])
         self.assertIn("value == expected", result["failures"]["test_b"])
 
-    def test_c_cross_rejects_unknown_or_duplicate_test_output(self):
+    def test_c_cross_rejects_unknown_or_unregistered_duplicate_test_output(self):
         cross = load_tool("c_cross_validate.py")
 
         unknown = cross.parse_runner_test_results(
@@ -804,7 +857,19 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertEqual("parse_failed", unknown["status"])
         self.assertIn("unknown started tests", unknown["reason"])
         self.assertEqual("parse_failed", duplicate["status"])
-        self.assertIn("duplicate start", duplicate["reason"])
+        self.assertIn("unexpected repeated start", duplicate["reason"])
+
+    def test_c_cross_maps_registered_duplicate_invocations_in_order(self):
+        cross = load_tool("c_cross_validate.py")
+
+        result = cross.parse_runner_test_results(
+            "Running: test_a ...\nRunning: test_a ...\n",
+            ["test_a", "test_a__2"],
+            0,
+        )
+
+        self.assertEqual("parsed", result["status"])
+        self.assertEqual(["test_a", "test_a__2"], result["passed"])
 
     def test_c_cross_rejects_missing_success_output(self):
         cross = load_tool("c_cross_validate.py")
@@ -963,7 +1028,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertFalse(result["progress"])
         self.assertEqual(result["fingerprints_after"], result["comparable_fingerprints"])
 
-    def test_c_cross_third_no_progress_repair_defers_fingerprint(self):
+    def test_c_cross_attempts_keep_history_without_deferred_artifact(self):
         cross = load_tool("c_cross_validate.py")
         with tempfile.TemporaryDirectory() as td:
             c_cross = Path(td) / "c-cross"
@@ -990,18 +1055,12 @@ class FrameworkCheckpointTests(unittest.TestCase):
                     trigger="suite_checkpoint",
                     changed_files=["flashDB_rust/src/module.rs"],
                 )
-                self.assertEqual(attempt_number, max(record["no_progress_counts"].values()))
+                self.assertEqual(attempt_number, record["attempt"])
+                self.assertEqual("continue_with_failures", record["result"])
                 previous = current
 
-            deferred = [
-                json.loads(line)
-                for line in (c_cross / "deferred.jsonl").read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-            self.assertEqual(1, len(deferred))
-            self.assertEqual("deferred", deferred[0]["status"])
-            self.assertEqual(3, deferred[0]["no_progress_count"])
-            self.assertEqual(3, len(deferred[0]["attempt_ids"]))
+            self.assertFalse((c_cross / "deferred.jsonl").exists())
+            self.assertEqual(3, len((c_cross / "attempts.jsonl").read_text(encoding="utf-8").splitlines()))
 
     def test_c_cross_repair_attempt_rejects_workbench_changes(self):
         cross = load_tool("c_cross_validate.py")
@@ -1020,7 +1079,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
                     changed_files=["work/tools/c_cross_validate.py"],
                 )
 
-    def test_c_cross_reactivated_fingerprint_can_be_deferred_again(self):
+    def test_c_cross_repeated_attempts_never_create_deferred_artifact(self):
         cross = load_tool("c_cross_validate.py")
         with tempfile.TemporaryDirectory() as td:
             c_cross = Path(td) / "c-cross"
@@ -1064,12 +1123,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 )
                 previous = current
 
-            rows = [
-                json.loads(line)
-                for line in (c_cross / "deferred.jsonl").read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-            self.assertEqual(["deferred", "reactivated", "deferred"], [row["status"] for row in rows])
+            self.assertFalse((c_cross / "deferred.jsonl").exists())
 
     def test_c_cross_selected_checkpoint_does_not_reactivate_other_suite(self):
         cross = load_tool("c_cross_validate.py")
@@ -1127,18 +1181,13 @@ class FrameworkCheckpointTests(unittest.TestCase):
             {"attempt_id": "one", "kind": "repair", "progress": True},
             {"attempt_id": "two", "kind": "repair", "progress": False},
         ]
-        deferred = [
-            {"fingerprint": "full|alpha|test_b|assert", "status": "deferred"},
-            {"fingerprint": "full|alpha|old|assert", "status": "reactivated"},
-        ]
         issues = [{"tool": "c_cross_validate.py", "symptom": "parse mismatch"}]
 
-        lines = report.cross_convergence_summary(matrix, attempts, deferred, issues)
+        lines = report.cross_convergence_summary(matrix, attempts, issues)
 
         rendered = "\n".join(lines)
         self.assertIn("per_test: `fail=1, not_run=1, pass=1`", rendered)
         self.assertIn("attempts: `progress=1, no_progress=1`", rendered)
-        self.assertIn("active_deferred: `1`", rendered)
         self.assertIn("workbench_issues: `1`", rendered)
         self.assertIn("latest_attempt_kind: `repair`", rendered)
         self.assertIn("final_c_cross: `not_verified`", rendered)
@@ -1155,12 +1204,10 @@ class FrameworkCheckpointTests(unittest.TestCase):
 
         self.assertFalse(report.final_c_cross_verified(
             matrix,
-            [],
             [{"attempt_id": "final-1", "kind": "final"}],
         ))
         self.assertTrue(report.final_c_cross_verified(
             matrix,
-            [],
             [{"attempt_id": "final-2", "kind": "final"}],
         ))
 
@@ -1632,7 +1679,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
 
             self.assertEqual([], valid)
 
-    def test_c_cross_intermediate_accepts_three_attempt_deferred_but_final_rejects_it(self):
+    def test_c_cross_intermediate_continues_with_actionable_failure_evidence(self):
         gate = load_tool("gate.py")
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -1716,7 +1763,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
 
             self.assertEqual([], intermediate_errors)
             self.assertIn("final C-cross requires every scenario to pass: test_alpha", final_errors)
-            self.assertIn("final C-cross must not contain active deferred failures", final_errors)
+            self.assertNotIn("final C-cross must not contain active deferred failures", final_errors)
 
     def test_c_cross_final_accepts_fresh_all_suite_full_pass(self):
         gate = load_tool("gate.py")

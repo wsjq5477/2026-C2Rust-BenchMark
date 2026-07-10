@@ -17,7 +17,7 @@ permission:
 
 你是 FlashDB C-to-Rust opencode 工作台的主控 Agent。你负责读取 `INSTRUCTION.md`，维护 `logs/trace/workflow_state.json`，按阶段调用工具和 Skill，并在最终 `REPORT_AND_VERIFY` gate 后停止。
 
-每次运行时调度必须直接写明编辑边界：只允许当前职责内的 `flashDB_rust/**`、`logs/trace/**` 和规定的 `result/issues/**`；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。工作台问题只追加到 `logs/trace/workbench-issues.jsonl`，不得现场修改脚本或契约。
+每次运行时调度必须直接写明编辑边界：只允许当前职责内的 `flashDB_rust/**`、`logs/trace/**` 和规定的 `result/issues/**`；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。平台问题由主控写入 `logs/trace/c-cross/workbench-issues.jsonl`，不得现场修改脚本或契约。
 
 如果当前会话不是 `@flashdb-orchestrator` primary agent，也不能运行中自切换 primary agent；默认 Build agent 必须完整读取本 Markdown 并按同一流程执行。
 
@@ -204,7 +204,7 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 - `logs/trace/validation-matrix.json`
 - 中文 `logs/trace/06-5-verify-rust-with-c-tests.md`
 
-本阶段使用原始 C 测试证据验证 Rust 实现。suite 和测试必须动态发现，runner 的 `Running:` / `FAIL` 输出必须形成逐测试结果。同一失败指纹连续 3 次无进展 repair 后才可 deferred；中间 gate 可让证据完整的 deferred 进入测试迁移，但 `not_supported` 或不可归因结果仍阻断。临时 C harness 只能写入 `logs/trace/c-cross/`，不得进入 `flashDB_rust/src/`。
+本阶段使用原始 C 测试证据验证 Rust 实现。suite 和测试必须动态发现，runner 的 `Running:` / `FAIL` 输出必须形成逐测试结果；失败、未运行和 unresolved 必须有证据。阶段为 `CONTINUE_WITH_FAILURES` 时继续测试迁移、Rust 测试、评分和最终报告。临时 C harness 只能写入 `logs/trace/c-cross/`，不得进入 `flashDB_rust/src/`。
 
 ## MIGRATE_TESTS
 
@@ -286,7 +286,7 @@ python3 work/tools/report_writer.py --root . --output result/output.md --issues 
 python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 ```
 
-最终全量 C-cross 必须在所有 Rust 修复后执行，不带 `--suite`，所有场景通过且没有 active deferred。
+最终全量 C-cross 必须在所有 Rust 修复后执行，不带 `--suite`；所有场景通过才可报告 C-cross PASS，失败时仍输出最终报告。
 
 写入：
 

@@ -1,22 +1,39 @@
-# FlashDB C-CROSS 交叉验证设计说明书
+# FlashDB C-CROSS 交叉验证设计说明书（修订版）
+
+> 文档状态：已确认  
+> 适用项目：FlashDB C-to-Rust 比赛工程  
+> 修订依据：C-CROSS 实际执行复盘及逐项方案确认  
+> 核心目标：使用“完整 Rust 实现 + 原 C 测试”独立验证 Rust 源码，再执行“Rust 实现 + Rust 测试”
+
+---
 
 ## 1. 文档目的
 
-本文档用于指导开发 `Rust 实现 + 原 C 测试用例` 的 C-CROSS 交叉验证能力。
+本文档用于指导开发 FlashDB C-to-Rust 工程中的 C-CROSS 交叉验证能力。
 
-该能力不用于替代 Rust 测试，也不用于构建完整的 C ABI 兼容产品。其唯一目的，是在 C-to-Rust 迁移过程中，用未迁移的原 C 测试作为独立参照，辅助区分以下两类问题：
-
-1. Rust 源码迁移错误；
-2. Rust 测试用例迁移错误。
-
-最终工程保留两条验证链路：
+C-CROSS 的作用是：
 
 ```text
-链路 A：Rust 实现 + 原 C 测试
-链路 B：Rust 实现 + 迁移后的 Rust 测试
+原 C 测试
+    ↓
+C ABI / FFI 适配层
+    ↓
+完整 Rust 实现
 ```
 
-不建设以下链路：
+通过未经迁移的原 C 测试验证 Rust 实现，从而辅助判断：
+
+- Rust 源码是否迁移错误；
+- 迁移后的 Rust 测试是否编写错误。
+
+工程最终保留两条验证链路：
+
+```text
+链路 A：完整 Rust 实现 + 原 C 测试
+链路 B：完整 Rust 实现 + 迁移后的 Rust 测试
+```
+
+不建设：
 
 ```text
 C 实现 + C 测试
@@ -25,405 +42,342 @@ C 实现 + Rust 测试
 
 ---
 
-## 2. 背景与问题定义
+## 2. 已确认的最高优先级原则
 
-### 2.1 当前迁移流程
+### 2.1 REWRITE 必须生成完整 Rust 实现
 
-当前工程同时迁移：
+`REWRITE_CORE_MODULES` 阶段的交付物必须是完整、真实的 Rust 实现，不是仅能编译的骨架或简化替代实现。
 
-- FlashDB C 核心源码；
-- FlashDB C 测试用例。
+必须实现原工程要求的核心语义，包括但不限于：
 
-迁移后直接执行：
+- KVDB；
+- TSDB；
+- Flash/sector 管理；
+- GC；
+- 状态管理；
+- iterator；
+- 错误处理；
+- 数据持久化语义；
+- C-CROSS 所需的真实 FFI wrapper。
+
+以下实现不允许被视为 REWRITE 完成：
+
+- 用 HashMap 替代原本必须保留的 sector/GC 语义；
+- `todo!()`；
+- `unimplemented!()`；
+- 固定成功返回值；
+- 空函数；
+- 仅为通过编译提供的 stub；
+- 跳过原 C 核心行为的简化实现。
+
+### 2.2 C-CROSS 只负责验证
+
+C-CROSS 不负责补写业务逻辑，也不负责决定哪些原功能可以省略。
+
+其职责是：
+
+1. 构建 Rust staticlib；
+2. 检查 C ABI 布局；
+3. 编译并链接原 C runner；
+4. 运行所有原 C 测试 invocation；
+5. 解析测试结果；
+6. 记录失败原因；
+7. 将可修复问题回派给 Rust 实现 Agent；
+8. 达到修复上限后记录 unresolved；
+9. 无论是否完全通过，都继续比赛后续流程。
+
+### 2.3 比赛流水线不得中途终止
+
+所有阶段均采用软 Gate。
+
+阶段结果只有：
 
 ```text
-Rust 实现 + Rust 测试
+PASS
+CONTINUE_WITH_FAILURES
 ```
 
-当测试失败时，无法直接判断：
+不得因为以下问题终止整个比赛流程：
 
-- Rust 实现是否错误；
-- Rust 测试是否错误；
-- 两者是否同时错误。
+- Rust 编译失败；
+- ABI layout 失败；
+- C runner 编译或链接失败；
+- C runner timeout；
+- C 测试失败；
+- runner 结果解析失败；
+- 工具链故障；
+- 自动修复达到上限。
 
-### 2.2 C-CROSS 的作用
+失败必须被真实记录，但后续 Rust 测试迁移、Rust 测试执行、评分和最终报告仍要继续尝试执行。
 
-原 C 测试未经过迁移，通常比迁移后的 Rust 测试更接近原始语义。因此引入：
+---
 
-```text
-原 C 测试
-    ↓
-测试专用 FFI 桥接层
-    ↓
-Rust 实现
-```
-
-通过原 C 测试验证 Rust 实现。
-
-### 2.3 结果解释
+## 3. 结果解释
 
 | Rust + C | Rust + Rust | 主要判断 |
 |---|---|---|
-| 通过 | 通过 | 当前测试覆盖范围内，Rust 实现和 Rust 测试均正常 |
+| 通过 | 通过 | 当前原 C 测试覆盖范围内，Rust 实现和 Rust 测试均正常 |
 | 通过 | 失败 | 优先检查 Rust 测试迁移 |
-| 失败 | 失败 | 优先检查 Rust 实现或 FFI 桥接 |
+| 失败 | 失败 | 优先检查 Rust 实现或 FFI 适配 |
 | 失败 | 通过 | 优先检查 FFI、C 测试与 Rust 测试覆盖差异 |
+| 未完成/不可解析 | 任意 | C-CROSS 证据不足，记录 unresolved，不得伪装为通过 |
 
 注意：
 
-> Rust + C 通过，只能证明在原 C 测试覆盖范围内，Rust 实现符合原行为，不能证明 Rust 实现绝对正确。
+> Rust + C 通过只能说明 Rust 实现在原 C 测试覆盖范围内符合预期，不能证明 Rust 实现绝对正确。
 
 ---
 
-## 3. 设计目标
-
-### 3.1 功能目标
-
-1. 识别哪些原 C 测试适合用于 C-CROSS；
-2. 根据已选 C 测试自动推导需要的 Rust FFI 接口；
-3. 生成最小测试桥接层；
-4. 编译 Rust `staticlib`；
-5. 编译原 C 测试 runner 并链接 Rust `staticlib`；
-6. 执行 C runner；
-7. 对 runner 增加超时保护；
-8. 保存运行日志；
-9. 输出 C-CROSS 执行结果；
-10. 与 Rust 测试结果按场景进行对比。
-
-### 3.2 非目标
-
-本项目不建设：
-
-1. 完整 FlashDB C ABI 兼容层；
-2. 完整 FFI SDK；
-3. 独立发布的 C 接口库；
-4. C 实现与 Rust 实现的四向验证矩阵；
-5. 自动修复失败测试；
-6. 自动生成空实现或桩函数；
-7. 为了 C-CROSS 复刻所有 C 私有结构；
-8. 在 FFI 层重复实现 KVDB、TSDB、GC 等业务逻辑。
-
----
-
-## 4. 总体架构
+## 4. 总体流程
 
 ```mermaid
 flowchart TD
-    A[原 FlashDB C 测试] --> B[测试模型提取]
-    B --> C[C-CROSS 可执行性判断]
-    C --> D[选中 C 测试集合]
-    D --> E[推导 required_ffi_apis]
-    E --> F[生成/校验测试专用 FFI]
-    F --> G[cargo build --release staticlib]
-    G --> H[ABI Layout Check]
-    H --> I[编译 C Runner]
-    I --> J[运行 C Runner + Timeout]
-    J --> K[C-CROSS 结果]
-    L[迁移后的 Rust 测试] --> M[cargo test]
-    M --> N[Rust 测试结果]
-    K --> O[结果对比]
-    N --> O
+    A[解析原 C 头文件和测试 Runner] --> B[建立 C API 与 Test Invocation 模型]
+    B --> C[编译 C 测试目标文件]
+    C --> D[提取 undefined symbols]
+    D --> E[与 FlashDB 公共 API 取交集]
+    E --> F[生成 required_ffi_apis]
+    F --> G[生成 ABI 类型/签名/Layout 合同]
+    G --> H[REWRITE 完整 Rust 核心实现]
+    H --> I[实现真实 FFI Wrapper]
+    I --> J[构建 Rust staticlib]
+    J --> K[ABI Layout Check]
+    K --> L[编译并链接 C Runner]
+    L --> M[运行所有 C Test Invocation]
+    M --> N[解析 Rust + C 结果]
+    N --> O{是否存在可修复问题}
+    O -->|是| P[有限次数修复 flashDB_rust]
+    P --> J
+    O -->|否或达到上限| Q[PASS 或 CONTINUE_WITH_FAILURES]
+    Q --> R[迁移 Rust 测试]
+    R --> S[执行 Rust + Rust]
+    S --> T[最终评分和报告]
 ```
 
 ---
 
-## 5. 核心设计原则
+## 5. 原 C 测试范围
 
-### 5.1 C-CROSS 是测试桥，不是第二套实现
+### 5.1 所有 Runner 注册的测试都进入 C-CROSS
 
-FFI 层只允许：
-
-- C 参数转换；
-- C 字符串转换；
-- C 指针/句柄转换；
-- C 枚举和 Rust 枚举转换；
-- Rust 错误码映射；
-- 回调参数适配；
-- 调用已有 Rust 核心实现。
-
-FFI 层禁止：
-
-- 重新实现 KV 读写；
-- 重新实现 GC；
-- 重新实现 sector 管理；
-- 重新实现 TSDB 状态机；
-- 使用固定返回值绕过逻辑；
-- 使用 `todo!()`、`unimplemented!()`、空实现；
-- 修改原 C 测试断言以换取通过；
-- 使用测试桩替代真实 Rust 实现。
-
-### 5.2 先选测试，再推导 FFI
-
-正确顺序：
+不再设计：
 
 ```text
-确定哪些 C 测试进入 C-CROSS
-    ↓
-统计这些测试调用的 FlashDB API
-    ↓
-推导 required_ffi_apis
-    ↓
-生成最小 FFI
+c_cross.enabled
+enabled / disabled
+测试排除开关
 ```
 
-错误顺序：
+原 C runner 中注册的所有测试 invocation 均进入 C-CROSS，包括：
+
+- KVDB 测试；
+- TSDB 测试；
+- GC；
+- GC2；
+- scale-up；
+- iterator；
+- status；
+- 同一 C 测试函数的重复调用。
+
+### 5.2 不允许通过排除测试规避失败
+
+如果某个 C 测试失败，应记录真实原因，例如：
 
 ```text
-把所有 FlashDB C API 都做成 FFI
-    ↓
-再决定跑哪些测试
+rust_semantic_mismatch
+ffi_symbol_missing
+abi_layout_mismatch
+c_runner_build_failed
+c_runner_runtime_failed
+runtime_timeout
+c_cross_result_parse_failed
+toolchain_defect
 ```
 
-### 5.3 尽量运行全部“行为测试”
+不得因为当前 Rust 实现不支持某项行为，就将对应测试排除。
 
-默认策略：
+例如：
 
-> 所有能够通过薄 FFI 调用 Rust 实现，并验证等价行为的 C 测试，都应进入 C-CROSS。
-
-只排除：
-
-- 依赖 C 私有函数；
-- 依赖 C 私有全局变量；
-- 强依赖精确 C 私有内存布局；
-- 必须在 FFI 中重写业务逻辑才能执行；
-- 测试目标仅为 C 实现细节，而不是功能行为。
+> `test_fdb_gc`、`test_fdb_gc2`、`test_fdb_scale_up` 失败，说明 Rust 实现缺少原 FlashDB 的 GC、sector 或地址管理语义；不能据此认定这些测试不应进入 C-CROSS。
 
 ---
 
-## 6. C 测试筛选规则
+## 6. Test Invocation 建模
 
-### 6.1 输入信息
+### 6.1 问题背景
 
-`build_c_model.py` 需要为每个测试提取：
+同一个 C 测试函数可能被 `TEST_RUN` 多次调用。
+
+例如：
+
+```text
+Running: test_fdb_tsl_clean
+Running: test_fdb_tsl_clean
+```
+
+测试函数名不能作为执行实例的唯一标识。
+
+### 6.2 唯一标识
+
+一次测试执行实例由以下字段确定：
+
+```text
+suite
++ runner
++ test_function
++ invocation_index
+```
+
+### 6.3 `registered_test_invocations` 数据结构
 
 ```json
 {
-  "scenario_id": "case_7",
-  "test_name": "test_fdb_del_kv",
+  "suite": "tsdb",
+  "runner": "tests/tsdb_main.c",
+  "test_function": "test_fdb_tsl_clean",
   "invocation_index": 1,
-  "called_functions": [],
-  "accessed_fields": [],
-  "referenced_globals": [],
-  "used_types": [],
-  "assertions": [],
-  "source_file": "",
-  "source_line": 0
+  "runner_order": 15,
+  "scenario_id": "test_fdb_tsl_clean",
+  "source_file": "tests/fdb_tsdb_tc.c",
+  "source_line": 501
 }
 ```
 
-`invocation_index`：当同一 C 测试函数在同一 runner 中被 `TEST_RUN()` 多次调用时，第 N 次调用的 `invocation_index` 为 N。例如 `test_fdb_tsl_clean` 在 TSDB runner 中被调用两次，第一次 `invocation_index=1` 对应 `scenario_id=test_fdb_tsl_clean`，第二次 `invocation_index=2` 对应 `scenario_id=test_fdb_tsl_clean__2`。
+第二次调用：
 
-### 6.2 函数分类
-
-所有被调用函数分为四类：
-
-1. C 标准库函数；
-2. 测试框架函数；
-3. FlashDB 公共 API；
-4. FlashDB 私有函数。
-
-示例：
-
-```text
-memset                  → C 标准库
-TEST_ASSERT_EQUAL       → 测试框架
-fdb_kv_set              → FlashDB 公共 API
-alloc_empty_sector      → FlashDB 私有函数
+```json
+{
+  "suite": "tsdb",
+  "runner": "tests/tsdb_main.c",
+  "test_function": "test_fdb_tsl_clean",
+  "invocation_index": 2,
+  "runner_order": 21,
+  "scenario_id": "test_fdb_tsl_clean__2",
+  "source_file": "tests/fdb_tsdb_tc.c",
+  "source_line": 507
+}
 ```
 
-### 6.3 公共 API 来源
+### 6.4 字段职责
 
-优先从 FlashDB 对外头文件提取公共 API，例如：
+| 字段 | 含义 |
+|---|---|
+| `source_line` | `TEST_RUN` 在 C 源码中的行号 |
+| `runner_order` | 在 runner 中的执行顺序 |
+| `invocation_index` | 同名测试函数的第几次调用 |
+| `scenario_id` | 工具链内部使用的唯一场景 ID |
+| `test_function` | runner 实际输出的 C 函数名 |
+
+不得继续使用单个 `source_index` 混合表示上述概念。
+
+---
+
+## 7. C API 事实模型
+
+### 7.1 公共 API 来源
+
+从 FlashDB 对外头文件提取公共 API，例如：
 
 ```text
 inc/flashdb.h
 inc/fdb_def.h
 ```
 
-判断规则：
+生成 `c_api_model.json`。
 
-- 在公开头文件声明的 FlashDB 函数：公共 API；
-- 只存在于 `.c` 文件中的 `static` 函数：私有函数；
-- 仅存在于内部头文件的函数：默认私有，除非显式标记。
-
-### 6.4 测试纳入条件
-
-一个 C 测试满足以下条件时进入 C-CROSS：
-
-1. 核心行为通过 FlashDB 公共 API触发；
-2. 所需 API 能通过薄 FFI 映射到现有 Rust 实现；
-3. 断言结果可由 Rust 实现直接或低成本观察；
-4. 不要求在 FFI 层重写业务逻辑；
-5. 不要求完整复制 C 私有对象布局。
-
-### 6.5 测试排除条件
-
-满足任一条件则排除：
-
-#### 6.5.1 调用 C 私有函数
-
-```c
-alloc_empty_sector(&db);
-```
-
-如果该函数是 `.c` 文件中的 `static` 函数，则排除。
-
-#### 6.5.2 依赖私有全局状态
-
-```c
-extern int internal_gc_state;
-TEST_ASSERT_EQUAL(2, internal_gc_state);
-```
-
-排除。
-
-#### 6.5.3 要求精确 C 私有布局
-
-```c
-TEST_ASSERT_EQUAL(sizeof(struct fdb_kvdb), expected_size);
-```
-
-若 Rust 不以相同结构公开，则排除。
-
-#### 6.5.4 FFI 需要重写业务逻辑
-
-如果为了运行某用例，FFI 必须重新实现：
-
-- 地址分配；
-- KV 查找；
-- GC；
-- iterator；
-- TSDB 状态变更；
-
-则排除。
-
-### 6.6 字段访问规则
-
-字段访问不能简单“一律排除”。
-
-例如：
-
-```c
-TEST_ASSERT_EQUAL(0, db.oldest_addr % erase_size);
-```
-
-该断言实际验证：
-
-> 初始化后的最旧地址满足擦除块对齐。
-
-处理规则：
-
-- 如果 Rust 已有等价可观察状态，或可通过简单 getter 暴露，则允许；
-- 如果需要复制完整 C 私有结构体布局，则排除。
-
-允许的测试观察接口必须满足：
-
-1. 只读；
-2. 仅用于 C-CROSS；
-3. 不包含业务逻辑；
-4. 返回 Rust 实现的真实状态；
-5. 不能返回伪造值。
-
----
-
-## 7. C-CROSS 数据模型
-
-每个 C 测试建议增加以下字段：
+### 7.2 必须提取的事实
 
 ```json
 {
-  "scenario_id": "case_7",
-  "test_name": "test_fdb_del_kv",
-  "called_functions": [
-    "fdb_kvdb_init",
-    "fdb_kv_set",
-    "fdb_kv_del",
-    "fdb_kv_get"
-  ],
-  "public_api_calls": [
-    "fdb_kvdb_init",
-    "fdb_kv_set",
-    "fdb_kv_del",
-    "fdb_kv_get"
-  ],
-  "private_function_calls": [],
-  "referenced_private_globals": [],
-  "requires_exact_c_layout": false,
-  "c_cross": {
-    "enabled": true,
-    "reason": "behavior_test_supported"
-  }
+  "function_signatures": {},
+  "typedef_map": {},
+  "enum_map": {},
+  "public_api_symbols": [],
+  "unresolved_signatures": []
 }
 ```
 
-排除示例：
+### 7.3 约束
 
-```json
-{
-  "scenario_id": "case_18",
-  "test_name": "test_internal_gc_alloc",
-  "private_function_calls": [
-    "alloc_empty_sector"
-  ],
-  "c_cross": {
-    "enabled": false,
-    "reason": "depends_on_private_c_function"
-  }
-}
-```
-
-字段要求：
-
-- 只使用 `enabled: true/false`；
-- 不使用 `pending`；
-- 不生成“待补 FFI”状态；
-- 排除不代表功能无需验证，而是该测试不进入 C-CROSS。
+- FFI Agent 不得猜测 C 函数签名；
+- typedef、enum、指针 constness、回调签名必须来自模型；
+- `unresolved_signatures` 必须显式记录；
+- 函数签名事实错误属于 ABI 合同问题，不得由实现 Agent自行改写。
 
 ---
 
-## 8. FFI 接口推导
+## 8. C-CROSS 所需 FFI 函数推导
 
-### 8.1 推导公式
+### 8.1 推导原则
+
+不通过 LLM 分析完整源码调用链，也不人工维护 FFI 函数列表。
+
+采用真实链接需求推导：
 
 ```text
-required_ffi_apis
+C 测试目标文件的 undefined symbols
+∩
+FlashDB 公共 API 集合
 =
-所有 c_cross.enabled = true 测试的 public_api_calls 并集
+required_ffi_apis
 ```
 
-伪代码：
+### 8.2 实现流程
 
-```python
-required_ffi_apis = set()
-
-for case in cases:
-    if case["c_cross"]["enabled"]:
-        required_ffi_apis.update(case["public_api_calls"])
-```
-
-### 8.2 不纳入 FFI 的函数
-
-以下函数不生成 Rust FFI：
-
-- `memset`
-- `memcpy`
-- `malloc`
-- `free`
-- `printf`
-- `strlen`
-- Unity/UTest 等测试框架函数
-- C 私有函数
-- 未被启用测试使用的公共 API
-
-### 8.3 FFI 清单
-
-建议生成：
-
-```text
-c_cross/ffi_manifest.json
-```
+1. 编译原 C runner、测试文件和测试 helper 为 `.o`；
+2. 不链接原 FlashDB C 实现；
+3. 对测试目标文件进行部分链接；
+4. 提取剩余未解析符号；
+5. 与 `c_api_model.json.public_api_symbols` 取交集；
+6. 生成 `ffi_manifest.json`。
 
 示例：
+
+```bash
+gcc -c tests/kvdb_main.c -o kvdb_main.o
+gcc -c tests/fdb_kvdb_tc.c -o fdb_kvdb_tc.o
+ld -r kvdb_main.o fdb_kvdb_tc.o -o kvdb_tests_combined.o
+nm -u kvdb_tests_combined.o
+```
+
+根据平台可使用等价工具：
+
+```text
+nm
+llvm-nm
+readelf
+```
+
+### 8.3 过滤效果
+
+目标文件中可能存在：
+
+```text
+fdb_kvdb_init
+fdb_kv_set
+fdb_kv_get
+memset
+printf
+strlen
+```
+
+与 FlashDB 公共 API 取交集后得到：
+
+```text
+fdb_kvdb_init
+fdb_kv_set
+fdb_kv_get
+```
+
+C 标准库和测试框架符号不会进入 Rust FFI 清单。
+
+### 8.4 间接调用
+
+只要测试 helper 最终引用了 FlashDB 外部符号，部分链接后的 undefined symbol 中仍会保留该符号，因此无需构建完整 C 调用图。
+
+### 8.5 `ffi_manifest.json`
+
+第一版只记录所需函数：
 
 ```json
 {
@@ -433,754 +387,809 @@ c_cross/ffi_manifest.json
     "fdb_kv_set",
     "fdb_kv_get",
     "fdb_kv_del"
-  ],
-  "observation_apis": [
-    "c_cross_get_oldest_addr"
   ]
 }
 ```
 
-该文件只描述测试所需接口，不代表完整 FlashDB C ABI。
+ABI 类型继续沿用当前 `c_abi_facade.structs`，暂不增加复杂的类型最小化分析。
 
 ---
 
-## 9. FFI 工程设计
+## 9. C ABI Facade 设计
 
-### 9.1 推荐目录
+### 9.1 范围
 
-第一版采用单 crate 内部模块，不建设独立 FFI crate：
+C ABI facade 包含：
+
+- `c_abi_facade.structs`；
+- C 函数签名；
+- `c_type_map`；
+- C 符号与 Rust wrapper 的映射；
+- layout probe。
+
+函数范围以 `required_ffi_apis` 为准。
+
+ABI 类型继续使用现有 `c_abi_facade.structs`，不额外扫描每个测试的最小类型依赖。
+
+### 9.2 使用 `#[repr(C)]`
+
+保留 `#[repr(C)]` C ABI facade，不采用 opaque handle。
+
+原因：
+
+- 原 C 测试直接声明 C 结构体；
+- 原 C 测试可能直接读取嵌套字段；
+- 不修改原 C 测试；
+- 不生成大量 observation getter。
+
+示例：
+
+```rust
+#[repr(C)]
+pub struct FdbDb {
+    pub oldest_addr: u32,
+    // 其他 ABI 合同字段
+}
+
+#[repr(C)]
+pub struct FdbKvdb {
+    pub parent: FdbDb,
+    // 其他 ABI 合同字段
+}
+```
+
+### 9.3 Rust 内部结构
+
+`#[repr(C)]` facade 不要求 Rust 核心内部结构完全使用相同设计。
+
+Rust 核心可保持独立实现，但 FFI facade 中暴露的状态必须来自真实 Rust 实现，不能伪造。
+
+### 9.4 不使用 Observation API
+
+删除以下设计：
+
+```text
+c_cross_get_oldest_addr
+c_cross_get_sector_count
+selective observation API
+```
+
+原 C 测试通过 `#[repr(C)]` facade 的兼容字段访问状态。
+
+### 9.5 Layout Check
+
+Layout Check 检查已有 `c_abi_facade.structs`：
+
+- `sizeof`；
+- `alignof`；
+- 字段 offset；
+- enum 值；
+- 错误码常量。
+
+---
+
+## 10. FFI 目录与构建方式
+
+### 10.1 目录
+
+沿用现有目录：
 
 ```text
 flashDB_rust/
-├── Cargo.toml
-├── src/
-│   ├── lib.rs
-│   ├── kvdb.rs
-│   ├── tsdb.rs
-│   └── c_cross_ffi/
-│       ├── mod.rs
-│       ├── kvdb.rs
-│       ├── tsdb.rs
-│       └── types.rs
-└── c_cross/
-    ├── c_cross_validate.py
-    ├── ffi_manifest.json
-    ├── kvdb_main.c
-    ├── tsdb_main.c
-    └── logs/
+└── src/
+    └── ffi/
+        ├── c_types.rs
+        ├── kvdb.rs
+        ├── tsdb.rs
+        └── mod.rs
 ```
 
-接口较少时可进一步简化为：
+不重命名为：
 
 ```text
-src/c_cross_ffi.rs
+src/c_cross_ffi/
 ```
 
-### 9.2 Cargo 配置
+不拆分独立 FFI crate。
+
+### 10.2 Cargo 配置
+
+FFI 默认参与 staticlib 构建，不增加 `c-cross-ffi` Cargo feature。
 
 ```toml
 [lib]
 crate-type = ["rlib", "staticlib"]
 ```
 
-### 9.3 编译开关
+构建命令保持：
 
-建议只在 C-CROSS 场景启用：
-
-```toml
-[features]
-c-cross-ffi = []
+```bash
+cargo build --release
 ```
 
-Rust 代码：
-
-```rust
-#[cfg(feature = "c-cross-ffi")]
-pub mod c_cross_ffi;
-```
-
-构建：
+不得要求：
 
 ```bash
 cargo build --release --features c-cross-ffi
 ```
 
-### 9.4 FFI wrapper 模板
+---
+
+## 11. 骨架阶段与 REWRITE 阶段职责
+
+### 11.1 骨架阶段
+
+骨架阶段只生成 ABI 合同，不生成可执行 wrapper 函数体。
+
+生成：
+
+1. `#[repr(C)]` 类型；
+2. enum、常量和错误码映射；
+3. 所需函数的准确 C 签名；
+4. symbol mapping；
+5. layout probe；
+6. `ffi_manifest.json`。
+
+禁止生成：
+
+- 固定返回成功的 wrapper；
+- 空 wrapper；
+- `todo!()` wrapper；
+- `unimplemented!()` wrapper；
+- mock/stub；
+- 临时业务逻辑。
+
+### 11.2 REWRITE 阶段
+
+REWRITE 阶段按顺序完成：
+
+```text
+1. 完整实现 Rust 核心业务
+2. 根据 ABI 合同实现真实 FFI wrapper
+```
+
+真实 wrapper 必须：
+
+- 校验必要的 C 参数；
+- 完成类型转换；
+- 调用真实 Rust 核心函数；
+- 映射真实返回值和错误码；
+- 不重复实现核心业务逻辑。
+
+示例：
 
 ```rust
 #[no_mangle]
 pub unsafe extern "C" fn fdb_kv_del(
-    db: *mut CDbHandle,
+    db: *mut FdbKvdb,
     key: *const c_char,
 ) -> i32 {
-    if db.is_null() || key.is_null() {
-        return FDB_ERR_INVALID_ARG;
-    }
-
-    let db = match lookup_db_mut(db) {
-        Some(db) => db,
-        None => return FDB_ERR_INVALID_ARG,
-    };
-
-    let key = match CStr::from_ptr(key).to_str() {
-        Ok(value) => value,
-        Err(_) => return FDB_ERR_INVALID_ARG,
-    };
-
-    match db.delete(key) {
-        Ok(()) => FDB_NO_ERR,
-        Err(err) => map_error(err),
-    }
+    // 参数和类型转换
+    // 调用真实 Rust 核心实现
+    // 返回真实错误码
 }
 ```
 
-要求：
+### 11.3 ABI 合同修改规则
 
-- wrapper 必须调用 Rust 核心实现；
-- wrapper 不得实现删除逻辑；
-- 参数校验允许存在；
-- 类型转换允许存在；
-- 错误码映射允许存在。
+实现阶段不得自行修改：
 
-### 9.5 句柄模型
+- C 函数名；
+- 参数数量；
+- 参数类型；
+- 返回类型；
+- C 类型布局；
+- enum 值；
+- 错误码值。
 
-不建议让 C 测试直接依赖 Rust 内部结构布局。
+只有发现 ABI 合同与原 C 头文件事实不一致时，才记录 `design-gaps.jsonl` 并回派合同阶段修正。
 
-推荐使用不透明句柄：
-
-```c
-typedef void* fdb_kvdb_t;
-```
-
-Rust 内部维护：
-
-```rust
-struct CDbHandle {
-    db: KvDb,
-}
-```
-
-如果原 C runner 强依赖 `struct fdb_kvdb`，则可保留兼容外壳，但内部应存储 Rust 句柄，而不是复制全部 Rust 状态。
-
-### 9.6 观察接口
-
-对于确有价值但无法通过原公共 API读取的状态，可增加测试专用只读接口：
-
-```rust
-#[no_mangle]
-pub unsafe extern "C" fn c_cross_get_oldest_addr(
-    db: *mut CDbHandle,
-) -> u32 {
-    lookup_db(db)
-        .map(|db| db.oldest_addr())
-        .unwrap_or(0)
-}
-```
-
-约束：
-
-- 仅在 `c-cross-ffi` feature 下编译；
-- 只读；
-- 不修改状态；
-- 不参与生产接口；
-- 不能返回硬编码结果。
-
-### 9.7 opaque handle vs #[repr(C)] 策略重新评估
-
-#### 前置变化
-
-C 测试筛选机制（§6.4-6.5 + B1 优化）已将直接访问私有字段的 GC 测试标记为 `c_cross.enabled = false`。剩余 `enabled = true` 的 C 测试只通过 FlashDB 公共 API（如 `fdb_kv_set`、`fdb_kv_get`、`fdb_tsl_append` 等）触发行为验证，不再直接访问 `db.parent.oldest_addr`、`db.cur_sec` 等私有嵌套字段。
-
-#### 策略选择
-
-鉴于筛选后字段访问需求大幅降低，回归 opaque handle + selective observation API 方案：
-
-- `enabled = true` 的测试只通过公共 API 和少量 observation getter 验证行为
-- 不需要暴露 `oldest_addr` 等私有字段给 C runner（因为 GC 测试被排除）
-- layout check 只检查 opaque handle 的 sizeof/alignof，不检查内部字段 offset
-- `#[repr(C)]` 全布局 struct 仅用于 C runner 需要直接构造或访问字段的结构体（如 `fdb_tsl`，因为 `fdb_tsl_iter` 回调直接访问 `tsl.status` 和 `tsl.time`）
-
-#### 混合策略
-
-实际执行时采用混合策略：
-
-1. **Opaque handle**：`fdb_kvdb_t`、`fdb_tsdb_t` 使用 opaque handle（`*mut CDbHandle`），C 测试通过公共 API 操作句柄
-2. **#[repr(C)] 按需**：`fdb_tsl`、`fdb_kv` 等被 C 测试回调直接访问的结构体使用 `#[repr(C)]` 全布局
-3. **Observation API**：对 `enabled = true` 测试需要但无法通过公共 API 读取的状态（如 `fdb_tsl_iter` 回调中 `tsl->time`），通过 observation getter 暴露
-
-#### 与筛选的联动
-
-如果后续新增 `enabled = true` 的测试需要访问更多字段，优先提供 observation API；只有当 observation API 规模接近重建完整 C struct 公共接口时，才考虑将该测试标记为 `enabled = false`。
-
-## 10. C Runner 设计
-
-### 10.1 第一版策略
-
-第一版保持 suite 级 runner：
-
-```text
-kvdb_main.c
-tsdb_main.c
-```
-
-不新增复杂 CLI：
-
-```text
---suite
---case
---level
---fail-fast
-```
-
-原因：
-
-- 当前目标是先建立稳定验证链路；
-- 避免把 C-CROSS 变成完整测试平台；
-- 减少开发复杂度；
-- 保持评分入口稳定。
-
-### 10.2 Runner 输出要求
-
-FlashDB 原始 C runner 使用以下格式（不可修改）：
-
-```text
-Running: test_fdb_tsl_set_status ...
-```
-
-通过测试只输出 `Running:` 行，无显式 OK 标记。
-
-失败时输出：
-
-```text
-FAIL test_fdb_tsl_set_status: assertion text (line N)
-```
-
-同一 C 测试函数可能被 `TEST_RUN()` 多次调用。例如 TSDB runner 中 `test_fdb_tsl_clean` 出现两次：
-
-```text
-Running: test_fdb_tsl_clean ...   ← invocation_index=1
-Running: test_fdb_tsl_clean ...   ← invocation_index=2
-```
-
-parser 必须按 `registered_test_invocations` 的 `invocation_index` 顺序将第 N 次 `Running: test_xxx` 映射到 `scenario_id=test_xxx__N`（当同一 source_test 有多个 scenario 时），不直接判定 parse_failed。
-
-该输出用于：
-
-- 定位最后执行到哪个测试；
-- hang 时识别可能卡住的测试；
-- 保存诊断上下文。
+不能因为 Rust 实现困难而修改 C ABI。
 
 ---
 
-## 11. `c_cross_validate.py` 设计
+## 12. Runner 与结果 Parser
 
-### 11.1 执行流程
+### 12.1 使用原 Runner 格式
+
+Parser 以原 FlashDB runner 的实际输出为准：
 
 ```text
-1. 读取 C 测试模型
-2. 读取 c_cross.enabled 测试
-3. 校验 ffi_manifest
-4. cargo build --release --features c-cross-ffi
-5. ABI layout check
-6. 编译 C runner
-7. 为 kvdb/tsdb 创建独立运行目录
-8. 运行 runner，设置固定超时
-9. 保存日志
-10. 输出汇总结果
+Running: test_fdb_tsl_set_status ...
+FAIL test_fdb_tsl_set_status: assertion text
 ```
 
-### 11.2 超时保护
+不要求修改成：
 
-第一版使用简单实现：
-
-```python
-def _run(
-    command: list[str],
-    *,
-    cwd: Path | None = None,
-    timeout: int = 60,
-) -> tuple[int, str]:
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=timeout,
-        )
-        return completed.returncode, completed.stdout
-    except subprocess.TimeoutExpired as exc:
-        output = exc.stdout or ""
-        if isinstance(output, bytes):
-            output = output.decode(errors="replace")
-        return -124, f"{output}\nTIMEOUT: killed after {timeout}s\n"
+```text
+[ RUN      ]
+[       OK ]
 ```
 
-第一版固定 60 秒，不增加 CLI 参数。
+### 12.2 重复 Invocation 匹配
 
-### 11.3 Suite 隔离
+Parser 对同名 `Running:` 按出现顺序映射：
+
+```text
+第 1 次 Running: test_fdb_tsl_clean
+→ invocation_index = 1
+→ scenario_id = test_fdb_tsl_clean
+
+第 2 次 Running: test_fdb_tsl_clean
+→ invocation_index = 2
+→ scenario_id = test_fdb_tsl_clean__2
+```
+
+不得因为出现 duplicate start 直接将整个 suite 标记为 `parse_failed`。
+
+### 12.3 Pass/Fail 解析
+
+在原 runner 没有显式 `OK` 行的前提下：
+
+- 识别每个 `Running:` 作为 invocation 开始；
+- 将后续对应 `FAIL test_name:` 关联到当前 invocation；
+- 未出现对应 FAIL 且 runner 正常结束的 invocation 记为 pass；
+- runner 中断、输出不完整或无法建立 invocation 映射时，记为 `parse_failed`；
+- `parse_failed` 不等于测试失败，也不等于测试通过。
+
+---
+
+## 13. `c_cross_validate.py` 执行流程
+
+```text
+1. 读取 C API 模型和 Test Invocation 模型
+2. 生成 required_ffi_apis
+3. 校验 ABI 合同和 FFI wrapper 完整性
+4. cargo build --release
+5. ABI Layout Check
+6. 编译 C runner 并链接 Rust staticlib
+7. 创建 suite 独立运行目录
+8. 运行 kvdb runner 和 tsdb runner
+9. 应用固定 timeout
+10. 解析 runner 输出
+11. 生成 validation-matrix.json
+12. 生成 diagnostics.jsonl
+13. 记录简单 attempts.jsonl
+14. 生成阶段结果 PASS 或 CONTINUE_WITH_FAILURES
+```
+
+---
+
+## 14. Timeout、运行目录与日志
+
+### 14.1 Timeout
+
+C runner 必须设置固定超时，第一版建议 60 秒。
+
+超时返回：
+
+```text
+exit_code = -124
+diagnosis = runtime_timeout
+```
+
+第一版不增加复杂 CLI。
+
+### 14.2 Suite 独立目录
 
 ```text
 c_cross/runs/kvdb/
 c_cross/runs/tsdb/
 ```
 
-每次运行前清理对应目录。
+每次执行前清理对应目录。
 
 作用：
 
+- 防止上一次运行残留；
 - 防止 KVDB 和 TSDB 数据互相污染；
-- 防止上一次运行残留影响本次；
-- 让日志和数据文件位置固定。
+- 固定日志和运行数据位置。
 
-### 11.4 日志
-
-输出：
+### 14.3 日志
 
 ```text
 c_cross/logs/kvdb_runner.log
 c_cross/logs/tsdb_runner.log
 ```
 
-日志必须包含：
+必须保存：
 
-- runner 完整 stdout/stderr；
+- 完整 stdout/stderr；
+- runner 返回码；
 - timeout 标识；
-- 最后执行到的测试；
-- 返回码。
-
-### 11.5 简化结果
-
-第一版输出：
-
-```text
-[PASS] cargo build
-[PASS] ABI layout check
-[PASS] kvdb C-CROSS
-[FAIL] tsdb C-CROSS: timeout after 60s
-```
-
-不要求第一版生成复杂 JSON 报告。
+- 最后一个 `Running:` 测试；
+- Parser 错误原因。
 
 ---
 
-## 12. ABI Layout Check
+## 15. Diagnostics 与 Handoff
 
-### 12.1 目的
+### 15.1 Diagnostics
 
-检查 C runner 与 Rust FFI 共享类型是否兼容，例如：
-
-- `sizeof`
-- `alignof`
-- 字段 offset
-- 枚举值
-- 错误码常量
-
-### 12.2 检查范围
-
-只检查 C-CROSS 真实跨边界使用的类型：
-
-- 公共参数结构体；
-- blob；
-- callback 参数；
-- 错误码；
-- 句柄外壳。
-
-不检查：
-
-- Rust 私有内部结构；
-- C 私有数据库内部结构；
-- 未跨 FFI 边界的类型。
-
----
-
-## 13. 禁止打桩机制
-
-### 13.1 禁止模式
-
-FFI 中禁止：
-
-```rust
-todo!()
-unimplemented!()
-panic!("not implemented")
-```
-
-禁止明显占位：
-
-```rust
-return 0; // 未调用 Rust 实现
-```
-
-禁止测试绕过：
-
-- 修改 C 断言；
-- 删除测试；
-- 提前 return；
-- 跳过测试主体；
-- 固定构造期望输出。
-
-### 13.2 静态检查
-
-可在构建前扫描：
-
-```python
-FORBIDDEN_PATTERNS = [
-    r"\btodo!\s*\(",
-    r"\bunimplemented!\s*\(",
-    r'panic!\s*\(\s*"not implemented',
-    r"\bstub\b",
-    r"\bplaceholder\b",
-]
-```
-
-注意：
-
-- `return 0` 不能全局禁止，误报较高；
-- 更可靠的规则是检查 wrapper 是否调用真实 Rust 实现。
-
-### 13.3 代码审查要求
-
-每个 FFI wrapper 必须能够回答：
+`diagnostics.jsonl` 回答：
 
 ```text
-这个 wrapper 最终调用了哪个 Rust 核心函数？
+出了什么问题？
+为什么这么判断？
+证据在哪里？
 ```
 
-建议在 `ffi_manifest.json` 中记录映射：
+每个失败或解析失败 scenario 必须有独立条目。
+
+示例：
 
 ```json
 {
-  "fdb_kv_set": {
-    "rust_wrapper": "c_cross_ffi::kvdb::fdb_kv_set",
-    "rust_target": "kvdb::KvDb::set"
-  }
+  "scenario_id": "test_fdb_tsl_clean__2",
+  "suite": "tsdb",
+  "diagnosis": "c_cross_result_parse_failed",
+  "reason": "second invocation could not be mapped",
+  "evidence": "c_cross/logs/tsdb_runner.log"
 }
 ```
 
+### 15.2 Handoff
+
+`handoff` 回答：
+
+```text
+这个问题应交给哪个 Agent 处理？
+```
+
+最低映射要求：
+
+| Diagnosis | Handoff |
+|---|---|
+| `c_cross_result_parse_failed` | `c-analyzer` |
+| `toolchain_defect` | `c-analyzer` |
+| Rust 语义失败 | `rust-implementer` |
+| FFI/ABI 产物问题 | `rust-implementer` 或工程内指定 FFI Agent |
+
+所有合法 diagnosis 都必须有明确映射，不允许合法失败默认返回 `"none"`。
+
+### 15.3 作用边界
+
+Diagnostics 和 handoff 表示：
+
+- 问题已识别；
+- 责任路径已明确。
+
+它们不表示：
+
+- 问题已经解决；
+- C-CROSS 已经通过。
+
 ---
 
-## 14. C 测试与 Rust 测试对齐
+## 16. 软 Gate 合同
 
-### 14.1 场景映射
+### 16.1 阶段结果
 
-每个原 C 测试与 Rust 测试共享同一个 `scenario_id`：
+`VERIFY_RUST_WITH_C_TESTS` 只输出：
+
+```text
+PASS
+CONTINUE_WITH_FAILURES
+```
+
+### 16.2 PASS
+
+满足：
+
+- Rust staticlib 构建成功；
+- ABI Layout Check 成功；
+- C runner 构建和链接成功；
+- runner 结果可解析；
+- 所有 C 测试 invocation 通过。
+
+### 16.3 CONTINUE_WITH_FAILURES
+
+以下任一情况产生：
+
+- Rust 构建失败；
+- ABI layout 失败；
+- C runner 编译或链接失败；
+- runtime timeout；
+- C 测试失败；
+- result parse_failed；
+- 工具链故障；
+- 修复达到上限仍未解决。
+
+### 16.4 放行规则
+
+无论阶段结果是 PASS 还是 CONTINUE_WITH_FAILURES，都进入：
+
+```text
+MIGRATE_TESTS
+VERIFY_RUST_WITH_RUST_TESTS
+SCORING
+FINAL_REPORT
+```
+
+失败必须保留为 unresolved，不能标记为 pass。
+
+---
+
+## 17. 自动修复策略
+
+### 17.1 可修复的参赛产物问题
+
+只有能通过修改 `flashDB_rust/**` 解决的问题进入有限次数自动修复，例如：
+
+- Rust 语义错误；
+- FFI 符号缺失；
+- FFI wrapper 错误；
+- Rust 侧 ABI 类型错误；
+- Rust 编译错误；
+- C runner 因 Rust staticlib 导出问题链接失败。
+
+建议固定最大修复次数，例如 3 次。
+
+达到上限仍失败：
+
+```text
+status = unresolved
+stage = CONTINUE_WITH_FAILURES
+```
+
+### 17.2 工具链问题
+
+以下问题不进行重复修复：
+
+- Parser 不能处理 runner 输出；
+- Test Invocation 模型生成错误；
+- Gate contract 错误；
+- `c_cross_validate.py` 内部异常；
+- `build_c_model.py` 工具错误；
+- 其他必须修改 `work/**` 才能解决的问题。
+
+处理方式：
+
+```text
+diagnosis = toolchain_defect
+handoff = c-analyzer
+写入 workbench-issues.jsonl
+相关 scenario 标记 unresolved
+CONTINUE_WITH_FAILURES
+```
+
+不得重复运行三次相同工具并期待不同结果。
+
+---
+
+## 18. 工具产物与写入权限
+
+### 18.1 工具自动生成
+
+以下文件必须由工具生成：
+
+```text
+validation-matrix.json
+diagnostics.jsonl
+attempts.jsonl
+workbench-issues.jsonl
+```
+
+Subagent 不得手工修改这些文件。
+
+### 18.2 删除复杂 Deferred 机制
+
+删除：
+
+```text
+deferred.jsonl
+failure fingerprint
+no_progress_count
+attempt_ids 交叉引用
+deferred evidence gate
+```
+
+### 18.3 简单 Attempts
+
+`attempts.jsonl` 只记录简单修复历史：
 
 ```json
 {
-  "scenario_id": "case_7",
-  "c_test": "test_fdb_del_kv",
-  "rust_test": "test_del_kv"
+  "attempt": 2,
+  "stage": "VERIFY_RUST_WITH_C_TESTS",
+  "scenario_id": "test_fdb_gc",
+  "changed_files": [
+    "flashDB_rust/src/kvdb.rs"
+  ],
+  "result": "fail"
 }
 ```
 
-### 14.2 对比逻辑
-
-```text
-C-CROSS PASS + Rust Test PASS
-    → 通过
-
-C-CROSS PASS + Rust Test FAIL
-    → Rust 测试迁移疑似错误
-
-C-CROSS FAIL + Rust Test FAIL
-    → Rust 实现或 FFI 疑似错误
-
-C-CROSS FAIL + Rust Test PASS
-    → FFI、测试覆盖差异或 Rust 测试遗漏原语义
-```
-
-### 14.3 不允许的结论
-
-不能简单断言：
-
-```text
-C-CROSS PASS
-→ Rust 代码绝对正确
-```
-
-只能表达：
-
-```text
-在该原 C 测试覆盖范围内，Rust 实现符合预期。
-```
+`changed_files` 用于追踪，不再作为复杂 deferred 放行证据。
 
 ---
 
-## 15. 异常场景处理
+## 19. `work/**` 只读规则
 
-### 15.1 Rust 编译失败
+### 19.1 比赛运行阶段
 
-结果：
-
-```text
-rust_build_error
-```
-
-立即终止 C-CROSS。
-
-### 15.2 ABI 检查失败
-
-结果：
+比赛运行 Agent 不得修改：
 
 ```text
-abi_layout_mismatch
+work/**
 ```
 
-立即终止 runner 编译和执行。
+包括：
 
-### 15.3 C runner 编译失败
+- `c_cross_validate.py`；
+- `gate.py`；
+- `build_c_model.py`；
+- Tool contract；
+- Skill 定义；
+- 验证规则。
 
-可能原因：
+### 19.2 工具链故障
 
-- 缺失符号；
-- header 不一致；
-- 类型不一致；
-- 链接参数错误。
+发现工具链故障后：
 
-输出完整编译日志。
+1. 写入 `workbench-issues.jsonl`；
+2. 记录工具、原因、证据和受影响场景；
+3. 标记相关场景 unresolved；
+4. 阶段结果为 `CONTINUE_WITH_FAILURES`；
+5. 继续比赛流程。
 
-### 15.4 Runner 非零退出
-
-记录：
-
-```text
-suite runner failed
-```
-
-保存日志。
-
-### 15.5 Runner 超时
-
-返回码：
-
-```text
--124
-```
-
-记录：
-
-```text
-suite runner timeout after 60s
-```
-
-保存超时前输出。
-
-### 15.6 Deferred 机制与修复收敛
-
-#### 失败指纹
-
-每个失败至少形成稳定指纹：
-
-```text
-failure_layer | suite | source_test | normalized_assertion_or_error
-```
-
-`failure_layer` 取值：`build`、`layout`、`link`、`full`、`model`、`scaffold`、`parse`。
-
-#### 修复尝试
-
-一次有效修复尝试必须同时包含：
-
-1. 对允许范围内文件做定向修改；
-2. 清理对应 c-cross run directory；
-3. 使用同一输入重跑受影响 suite；
-4. 由 `c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行，自动写入 `attempts.jsonl`。
-
-禁止 subagent 手写 `deferred.jsonl` 和 `attempts.jsonl`。
-
-#### 有进展判定
-
-- 至少一个失败 test 变成 pass；
-- 失败层次向后推进；
-- 通过集合严格增加且无严重回归。
-
-有进展时相关指纹的无进展计数清零。
-
-#### 无进展判定
-
-- 同一指纹在同一断言上失败；
-- 通过集合未增加；
-- 修改导致 build 回退或原通过 test 失败。
-
-#### Deferred 规则
-
-同一指纹连续 3 次无进展后：
-
-- 标记 `status: deferred`；
-- 写入 `deferred.jsonl`，格式与 gate.py `_gate_failure_fingerprint()` 一致；
-- 引用 3 条 repair attempt 的 `attempt_id`；
-- 中间 gate 允许 deferred 场景进入后续阶段；
-- 只有相关 Rust 实现变化或新 C-cross 证据才可重新激活；
-- 最终 full C-cross 不接受 deferred，必须转为 pass。
-
-### 15.7 Gate Contract
-
-#### 产物与消费关系
-
-`c_cross_validate.py` 生成以下产物，`gate.py` 消费这些产物：
-
-```text
-validation-matrix.json → gate.py check_validation_matrix / check_c_cross_intermediate_evidence / check_c_cross_final_evidence
-diagnostics.jsonl → gate.py parse_failed 豁免检查
-attempts.jsonl → gate.py repair attempt 格式检查
-deferred.jsonl → gate.py deferred 证据检查
-case-results.jsonl → gate.py scenario_id 集合一致性检查
-build-check.json / layout-check.json / link-check.json → gate.py 分层状态检查
-```
-
-#### Handoff 映射表
-
-所有 `VALID_DIAGNOSES` 必须有对应的 handoff 映射，不允许 `"none"` 出现在 blocking scenario 上：
-
-```text
-c_model_signature_gap → c-analyzer
-c_cross_harness_not_supported → c-analyzer
-c_cross_result_parse_failed → c-analyzer
-rust_staticlib_build_failed → rust-implementer
-c_abi_layout_mismatch → rust-implementer
-c_runner_link_failed → rust-implementer
-c_runner_runtime_failed → rust-implementer
-c_test_case_failed → rust-implementer
-rust_implementation_failed_c_baseline → rust-implementer
-rust_implementation_matches_c_baseline_for_scenario → none (pass scenario, 不要求 handoff)
-```
-
-#### diagnostics.jsonl 覆盖范围
-
-- suite 级诊断：`c_runner_runtime_failed`（runner 整体失败）
-- per-scenario 诊断：`c_cross_result_parse_failed`（每个 parse_failed scenario 必须有一条）
-- 分层诊断：`rust_staticlib_build_failed`、`c_abi_layout_mismatch`、`c_runner_link_failed`
-
-#### deferred.jsonl 格式要求
-
-每条 deferred 记录必须包含：
+示例：
 
 ```json
 {
-  "fingerprint": "full|kvdb|test_fdb_gc|normalized_reason",
-  "status": "deferred",
-  "no_progress_count": 3,
-  "attempt_ids": ["attempt-id-1", "attempt-id-2", "attempt-id-3"],
-  "reactivation": "related Rust implementation change followed by changed C-cross evidence",
-  "final_requirement": "must pass final full C-cross"
+  "stage": "VERIFY_RUST_WITH_C_TESTS",
+  "type": "toolchain_defect",
+  "tool": "c_cross_validate.py",
+  "reason": "duplicate invocation mapping failed",
+  "evidence": "c_cross/logs/tsdb_runner.log",
+  "affected_scenarios": [
+    "test_fdb_tsl_clean",
+    "test_fdb_tsl_clean__2"
+  ],
+  "status": "unresolved"
 }
 ```
 
-`fingerprint` 必须与 gate.py `_gate_failure_fingerprint()` 格式一致（`failure_layer|suite|source_test|normalized_reason`），`normalized_reason` 中地址替换为 `<addr>`。
+禁止通过修改 Gate 或 Parser 绕过当前比赛失败。
 
-#### attempts.jsonl repair 记录要求
+---
 
-每条 `kind=repair` 记录必须包含：
+## 20. 核心输出文件
+
+### 20.1 `c_test_model.json`
+
+重点字段：
 
 ```json
 {
-  "attempt_id": "dynamic-id",
-  "kind": "repair",
-  "changed_files": ["flashDB_rust/src/example.rs"],
-  "progress": true/false,
-  "no_progress_counts": { "fingerprint": N }
+  "registered_test_invocations": [
+    {
+      "suite": "tsdb",
+      "runner": "tests/tsdb_main.c",
+      "test_function": "test_fdb_tsl_clean",
+      "invocation_index": 2,
+      "runner_order": 21,
+      "scenario_id": "test_fdb_tsl_clean__2",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "source_line": 507
+    }
+  ]
 }
 ```
 
-`changed_files` 必须非空且全部在 `flashDB_rust/` 下。
+### 20.2 `c_api_model.json`
 
-#### 中间 gate 豁免
+```json
+{
+  "function_signatures": {},
+  "typedef_map": {},
+  "enum_map": {},
+  "public_api_symbols": [],
+  "unresolved_signatures": []
+}
+```
 
-中间 gate 对 parse_failed 场景：只要有 diagnostics 证据 + handoff ≠ "none"，即允许进入 MIGRATE_TESTS。最终 gate 不允许 parse_failed，必须得到完整可解析结果。
+### 20.3 `ffi_manifest.json`
 
----
+```json
+{
+  "required_ffi_apis": [
+    "fdb_kvdb_init",
+    "fdb_kvdb_deinit",
+    "fdb_kv_set",
+    "fdb_kv_get"
+  ]
+}
+```
 
-## 16. 开发分阶段计划
+### 20.4 `validation-matrix.json`
 
-### 阶段 1：最小可用版
+场景状态可包含：
 
-目标：建立可运行的 `Rust + C` 链路。
+```text
+pass
+fail
+parse_failed
+unresolved
+```
 
-实现：
+阶段聚合结果仅为：
 
-1. `c-cross-ffi` feature；
-2. 最小 FFI wrapper；
-3. Rust `staticlib`；
-4. 编译 C runner；
-5. 固定 60 秒 timeout；
-6. kvdb/tsdb 独立运行目录；
-7. runner 日志；
-8. 简单 PASS/FAIL 输出。
+```text
+PASS
+CONTINUE_WITH_FAILURES
+```
 
-暂不实现：
+### 20.5 `diagnostics.jsonl`
 
-- case 级执行；
-- level 分层；
-- 复杂 JSON 报告；
-- 自动重跑；
-- gdb backtrace；
-- 完整 C ABI。
+每个失败场景一条记录，包含：
 
-### 阶段 2：测试筛选自动化
+```text
+scenario_id
+suite
+diagnosis
+handoff
+reason
+evidence
+```
 
-实现：
+### 20.6 `attempts.jsonl`
 
-1. 从 C 测试提取调用函数；
-2. 区分公共 API / 私有函数；
-3. 生成 `c_cross.enabled`；
-4. 生成 `ffi_manifest.json`；
-5. 输出排除测试及原因。
+只记录简单的自动修复历史。
 
-### 阶段 3：结果对齐
+### 20.7 `workbench-issues.jsonl`
 
-实现：
-
-1. C 测试与 Rust 测试通过 `scenario_id` 映射；
-2. 汇总两条链路结果；
-3. 输出问题归因建议。
-
----
-
-## 17. 验收标准
-
-### 17.1 功能验收
-
-1. Rust staticlib 可正常构建；
-2. C runner 可链接 Rust staticlib；
-3. 至少 KVDB、TSDB 基础测试可运行；
-4. runner hang 时 60 秒内退出；
-5. 日志保留 hang 前最后输出；
-6. kvdb/tsdb 使用独立运行目录；
-7. FFI wrapper 调用真实 Rust 实现；
-8. 不存在 `todo!()`、`unimplemented!()`；
-9. C 测试排除有明确原因；
-10. Rust+C 与 Rust+Rust 结果可按 `scenario_id` 对齐。
-
-### 17.2 质量验收
-
-1. FFI 中无业务逻辑复制；
-2. 未实现完整 FlashDB C ABI；
-3. 未修改原 C 测试语义；
-4. 未通过固定返回值让测试通过；
-5. FFI 接口数量由启用测试反推；
-6. 未启用测试不会自动生成桩接口。
+只记录运行阶段无法修改的工具链问题。
 
 ---
 
-## 18. 推荐最终目录
+## 21. Subagent 职责同步
+
+需要同步更新：
+
+- orchestrator；
+- rust-implementer；
+- c-analyzer；
+- test-migrator；
+- repairer；
+- 其他 FFI/ABI 相关 Skill。
+
+必须明确：
+
+1. REWRITE 生成完整 Rust 实现；
+2. 所有原 C 测试都进入 C-CROSS；
+3. 不得通过排除测试规避失败；
+4. 骨架阶段不生成 wrapper 函数体；
+5. REWRITE 阶段实现真实 wrapper；
+6. wrapper 必须调用真实 Rust 实现；
+7. 工具结果文件不得手工编辑；
+8. 参赛产物问题有限修复；
+9. 工具链问题直接登记，不重复修复；
+10. 所有阶段不得终止比赛总流程；
+11. unresolved 必须进入最终报告。
+
+---
+
+## 22. 开发任务拆分
+
+### P0：修复当前真实结果解析
+
+1. `registered_test_invocations` 增加：
+   - `suite`
+   - `runner`
+   - `test_function`
+   - `invocation_index`
+   - `runner_order`
+   - `scenario_id`
+   - `source_line`
+2. Parser 按 invocation 顺序映射重复 `Running:`；
+3. 增加：
+   ```text
+   c_cross_result_parse_failed → c-analyzer
+   ```
+4. 为每个失败场景生成 diagnostics；
+5. Runner Parser 使用实际 `Running:` / `FAIL` 格式。
+
+预期恢复真实结果：
+
+```text
+KVDB：11 pass + 3 fail
+TSDB：9 pass + 2 fail
+```
+
+而不是把全部 TSDB 场景标记为 parse_failed。
+
+### P1：简化 Gate 和状态产物
+
+1. Gate 改为 PASS / CONTINUE_WITH_FAILURES；
+2. 删除 deferred；
+3. 简化 attempts；
+4. unresolved 自动生成；
+5. 所有阶段继续执行。
+
+### P2：建立 FFI 函数事实链
+
+1. 提取 C API 签名；
+2. 编译 C 测试目标文件；
+3. 部分链接；
+4. 提取 undefined symbols；
+5. 与公共 API 取交集；
+6. 生成 `ffi_manifest.json`。
+
+### P3：规范 ABI 与 REWRITE
+
+1. 骨架阶段只生成 ABI 合同；
+2. REWRITE 完整实现 Rust；
+3. REWRITE 实现真实 FFI wrapper；
+4. 保留 `#[repr(C)]` facade；
+5. 不使用 opaque handle；
+6. 不使用 observation API；
+7. 不增加 Cargo feature；
+8. 沿用 `src/ffi/`。
+
+### P4：同步文档与 Skill
+
+1. 更新所有相关 Skill；
+2. 更新 Tool contract；
+3. 增加 diagnosis → handoff 完整性检查；
+4. 增加模型和 Parser 单元测试。
+
+---
+
+## 23. 验收标准
+
+### 23.1 Test Invocation
+
+- 同名 C 测试函数重复执行时，能够正确映射每次 invocation；
+- `test_fdb_tsl_clean__2` 能对应第二次真实 `Running: test_fdb_tsl_clean`；
+- 不再因为 duplicate start 将整个 suite 标记 parse_failed。
+
+### 23.2 FFI
+
+- `required_ffi_apis` 来自真实 undefined symbols；
+- FFI wrapper 调用真实 Rust 核心函数；
+- 不存在 stub、固定成功值或空实现；
+- FFI 默认参与 staticlib 构建；
+- 使用现有 `src/ffi/`；
+- 不使用 observation API。
+
+### 23.3 Rust 完整性
+
+- REWRITE 的目标是完整迁移；
+- HashMap 等简化替代实现若缺少原语义，必须被视为实现缺陷；
+- GC、GC2、scale-up 等测试不得被排除。
+
+### 23.4 Gate
+
+- 任意失败不得终止比赛总流程；
+- 阶段结果只为 PASS 或 CONTINUE_WITH_FAILURES；
+- unresolved 不得伪装为通过；
+- Rust 测试迁移、执行和评分始终继续尝试。
+
+### 23.5 工具结果
+
+- validation matrix、diagnostics、attempts 由工具生成；
+- 不存在 deferred.jsonl；
+- 工具链问题进入 workbench-issues；
+- 比赛 Agent 不修改 `work/**`。
+
+---
+
+## 24. 最终目录建议
 
 ```text
 flashDB_rust/
 ├── Cargo.toml
 ├── src/
 │   ├── lib.rs
-│   ├── kvdb.rs
-│   ├── tsdb.rs
-│   └── c_cross_ffi/
+│   ├── kvdb/
+│   ├── tsdb/
+│   └── ffi/
 │       ├── mod.rs
+│       ├── c_types.rs
 │       ├── kvdb.rs
-│       ├── tsdb.rs
-│       └── types.rs
+│       └── tsdb.rs
 ├── tests/
-│   ├── kvdb_tests.rs
-│   └── tsdb_tests.rs
 └── c_cross/
     ├── c_cross_validate.py
     ├── ffi_manifest.json
@@ -1194,27 +1203,41 @@ flashDB_rust/
         └── tsdb_runner.log
 ```
 
+工具链产物路径按现有工程实际位置保持，不强制为了本设计进行无收益的目录重构。
+
 ---
 
-## 19. 最终设计结论
+## 25. 相对原方案的关键修订
 
-本方案采用“双轨验证”：
+1. 删除 C 测试筛选和 `c_cross.enabled`；
+2. 所有 runner invocation 都执行；
+3. GC、GC2、scale-up 不排除；
+4. FFI 函数由 undefined symbols 与公共 API 交集推导；
+5. ABI 类型继续使用现有 facade，不做复杂最小化分析；
+6. 保留 `#[repr(C)]`，不采用 opaque handle；
+7. 删除 observation API；
+8. 骨架阶段不生成 wrapper 函数体；
+9. REWRITE 负责完整 Rust 和真实 wrapper；
+10. 删除 `c-cross-ffi` feature；
+11. 沿用 `src/ffi/`；
+12. Gate 改成永不终止的软 Gate；
+13. 删除 deferred、fingerprint 和复杂收敛机制；
+14. 工具产物禁止手写；
+15. 工具链问题不重复修复，直接登记并继续；
+16. `work/**` 在比赛运行阶段保持只读；
+17. Parser 正确支持同名测试多次 invocation；
+18. Diagnostics 和 handoff 只用于问题识别与分派，不代表问题已解决。
 
-```text
-Rust 实现 + 原 C 测试
-Rust 实现 + Rust 测试
-```
+---
 
-C-CROSS 的定位是：
+## 26. 最终结论
 
-> 使用原 C 测试作为独立参照，验证 Rust 实现，而不是构建完整 C ABI 兼容产品。
+C-CROSS 的总体方向保持不变：
 
-核心边界：
+> 使用原 C 测试独立验证完整 Rust 实现，再用迁移后的 Rust 测试验证最终 Rust 工程。
 
-1. 所有可通过薄 FFI 验证行为的原 C 测试，尽量进入 C-CROSS；
-2. 依赖 C 私有实现的测试明确排除；
-3. FFI 接口由启用测试反向推导；
-4. FFI 只做桥接，不做业务实现；
-5. 第一版保持 suite 级 runner，不引入复杂 CLI；
-6. 必须增加 timeout、独立运行目录和日志；
-7. C-CROSS 结果与 Rust 测试结果按场景对齐，用于辅助定位源码问题或测试迁移问题。
+修订后的方案坚持三个核心要求：
+
+1. **完整性**：REWRITE 必须交付完整 Rust 实现，不能使用简化实现规避原语义；
+2. **真实性**：所有原 C 测试均执行，所有失败均保留，FFI 必须调用真实 Rust 实现；
+3. **完赛性**：任何中间错误都不能终止比赛流水线，未解决问题以 `CONTINUE_WITH_FAILURES` 和 unresolved 形式带入最终报告。
