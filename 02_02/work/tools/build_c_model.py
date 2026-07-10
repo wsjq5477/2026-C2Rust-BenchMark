@@ -852,10 +852,30 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         test_functions.extend(funcs)
         registered = extract_registered_tests(text)
         registered_tests.extend(registered)
-        registered_invocations.extend(
-            {"name": name, "source_file": file_name, "source_index": index}
-            for index, name in enumerate(registered, start=1)
-        )
+        suite_from_file = "kvdb" if "kvdb" in file_name else ("tsdb" if "tsdb" in file_name else "unknown")
+        runner_from_file = file_name
+        # Track invocation count per test function name within this file for invocation_index
+        invocation_counter_in_file: dict[str, int] = {}
+        for name in registered:
+            invocation_counter_in_file.setdefault(name, 0)
+            invocation_counter_in_file[name] += 1
+        invocation_seen: dict[str, int] = {}
+        for index, name in enumerate(registered, start=1):
+            invocation_idx = invocation_seen.get(name, 0) + 1
+            invocation_seen[name] = invocation_idx
+            # Derive scenario_id from invocation_index for duplicate calls
+            scenarios = [name]
+            if invocation_idx > 1:
+                scenarios = [f"{name}__{invocation_idx}"]
+            registered_invocations.append({
+                "name": name,
+                "suite": suite_from_file,
+                "runner": runner_from_file,
+                "invocation_index": invocation_idx,
+                "source_file": file_name,
+                "source_index": index,
+                "scenarios": scenarios,
+            })
         for name in funcs + registered:
             scenario_tags[name] = tag_test(name)
         for name, body in bodies.items():
