@@ -1113,6 +1113,19 @@ def build_matrix(
         root,
     )
     _write_jsonl(c_cross / "case-results.jsonl", scenarios)
+    # Add per-scenario diagnostics for parse_failed scenarios
+    for scenario_row in scenarios:
+        if scenario_row.get("diagnosis") == "c_cross_result_parse_failed":
+            diagnostics.append({
+                "phase": scenario_row.get("phase", "full"),
+                "diagnosis": "c_cross_result_parse_failed",
+                "scenario_id": scenario_row.get("scenario_id"),
+                "scorer_case_id": scenario_row.get("scorer_case_id"),
+                "suite": scenario_row.get("suite"),
+                "handoff": scenario_row.get("handoff"),
+                "reason": scenario_row.get("reason"),
+                "log": scenario_row.get("log"),
+            })
     _write_jsonl(c_cross / "diagnostics.jsonl", diagnostics)
     summary = Counter(item["rust_impl_c_test"] for item in scenarios)
     return {
