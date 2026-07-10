@@ -467,10 +467,37 @@ def main(argv: list[str] | None = None) -> int:
         load_json(Path(args.test_model)),
     )
     write_json(Path(args.output), design)
+
+    # Generate ffi_manifest.json from c_abi_facade
+    facade = design.get("c_abi_facade", {})
+    functions = facade.get("functions", [])
+    required_ffi_apis = sorted([f.get("c_symbol") for f in functions if isinstance(f, dict) and f.get("c_symbol")])
+    observation_apis = sorted([
+        f.get("c_symbol") for f in functions
+        if isinstance(f, dict) and f.get("safe_role", "").startswith("observation_")
+    ])
+    ffi_manifest = {
+        "required_ffi_apis": required_ffi_apis,
+        "observation_apis": observation_apis,
+        "ffi_mappings": [
+            {
+                f.get("c_symbol"): {
+                    "rust_wrapper": f.get("rust_export"),
+                    "rust_target": f.get("safe_target", ""),
+                }
+            }
+            for f in functions
+            if isinstance(f, dict) and f.get("c_symbol") and f.get("rust_export")
+        ],
+    }
+    output_dir = Path(args.output).parent
+    write_json(output_dir / "ffi_manifest.json", ffi_manifest)
+
     print("DESIGN_RUST_API: DESIGN_WRITTEN")
     print(f"crate_name={design['crate_name']}")
     print(f"kvdb_api={len(design['kvdb_api'])}")
     print(f"tsdb_api={len(design['tsdb_api'])}")
+    print(f"ffi_manifest_apis={len(required_ffi_apis)}")
     return 0
 
 
