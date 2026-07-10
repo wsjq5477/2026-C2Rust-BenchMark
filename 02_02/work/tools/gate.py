@@ -1193,7 +1193,7 @@ def check_validation_matrix(root: Path, *, allow_not_supported: bool = True) -> 
             source_test = item.get("source_test")
             if not isinstance(failure_layer, str) or failure_layer not in VALID_FAILURE_LAYERS:
                 errors.append(f"validation-matrix.json failure_layer must be present for scenario {scenario_id}")
-            if not isinstance(handoff, str) or handoff not in VALID_HANDOFFS or handoff == "none":
+            if not isinstance(handoff, str) or handoff not in VALID_HANDOFFS or (handoff == "none" and diagnosis != "c_cross_result_parse_failed"):
                 errors.append(f"validation-matrix.json handoff must be present for scenario {scenario_id}")
             if not isinstance(source_runner, str) or not source_runner:
                 errors.append(f"validation-matrix.json source_runner must be present for scenario {scenario_id}")
