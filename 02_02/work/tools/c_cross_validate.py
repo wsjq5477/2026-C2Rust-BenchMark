@@ -68,38 +68,56 @@ def _run(command: list[str], *, cwd: Path | None = None, timeout: float = 60) ->
 
 
 def parse_runner_test_results(output: str, expected_tests: list[str], exit_code: int) -> dict[str, Any]:
-    expected = list(dict.fromkeys(expected_tests))
-    if len(expected) != len(expected_tests):
-        return {
-            "status": "parse_failed",
-            "started": [],
-            "passed": [],
-            "failed": [],
-            "not_run": expected,
-            "failures": {},
-            "reason": "expected test list contains duplicates",
-        }
-
     start_pattern = re.compile(r"^\s*Running:\s*([A-Za-z_][A-Za-z0-9_]*)\b", re.MULTILINE)
     failure_pattern = re.compile(r"^\s*FAIL\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+?)\s*$", re.MULTILINE)
     started = start_pattern.findall(output)
     failure_matches = failure_pattern.findall(output)
+
+    # Build disambiguated started list: when same C function appears multiple times,
+    # map the N-th occurrence to the N-th expected entry with that source_test.
+    # Expected entries may include scenario_ids like test_xxx__2 that map to source_test test_xxx.
+    # We use invocation_index from registered_test_invocations to disambiguate.
+    source_test_by_scenario: dict[str, str] = {}
+    invocation_order: dict[str, list[str]] = {}
+    for entry in expected_tests:
+        parts = entry.rsplit("__", 1)
+        source = parts[0]
+        source_test_by_scenario[entry] = source
+        invocation_order.setdefault(source, []).append(entry)
+
+    # Map each "Running: <name>" to a specific scenario_id using invocation order
+    started_scenarios: list[str] = []
+    invocation_counter: dict[str, int] = {}
+    for name in started:
+        scenarios_for_name = invocation_order.get(name, [name])
+        idx = invocation_counter.get(name, 0)
+        if idx < len(scenarios_for_name):
+            started_scenarios.append(scenarios_for_name[idx])
+            invocation_counter[name] = idx + 1
+        else:
+            started_scenarios.append(name)
+            invocation_counter[name] = idx + 1
+
+    # Map FAIL lines similarly
     failures: dict[str, str] = {}
+    fail_counter: dict[str, int] = {}
     for test_name, detail in failure_matches:
         normalized = " ".join(detail.split())
-        if test_name in failures:
-            failures[test_name] = f"{failures[test_name]} | {normalized}"
+        scenarios_for_name = invocation_order.get(test_name, [test_name])
+        idx = fail_counter.get(test_name, 0)
+        scenario = scenarios_for_name[idx] if idx < len(scenarios_for_name) else test_name
+        fail_counter[test_name] = idx + 1
+        if scenario in failures:
+            failures[scenario] = f"{failures[scenario]} | {normalized}"
         else:
-            failures[test_name] = normalized
+            failures[scenario] = normalized
 
-    expected_set = set(expected)
-    duplicate_starts = sorted({name for name in started if started.count(name) > 1})
-    unknown_started = sorted(set(started) - expected_set)
+    expected_set = set(expected_tests)
+    started_set = set(started_scenarios)
+    unknown_started = sorted(set(started) - set(source_test_by_scenario.values()))
     unknown_failed = sorted(set(failures) - expected_set)
-    failed_without_start = sorted(set(failures) - set(started))
+    failed_without_start = sorted(set(failures) - started_set)
     reasons: list[str] = []
-    if duplicate_starts:
-        reasons.append("duplicate start records: " + ", ".join(duplicate_starts))
     if unknown_started:
         reasons.append("unknown started tests: " + ", ".join(unknown_started))
     if unknown_failed:
@@ -108,18 +126,17 @@ def parse_runner_test_results(output: str, expected_tests: list[str], exit_code:
         reasons.append("failed tests missing start records: " + ", ".join(failed_without_start))
     if exit_code == 0 and failures:
         reasons.append("successful runner reported test failures")
-    if exit_code == 0 and set(started) != expected_set:
+    if exit_code == 0 and started_set != expected_set:
         reasons.append("successful runner did not start all expected tests")
     if exit_code != 0 and not failures:
         reasons.append("nonzero runner exit has no attributed test failure")
 
-    failed = [name for name in expected if name in failures]
-    started_set = set(started)
-    passed = [name for name in expected if name in started_set and name not in failures]
-    not_run = [name for name in expected if name not in started_set]
+    failed = [name for name in expected_tests if name in failures]
+    passed = [name for name in expected_tests if name in started_set and name not in failures]
+    not_run = [name for name in expected_tests if name not in started_set]
     return {
         "status": "parse_failed" if reasons else "parsed",
-        "started": [name for name in expected if name in started_set],
+        "started": [name for name in expected_tests if name in started_set],
         "passed": passed,
         "failed": failed,
         "not_run": not_run,
@@ -724,22 +741,32 @@ def _source_evidence_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[s
     if not isinstance(raw, list):
         return {}
     evidence: dict[str, dict[str, str]] = {}
+    invocation_counter: dict[str, int] = {}
     for item in raw:
         if not isinstance(item, dict):
             continue
         runner = item.get("runner")
         test_function = item.get("test_function") or item.get("name")
         scenarios = item.get("scenarios")
+        invocation_index = item.get("invocation_index")
         if not isinstance(scenarios, list) and isinstance(test_function, str):
-            scenarios = [test_function]
+            # Derive scenario from invocation_index if not provided
+            idx = invocation_counter.get(test_function, 0) + 1
+            invocation_counter[test_function] = idx
+            if invocation_index is not None and invocation_index > 1:
+                scenarios = [f"{test_function}__{invocation_index}"]
+            else:
+                scenarios = [test_function]
         if not isinstance(test_function, str) or not isinstance(scenarios, list):
             continue
         for scenario in scenarios:
-            if isinstance(scenario, str) and scenario not in evidence:
-                item_evidence = {"source_test": test_function}
-                if isinstance(runner, str) and runner:
-                    item_evidence["source_runner"] = runner
-                evidence[scenario] = item_evidence
+            item_evidence = {"source_test": test_function}
+            invocation_idx = invocation_index if isinstance(invocation_index, int) else None
+            if invocation_idx is not None:
+                item_evidence["invocation_index"] = invocation_idx
+            if isinstance(runner, str) and runner:
+                item_evidence["source_runner"] = runner
+            evidence[scenario] = item_evidence
     return evidence
 
 
@@ -753,8 +780,10 @@ def _expected_tests_by_suite(
         suite = _suite_for_case(case)
         source_test = source_evidence.get(scenario_id, {}).get("source_test", scenario_id)
         tests = result.setdefault(suite, [])
-        if source_test not in tests:
-            tests.append(source_test)
+        # When same source_test maps to multiple scenarios (e.g. test_fdb_tsl_clean and test_fdb_tsl_clean__2),
+        # include each scenario_id in expected_tests list instead of deduplicating by source_test.
+        # This allows parse_runner_test_results to match multiple Running: lines to different scenario_ids.
+        tests.append(scenario_id)
     return result
 
 
@@ -803,22 +832,22 @@ def _suite_result_rows(
                 status = "fail"
                 diagnosis = "c_cross_result_parse_failed"
                 reason = str(parsed.get("reason") or reason)
-            elif source_test in parsed.get("passed", []):
+            elif scenario_id in parsed.get("passed", []):
                 status = "pass"
                 diagnosis = "rust_implementation_matches_c_baseline_for_scenario"
                 reason = f"{source_test} passed in original C runner"
-            elif source_test in parsed.get("failed", []):
+            elif scenario_id in parsed.get("failed", []):
                 status = "fail"
                 diagnosis = "c_test_case_failed"
-                reason = str(parsed.get("failures", {}).get(source_test) or f"{source_test} failed")
-            elif source_test in parsed.get("not_run", []):
+                reason = str(parsed.get("failures", {}).get(scenario_id) or f"{source_test} failed")
+            elif scenario_id in parsed.get("not_run", []):
                 status = "not_run"
                 diagnosis = "c_runner_runtime_failed"
                 reason = f"{source_test} was not run before the runner exited"
             else:
                 status = "fail"
                 diagnosis = "c_cross_result_parse_failed"
-                reason = f"no parsed result for expected source test {source_test}"
+                reason = f"no parsed result for expected scenario {scenario_id}"
         if not diagnosis:
             if status == "pass":
                 diagnosis = "rust_implementation_matches_c_baseline_for_scenario"
