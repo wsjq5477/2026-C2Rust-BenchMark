@@ -920,6 +920,33 @@ def build_matrix(
             raise ValueError("unknown requested C-cross suites: " + ", ".join(unknown_suites))
         valid_cases = [case for case in valid_cases if _suite_for_case(case) in selected_suites]
 
+    enabled_cases = [case for case in valid_cases if case.get("c_cross", {}).get("enabled", True)]
+    not_enabled_cases = [case for case in valid_cases if not case.get("c_cross", {}).get("enabled", True)]
+    not_enabled_rows: list[dict[str, Any]] = []
+    for case in not_enabled_cases:
+        c_cross_info = case.get("c_cross", {})
+        scenario_id = str(case["scenario_id"])
+        log = c_cross / f"{scenario_id}.log"
+        reason = c_cross_info.get("reason", "c_cross_disabled_by_design")
+        _write(log, f"scenario_id={scenario_id}\nstatus=not_supported\nreason={reason}\nc_cross.enabled=False\n")
+        not_enabled_rows.append({
+            "scenario_id": scenario_id,
+            "scorer_case_id": str(case["case_id"]),
+            "suite": _suite_for_case(case),
+            "phase": "full",
+            "failure_layer": "full",
+            "source_runner": f"{_suite_for_case(case)}_runner",
+            "source_test": scenario_id,
+            "c_impl_c_test": "baseline",
+            "rust_impl_c_test": "not_supported",
+            "c_impl_rust_test": "not_run",
+            "rust_impl_rust_test": "pending",
+            "diagnosis": "c_cross_harness_not_supported",
+            "reason": reason,
+            "log": _relative_log_path(log, root),
+            "handoff": "c-analyzer",
+        })
+
     compile_log: list[str] = []
     test_log: list[str] = []
     suite_results: dict[str, tuple[str, str]] = {}
@@ -928,10 +955,10 @@ def build_matrix(
     suite_diagnoses: dict[str, str] = {}
     diagnostics: list[dict[str, Any]] = []
     source_evidence = _source_evidence_by_scenario(test_model)
-    expected_tests_by_suite = _expected_tests_by_suite(valid_cases, source_evidence)
+    expected_tests_by_suite = _expected_tests_by_suite(enabled_cases, source_evidence)
     c_root = _find_c_project_root(root, trace)
     project = (root / project_name).resolve()
-    suites = sorted({_suite_for_case(case) for case in valid_cases})
+    suites = sorted({_suite_for_case(case) for case in enabled_cases})
 
     if c_root is None:
         reason = "FlashDB C project root not found"
@@ -1102,8 +1129,8 @@ def build_matrix(
     _write(c_cross / "cross-compile.log", "\n".join(compile_log))
     _write(c_cross / "cross-test.log", "\n".join(test_log) if test_log else "No C runner executed.\n")
 
-    scenarios = malformed + _suite_result_rows(
-        valid_cases,
+    scenarios = malformed + not_enabled_rows + _suite_result_rows(
+        enabled_cases,
         suite_results,
         suite_test_results,
         suite_phases,

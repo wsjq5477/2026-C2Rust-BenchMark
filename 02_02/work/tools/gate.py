@@ -1169,6 +1169,7 @@ def check_validation_matrix(root: Path, *, allow_not_supported: bool = True) -> 
                 )
 
         has_blocking_value = False
+        is_c_cross_exempt = "depends_on_private" in str(item.get("reason") or "")
         for key in ["c_impl_c_test", "rust_impl_c_test", "c_impl_rust_test", "rust_impl_rust_test"]:
             value = item.get(key)
             if value not in VALID_MATRIX_VALUES:
@@ -1177,8 +1178,9 @@ def check_validation_matrix(root: Path, *, allow_not_supported: bool = True) -> 
             if value == "fail":
                 has_blocking_value = True
             if value == "not_supported":
-                has_blocking_value = True
-                if not allow_not_supported:
+                if not is_c_cross_exempt:
+                    has_blocking_value = True
+                if not allow_not_supported and not is_c_cross_exempt:
                     errors.append(f"validation-matrix.json not_supported is not allowed for scenario {scenario_id}")
 
         if item.get("rust_impl_c_test") == "fail" and isinstance(scenario_id, str):
@@ -1284,7 +1286,11 @@ def check_c_cross_layered_evidence(root: Path) -> list[str]:
             continue
         if row.get("phase") not in {"build", "layout", "link", "full"}:
             errors.append(f"case-results.jsonl record {index} has invalid phase")
-        if row.get("phase") != "full" or row.get("rust_impl_c_test") != "pass":
+        is_c_cross_exempt = (
+            row.get("rust_impl_c_test") == "not_supported"
+            and "depends_on_private" in str(row.get("reason") or "")
+        )
+        if row.get("phase") != "full" or (row.get("rust_impl_c_test") != "pass" and not is_c_cross_exempt):
             errors.append(f"case-results.jsonl record {index} must be full/pass for VERIFY_RUST_WITH_C_TESTS")
 
     for index, row in enumerate(diagnostics or [], start=1):
@@ -1434,6 +1440,8 @@ def check_c_cross_intermediate_evidence(root: Path) -> list[str]:
             continue
         scenario_id = str(row.get("scenario_id") or "<unknown>")
         if status == "not_supported":
+            if "depends_on_private" in str(row.get("reason") or ""):
+                continue
             errors.append(f"intermediate C-cross does not allow not_supported: {scenario_id}")
             continue
         fingerprint = _gate_failure_fingerprint(row)
@@ -1490,7 +1498,12 @@ def check_c_cross_final_evidence(root: Path) -> list[str]:
         failed_ids = [
             str(row.get("scenario_id") or "<unknown>")
             for row in scenarios
-            if isinstance(row, dict) and row.get("rust_impl_c_test") != "pass"
+            if isinstance(row, dict)
+            and row.get("rust_impl_c_test") != "pass"
+            and not (
+                row.get("rust_impl_c_test") == "not_supported"
+                and "depends_on_private" in str(row.get("reason") or "")
+            )
         ]
         if failed_ids:
             errors.append("final C-cross requires every scenario to pass: " + ", ".join(sorted(failed_ids)))

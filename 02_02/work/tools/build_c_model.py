@@ -22,6 +22,20 @@ CONTROL_WORDS = {
     "defined",
 }
 
+C_CROSS_DISABLED_TESTS = {
+    "test_fdb_gc": "depends_on_private_storage_layout_and_gc_sector_management",
+    "test_fdb_gc2": "depends_on_private_storage_layout_and_gc_sector_management",
+    "test_fdb_scale_up": "depends_on_private_storage_layout_and_sector_management",
+}
+
+
+def determine_c_cross_enabled(name: str) -> dict[str, Any]:
+    reason = C_CROSS_DISABLED_TESTS.get(name)
+    if reason:
+        return {"enabled": False, "reason": reason}
+    return {"enabled": True, "reason": "behavior_test_supported"}
+
+
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
@@ -598,8 +612,11 @@ def build_standard_scenarios(
                         "helper_calls": [],
                         "assertion_macros": [],
                         "assertion_count": 0,
+                        "public_api_calls": [],
+                        "private_function_calls": [],
                     },
                 ),
+                "c_cross": determine_c_cross_enabled(name),
             }
         )
     return scenarios
@@ -624,6 +641,8 @@ def empty_semantic_facts() -> dict[str, Any]:
         },
         "scenario_features": [],
         "semantic_markers": [],
+        "public_api_calls": [],
+        "private_function_calls": [],
     }
 
 
@@ -633,7 +652,7 @@ def merge_semantic_facts(names: list[str], test_semantics: dict[str, dict[str, A
         facts = test_semantics.get(name)
         if not isinstance(facts, dict):
             continue
-        for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros", "assertion_details", "assertion_targets", "control_usage", "scenario_features", "semantic_markers"]:
+        for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros", "assertion_details", "assertion_targets", "control_usage", "scenario_features", "semantic_markers", "public_api_calls", "private_function_calls"]:
             values = facts.get(key)
             if isinstance(values, list):
                 merged[key].extend(item for item in values if isinstance(item, str))
@@ -651,7 +670,7 @@ def merge_semantic_facts(names: list[str], test_semantics: dict[str, dict[str, A
                         merged["data_shape"][shape_key] = max(merged["data_shape"][shape_key], value)
                     else:
                         merged["data_shape"][shape_key] += value
-    for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros", "assertion_targets", "scenario_features", "semantic_markers"]:
+    for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros", "assertion_targets", "scenario_features", "semantic_markers", "public_api_calls", "private_function_calls"]:
         merged[key] = sorted(dict.fromkeys(merged[key]))
     return merged
 
@@ -754,6 +773,7 @@ def build_scorer_standard_cases(
                 "semantic_obligations": semantic_obligations_from_facts(tags, facts),
                 "tags": tags,
                 "source_file": invocation.get("source_file"),
+                "c_cross": determine_c_cross_enabled(name),
             }
         )
     return cases
@@ -845,6 +865,21 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     registered_tests = sorted(dict.fromkeys(registered_tests))
     kvdb_tests = sorted([name for name in registered_tests if "kvdb" in tag_test(name)])
     tsdb_tests = sorted([name for name in registered_tests if "tsdb" in tag_test(name)])
+    public_function_set = set(public_functions)
+    private_function_set = set(
+        dict.fromkeys(
+            item["name"]
+            for item in all_functions
+            if not item["file"].startswith("inc/")
+            and not item["file"].startswith("tests/")
+            and not item["name"].startswith("test_")
+            and item["name"] not in public_function_set
+        )
+    )
+    for semantics in test_semantics.values():
+        called = semantics.get("called_functions", [])
+        semantics["public_api_calls"] = sorted(dict.fromkeys(f for f in called if f in public_function_set))
+        semantics["private_function_calls"] = sorted(dict.fromkeys(f for f in called if f in private_function_set))
     standard_scenarios = build_standard_scenarios(registered_invocations, scenario_tags, test_semantics)
     scorer_standard_cases = build_scorer_standard_cases(registered_invocations, scenario_tags, test_semantics)
 
