@@ -226,3 +226,4 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 - 不得把测试改成恒真。
 - 不得在最终 Rust 项目中链接或编译 C 源码。
 - 不得超过 unsafe 比例限制。
+- 不得手写 `deferred.jsonl` 或 `attempts.jsonl`。所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行，由 `record_attempt` 函数自动写入格式和引用关系。手写会导致 fingerprint、status、no_progress_count、attempt_ids 与 gate.py 期望不一致。
