@@ -35,6 +35,18 @@ permission:
 
 每次调度还必须直接写明编辑边界：只允许当前职责内的 `flashDB_rust/**`、`logs/trace/**` 和规定的 `result/issues/**`；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。代理若发现工作台问题，只能追加到 `logs/trace/workbench-issues.jsonl`，不得现场修改工作台脚本或契约。
 
+### 证据格式约束
+
+主控和所有 subagent 必须遵守以下证据格式约束：
+
+1. **禁止手写 `deferred.jsonl` 和 `attempts.jsonl`**：所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行，由 `record_attempt` 函数自动写入 `attempts.jsonl` 和 `deferred.jsonl`。subagent 手写会导致 fingerprint 格式、`status`、`no_progress_count`、`attempt_ids` 等字段与 gate.py 期望不一致。
+
+2. **repair 尝试必须传 `--changed-file`**：运行 `c_cross_validate.py --attempt-kind repair` 时必须附带 `--changed-file <path>` 参数（至少一个在 `flashDB_rust/` 下的文件路径），否则 `attempts.jsonl` 的 `changed_files=[]` 会被 gate.py `_check_attempt_edit_scopes` 拒绝。
+
+3. **parse_failed 场景回派 c-analyzer**：当 `c_cross_validate.py` 产生 `diagnosis=c_cross_result_parse_failed` 时，主控必须回派 `c-analyzer` 修复模型或 parser 映射，不得在 `rust-implementer` 或 `repairer` 中系统性重读 C 工程。
+
+4. **diagnostics.jsonl 必须覆盖 parse_failed**：`c_cross_validate.py` 在产生 per-scenario `parse_failed` diagnosis 时必须同步写入 per-scenario diagnostics 条目（`diagnosis=c_cross_result_parse_failed`），不只是 suite 级条目。
+
 `logs/trace` 是机器证据仓库，不是默认上下文输入。除 `workflow_state.json`、短阶段日志和必要错误 tail 外，subagent 默认不得全文读取 `c_api_model.json`、`c_test_model.json`、`rust_api_design.json`、`validation-matrix.json`、总设计文档或历史报告；需要模型事实时只能读取与当前阶段直接相关的局部片段。
 
 `READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API` 是 `C_ANALYSIS 阶段族`。主控必须一次拉起 `c-analyzer`，让它在同一个 subagent 任务内从当前 checkpoint 继续执行剩余 C 分析阶段；不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。如果 `READ_C_PROJECT` 已通过后用户要求继续 `BUILD_C_MODEL`，主控只能启动一次 `c-analyzer`，任务目标是从 `BUILD_C_MODEL` 继续到 `DESIGN_RUST_API` 或到用户指定的停止点。

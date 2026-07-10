@@ -71,3 +71,5 @@ permission:
 - 不得修改平台输入目录。
 - 不得超过主控 Agent 设置的修复轮次上限。
 - 未经 triage 授权，不得修改核心语义实现。
+- 不得手写 `deferred.jsonl` 或 `attempts.jsonl`。所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行，由 `record_attempt` 函数自动管理格式。
+- 不得在 C-cross 产生 `parse_failed` 时系统性重读 C 工程。parse_failed 必须回派 `c-analyzer`。

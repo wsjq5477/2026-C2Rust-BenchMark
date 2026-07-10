@@ -54,3 +54,4 @@ permission:
 - 不得用 `is_ok()`、`is_some()`、`is_none()` 这类状态/存在性断言替代 C 测试中的属性断言。
 - 不得只按注册测试名判断评分覆盖。
 - 不得只修改 mapping 状态而保留 `MIGRATION_PENDING`。
+- 不得手写 `deferred.jsonl` 或 `attempts.jsonl`。

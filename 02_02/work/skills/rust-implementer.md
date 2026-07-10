@@ -83,3 +83,5 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 - 不让最终 Rust 项目链接或编译 FlashDB C 实现。
 - 不写 `todo!()`、`unimplemented!()`。
 - 不写最终 `STATUS: SUCCESS`。
+- 不手写 `deferred.jsonl` 或 `attempts.jsonl`。所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行，由 `record_attempt` 函数自动管理格式和引用关系。
+- 不在 `VERIFY_RUST_WITH_C_TESTS` 或 `repairer` 阶段系统性重读 C 工程解决 parse_failed 问题。parse_failed 必须回派 `c-analyzer`。
