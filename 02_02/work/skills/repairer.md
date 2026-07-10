@@ -16,6 +16,8 @@ permission:
 
 如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
 
+编辑边界：只允许修改 triage 明确授权的 `flashDB_rust/**`、规定的 `logs/trace/**` 和 `result/issues/repair_trace.jsonl`；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时，只能追加到 `logs/trace/workbench-issues.jsonl`，不得自行修改脚本或契约。
+
 ## 职责范围
 
 - 运行或读取 `work/tools/test_failure_triage.py` 产出的 `logs/trace/test-failure-triage.jsonl`；
@@ -26,6 +28,7 @@ permission:
 - 做最小补丁；
 - 每轮修复后重新运行相应 cargo 命令；
 - 将修复轮次写入 `result/issues/repair_trace.jsonl`。
+- C-cross repair 后记录 `attempts.jsonl`；同一失败指纹连续 3 次无进展才允许进入 `deferred.jsonl`。一旦测试迁移或实现变化带来新通过场景、失败层前移或断言证据增加，必须重新激活该指纹，不得继续沿用 deferred。
 - 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。
 
 ## 上下文边界

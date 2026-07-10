@@ -25,17 +25,39 @@ def module_names(design: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+RUST_STRICT_KEYWORDS = frozenset({
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern",
+    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod",
+    "move", "mut", "pub", "ref", "return", "self", "static", "struct",
+    "super", "trait", "true", "type", "unsafe", "use", "where", "while",
+    "async", "await", "dyn",
+})
+
+
 def safe_rust_ident(name: str) -> str:
     ident = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
     if not ident:
         ident = "module"
     if ident[0].isdigit():
         ident = f"module_{ident}"
+    if ident in RUST_STRICT_KEYWORDS:
+        ident = f"r#{ident}"
+    return ident
+
+
+def safe_external_ident(name: str) -> str:
+    ident = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
+    if not ident:
+        ident = "item"
+    if ident[0].isdigit():
+        ident = f"item_{ident}"
+    if ident in RUST_STRICT_KEYWORDS:
+        ident = f"{ident}_"
     return ident
 
 
 def c_symbol_suffix(name: str) -> str:
-    return safe_rust_ident(name)
+    return safe_external_ident(name)
 
 
 def safe_rust_type(name: str, fallback: str = "GeneratedType") -> str:
@@ -182,6 +204,11 @@ def generate_c_types(design: dict[str, Any]) -> str:
         "#![allow(non_camel_case_types)]",
         "",
     ]
+    type_alias_lines = collect_type_aliases(design)
+    for alias_line in type_alias_lines:
+        lines.append(alias_line)
+    if type_alias_lines:
+        lines.append("")
     for struct in facade_structs(design):
         rust_name = safe_rust_type(str(struct.get("rust_name") or struct["c_name"]), "CAbiStruct")
         fields = struct.get("fields", [])
@@ -222,6 +249,57 @@ def generate_c_types(design: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def collect_type_aliases(design: dict[str, Any]) -> list[str]:
+    struct_names = {safe_rust_type(str(s.get("rust_name") or s.get("c_name", "")), "CAbiStruct") for s in facade_structs(design)}
+    facade = design.get("c_abi_facade")
+    type_map = facade.get("c_type_map") if isinstance(facade, dict) else None
+    resolved = type_map.get("resolved") if isinstance(type_map, dict) else None
+    needed: dict[str, str] = {}
+    if isinstance(resolved, dict):
+        for key, entry in resolved.items():
+            if not isinstance(entry, dict):
+                continue
+            rust_ffi_type = str(entry.get("rust_ffi_type") or "").strip()
+            category = str(entry.get("category") or "")
+            if not rust_ffi_type or rust_ffi_type in struct_names:
+                continue
+            if rust_ffi_type.startswith("*") or rust_ffi_type in ("()", "bool", "i32", "i64", "u32", "u64", "u8", "u16", "usize", "std::ffi::c_int", "std::ffi::c_char", "std::ffi::c_void"):
+                continue
+            if "alias:" in category or "enum:" in category or "status_code" in category:
+                underlying = "u32"
+                if "status_code" in category:
+                    underlying = "i32"
+                elif "i64" in rust_ffi_type.lower():
+                    underlying = "i64"
+                elif "u64" in rust_ffi_type.lower():
+                    underlying = "u64"
+                needed[rust_ffi_type] = underlying
+    functions = facade.get("functions") if isinstance(facade, dict) else []
+    if isinstance(functions, list):
+        for func in functions:
+            if not isinstance(func, dict):
+                continue
+            return_info = func.get("return")
+            if isinstance(return_info, dict):
+                rt = str(return_info.get("rust_ffi_type") or "").strip()
+                if rt and rt not in struct_names and rt not in ("()", "bool", "i32", "i64", "u32", "u64", "u8", "u16", "usize", "std::ffi::c_int", "*mut std::ffi::c_void", "*const std::ffi::c_void", "*mut std::ffi::c_char", "*const std::ffi::c_char") and not rt.startswith("*"):
+                    if rt not in needed:
+                        needed[rt] = "u32"
+            params = func.get("params")
+            if isinstance(params, list):
+                for param in params:
+                    if not isinstance(param, dict):
+                        continue
+                    pt = str(param.get("rust_ffi_type") or "").strip()
+                    if pt and pt not in struct_names and pt not in ("()", "bool", "i32", "i64", "u32", "u64", "u8", "u16", "usize", "std::ffi::c_int", "*mut std::ffi::c_void", "*const std::ffi::c_void", "*mut std::ffi::c_char", "*const std::ffi::c_char") and not pt.startswith("*"):
+                        if pt not in needed:
+                            needed[pt] = "u32"
+    alias_lines: list[str] = []
+    for alias_name in sorted(needed):
+        alias_lines.append(f"pub type {alias_name} = {needed[alias_name]};")
+    return alias_lines
+
+
 def facade_functions(design: dict[str, Any]) -> list[dict[str, Any]]:
     facade = design.get("c_abi_facade")
     functions = facade.get("functions") if isinstance(facade, dict) else []
@@ -232,7 +310,7 @@ def facade_functions(design: dict[str, Any]) -> list[dict[str, Any]]:
     ] if isinstance(functions, list) else []
 
 
-def neutral_return(rust_type: str) -> str:
+def neutral_return(rust_type: str, struct_names: set[str] | None = None) -> str:
     stripped = rust_type.strip()
     if stripped == "()":
         return ""
@@ -242,6 +320,12 @@ def neutral_return(rust_type: str) -> str:
         return "std::ptr::null()"
     if stripped.startswith("*mut"):
         return "std::ptr::null_mut()"
+    if struct_names and stripped in struct_names:
+        return f"unsafe {{ core::mem::zeroed::<{stripped}>() }}"
+    if stripped in ("i32", "std::ffi::c_int"):
+        return "0"
+    if stripped in ("usize", "u32", "u64", "i64", "u8", "u16", "i8", "i16"):
+        return "0"
     return "0"
 
 
@@ -249,15 +333,23 @@ def generate_typed_c_abi(design: dict[str, Any]) -> str:
     lines = [
         "//! Typed C ABI facade generated from rust_api_design.json.",
         "",
+        "#![allow(unused_variables)]",
+        "",
         "use super::c_types::*;",
         "",
     ]
+    struct_names = {safe_rust_type(str(s.get("rust_name") or s.get("c_name", "")), "CAbiStruct") for s in facade_structs(design)}
+    type_aliases = collect_type_aliases(design)
+    for alias_line in type_aliases:
+        lines.append(alias_line)
+    if type_aliases:
+        lines.append("")
     functions = facade_functions(design)
     if not functions:
         lines.extend(["#[no_mangle]", "pub extern \"C\" fn rust_c_abi_facade_available() -> usize { 1 }", ""])
         return "\n".join(lines)
     for function in functions:
-        export = safe_rust_ident(function["rust_export"])
+        export = safe_external_ident(function["rust_export"])
         raw_params = function.get("params", [])
         params: list[str] = []
         if isinstance(raw_params, list):
@@ -269,7 +361,7 @@ def generate_typed_c_abi(design: dict[str, Any]) -> str:
                 params.append(f"{name}: {rust_type}")
         return_info = function.get("return")
         return_type = str(return_info.get("rust_ffi_type", "()")) if isinstance(return_info, dict) else "()"
-        value = neutral_return(return_type)
+        value = neutral_return(return_type, struct_names)
         lines.extend(["#[no_mangle]"])
         if return_type == "()":
             lines.extend([f"pub extern \"C\" fn {export}({', '.join(params)}) {{", "}"])

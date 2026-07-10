@@ -16,9 +16,11 @@ permission:
 
 如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
 
+编辑边界：只允许修改 `flashDB_rust/tests/**`、规定的测试 mapping 和 `logs/trace/**` 运行证据；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时，只能追加到 `logs/trace/workbench-issues.jsonl`，不得自行修改工作台。
+
 ## 前置条件
 
-`VERIFY_RUST_WITH_C_TESTS` 必须已经通过。此时 Rust 源码已经由 `rust-implementer` 用原始 C 测试证据验证过，后续 Rust 测试失败时默认优先怀疑测试迁移、测试 harness 或 mapping 证据，而不是直接改 Rust 实现。
+`VERIFY_RUST_WITH_C_TESTS` 中间 gate 必须已经通过。build/layout/link 已通过；全部通过或有完整三次无进展证据的 deferred 场景可进入 `MIGRATE_TESTS`。这不是最终 C-cross 结论，迁移测试可以为 deferred 场景补充新的语义和断言证据，随后由修复流程重新激活验证。
 
 ## 职责范围
 

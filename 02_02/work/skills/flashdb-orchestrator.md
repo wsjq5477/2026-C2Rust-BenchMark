@@ -33,6 +33,8 @@ permission:
 
 主控传给 subagent 的提示词必须是短调度单，只允许包含动态上下文：作品根目录、当前 checkpoint、目标阶段族、`$FLASHDB_SOURCE`、必须先读取 `work/skills/{subagent}.md`、需要读取的 trace/state 文件、停止条件和回写证据路径。如果调度提示与 subagent Markdown 冲突，以 subagent Markdown 为准。禁止在调度提示中复制或改写 subagent 的业务细节，禁止写入固定 API 清单、固定源码文件清单或实现策略。
 
+每次调度还必须直接写明编辑边界：只允许当前职责内的 `flashDB_rust/**`、`logs/trace/**` 和规定的 `result/issues/**`；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。代理若发现工作台问题，只能追加到 `logs/trace/workbench-issues.jsonl`，不得现场修改工作台脚本或契约。
+
 `logs/trace` 是机器证据仓库，不是默认上下文输入。除 `workflow_state.json`、短阶段日志和必要错误 tail 外，subagent 默认不得全文读取 `c_api_model.json`、`c_test_model.json`、`rust_api_design.json`、`validation-matrix.json`、总设计文档或历史报告；需要模型事实时只能读取与当前阶段直接相关的局部片段。
 
 `READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API` 是 `C_ANALYSIS 阶段族`。主控必须一次拉起 `c-analyzer`，让它在同一个 subagent 任务内从当前 checkpoint 继续执行剩余 C 分析阶段；不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。如果 `READ_C_PROJECT` 已通过后用户要求继续 `BUILD_C_MODEL`，主控只能启动一次 `c-analyzer`，任务目标是从 `BUILD_C_MODEL` 继续到 `DESIGN_RUST_API` 或到用户指定的停止点。
@@ -222,7 +224,7 @@ python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
 运行：
 
 ```bash
-python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind checkpoint --trigger core_complete
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```
 
@@ -241,7 +243,7 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 
 本阶段使用原始 C 测试证据验证 Rust 实现。临时 C harness 只能写入 `logs/trace/c-cross/`，不得进入 `flashDB_rust/src/`，不得让最终 Rust 项目依赖 FlashDB C 实现。
 
-`c_cross_validate.py` 必须执行真实编译和运行：先编译 Rust `staticlib`，再生成并运行 C ABI layout checker，确认 C/Rust 两侧 `sizeof`、`alignof` 和字段 offset 匹配；layout mismatch 必须输出 `[LAYOUT MISMATCH]`，写入 `layout-check.log` 和 `layout-check.json`，并阻止后续功能 runner。layout checker 通过后，才允许从当前输入的 `tests/` 目录扫描发现带 `main()` 和测试注册证据的原始 C runner，再把它们链接到 Rust C ABI facade。工具必须保留 build/layout/link/full 分层证据；`validation-matrix.json.policy` 必须是 `strict` 且 `mode == full`；任一 `fail` 或 `not_supported` 都阻断进入 `MIGRATE_TESTS`。
+`c_cross_validate.py` 必须执行真实编译和运行：先编译 Rust `staticlib`，再生成并运行 C ABI layout checker，确认 C/Rust 两侧 `sizeof`、`alignof` 和字段 offset 匹配；layout mismatch 必须输出 `[LAYOUT MISMATCH]`，写入 `layout-check.log` 和 `layout-check.json`，并阻止后续功能 runner。layout checker通过后，动态扫描原始 C runner 并链接到 Rust C ABI facade。局部检查点可按模型动态 suite 使用 `--suite <suite>`，不得硬编码 suite 或用例总数。相同失败指纹连续 3 次无进展的 repair 才进入 `deferred`；新通过场景、失败层前移或断言证据增加会重置计数。中间 gate 要求 build/layout/link 通过，允许证据完整的 deferred 场景进入 `MIGRATE_TESTS`，但 `not_supported` 和不可归因结果仍阻断。
 
 ## MIGRATE_TESTS
 
@@ -253,7 +255,7 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 - `logs/trace/rust_api_design.json` 的相关局部片段
 - `logs/trace/validation-matrix.json` 的结论或相关局部片段
 
-必须在 `VERIFY_RUST_WITH_C_TESTS` gate 通过后由 `test-migrator` subagent 执行。如果原生 subagent 不可用，主控必须拉起隔离任务代理读取 `work/skills/test-migrator.md` 后执行；只有同一 subagent 连续 3 次失败后，主控才可 fallback 自行执行。最终 gate 只认产物和测试结果。
+必须在 `VERIFY_RUST_WITH_C_TESTS` 中间 gate 通过后由 `test-migrator` subagent 执行；证据完整的 deferred 场景可进入 `MIGRATE_TESTS`，但不等于最终 C-cross 通过。如果原生 subagent 不可用，主控必须拉起隔离任务代理读取 `work/skills/test-migrator.md` 后执行；只有同一 subagent 连续 3 次失败后，主控才可 fallback 自行执行。最终 gate 只认产物和测试结果。
 
 运行：
 
@@ -318,11 +320,14 @@ python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 运行：
 
 ```bash
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind final --trigger final_verification
 python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json
 python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json
 python3 work/tools/report_writer.py --root . --output result/output.md --issues result/issues/00-summary.md
 python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 ```
+
+第一条命令必须在所有 Rust 修复和测试之后执行，且必须是最终全量 C-cross：不得带 `--suite`，所有场景必须通过，`deferred.jsonl` 不得有 active deferred。它必须是报告前最后一次 C-cross 尝试。
 
 写入：
 

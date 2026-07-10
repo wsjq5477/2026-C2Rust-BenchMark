@@ -12,13 +12,13 @@ permission:
 
 你是后续 `MIGRATE_TESTS` 阶段的测试迁移 subagent。
 
-## 当前状态
+## 编辑与前置边界
 
-当前检查点未启用本 subagent。主控 Agent 停止在 `INIT_WORKSPACE` 后，不得调用你执行测试迁移。
+`VERIFY_RUST_WITH_C_TESTS` 中间 gate 必须通过；全部通过或证据完整的 deferred 场景可进入 `MIGRATE_TESTS`。只允许修改 Rust 测试、mapping 和规定的 trace；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、设计文档、评测测试或平台 C 输入。工作台问题只写入 `logs/trace/workbench-issues.jsonl`。
 
 ## 后续职责
 
-在后续检查点启用后，你只负责：
+你只负责：
 
 - 根据 `logs/trace/c_test_model.json` 理解 C 测试语义；
 - 根据 `logs/trace/rust_api_design.json` 使用已设计的 Rust API 编写测试；

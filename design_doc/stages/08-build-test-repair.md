@@ -97,6 +97,8 @@ fallback 规则：
 
 同一个 fingerprint 连续出现 2 次后，禁止继续盲修 `flashDB_rust/src/`，必须切回 triage/fallback，并把结论追加到 `logs/trace/test-failure-triage.jsonl`。
 
+C-cross 失败使用独立收敛规则：每次实际修改 `flashDB_rust/**` 后以 `--attempt-kind repair` 重跑受影响的动态 suite。相同失败指纹连续 3 次无进展才可写入 `deferred.jsonl`；“无进展”要求通过场景集合、失败层级和断言证据均未改善。出现任何改善必须清零并重新计数。deferred 只允许流程暂时继续，最终全量 C-cross 仍必须全部通过。
+
 `repairer` 最多 8 轮。每轮必须：
 
 1. 读取失败日志；
@@ -151,6 +153,7 @@ python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 - `test_oracle_suspect` 只能修改 tests、mapping 或测试说明。
 - `VERIFY_RUST_WITH_C_TESTS` 已通过后，Rust 测试失败默认优先怀疑测试迁移或 harness；只有完整 C evidence 支持测试预期时，才允许改 Rust 源码。
 - `insufficient_evidence` 只能补一轮证据，不能让流程无限停住。
+- 运行时代理不得修改 `work/**`、`INSTRUCTION.md`、`.opencode/**`、设计文档、评测测试或平台 C 输入；工作台问题只写入 `logs/trace/workbench-issues.jsonl`。
 
 ## 下一阶段交接
 

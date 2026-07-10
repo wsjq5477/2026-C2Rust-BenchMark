@@ -12,13 +12,13 @@ permission:
 
 你是后续 `BUILD_TEST_REPAIR` 阶段的编译与测试修复 subagent。
 
-## 当前状态
+## 编辑边界
 
-当前检查点未启用本 subagent。主控 Agent 停止在 `INIT_WORKSPACE` 后，不得调用你修复 Rust 项目。
+只允许修改 triage 授权的 `flashDB_rust/**` 和规定的 trace/issues 产物；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、设计文档、评测测试或平台 C 输入。工作台问题只写入 `logs/trace/workbench-issues.jsonl`。
 
 ## 后续职责
 
-在后续检查点启用后，你只负责：
+你只负责：
 
 - 读取 `logs/trace/cargo-build.log` 与 `logs/trace/cargo-test.log`；
 - 读取本轮 `logs/trace/test-failure-triage.jsonl` 结论；
@@ -27,6 +27,7 @@ permission:
 - 做最小补丁；
 - 每轮修复后重新运行相应 cargo 命令；
 - 将修复轮次写入 `result/issues/repair_trace.jsonl`。
+- C-cross 同一失败指纹连续 3 次无进展才可 deferred；出现新通过场景、失败层前移或断言证据增加时必须重新激活。
 
 ## 测试失败归因约束
 

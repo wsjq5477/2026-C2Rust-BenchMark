@@ -16,6 +16,8 @@ permission:
 
 如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
 
+编辑边界：只允许修改本职责内的 `flashDB_rust/**` 和规定的 `logs/trace/**` 运行证据；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时，不得自行修复，只能追加到 `logs/trace/workbench-issues.jsonl`。
+
 ## 职责范围
 
 - 根据 `logs/trace/rust_api_design.json` 的必要局部设计事实生成 `flashDB_rust/`。
@@ -34,11 +36,11 @@ permission:
 python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust
 python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
-python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind checkpoint --trigger core_complete
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```
 
-`VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。`c_cross_validate.py --mode full` 会按 build/layout/link/full 分层执行：编译 Rust `staticlib`，运行 C ABI layout checker，编译/链接原始 C 测试 runner，再运行 runner。它必须写入 `build-check.json`、`layout-check.json`、`link-check.json`、`case-results.jsonl`、`diagnostics.jsonl` 和 `validation-matrix.json`。只有 `validation-matrix.json.policy == strict`、`mode == full` 且所有 scorer cases 的 `rust_impl_c_test == pass` 后，才允许进入 `MIGRATE_TESTS`。
+`VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。工具按 build/layout/link/full 分层执行并解析 runner 的逐测试输出。实现期间可按动态发现的 suite 使用 `--suite <suite>`，不得硬编码 suite 名或用例总数。相同失败指纹只有连续 3 次无进展的 `repair` 尝试后才可写入 `deferred`；出现新通过场景、失败层前移或断言证据增加必须重置计数。中间 gate 要求 build/layout/link 通过，允许证据完整的 deferred 场景进入测试迁移；不得把 `not_supported`、解析失败或无归因 runner 失败当作通过。最终全量 C-cross 由 `REPORT_AND_VERIFY` 在所有修复后另行执行。
 
 ## 上下文边界
 

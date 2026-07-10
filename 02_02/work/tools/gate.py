@@ -73,12 +73,23 @@ VALID_TEST_TRIAGE_CLASSIFICATIONS = {
 }
 
 
+RUST_STRICT_KEYWORDS = frozenset({
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern",
+    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod",
+    "move", "mut", "pub", "ref", "return", "self", "static", "struct",
+    "super", "trait", "true", "type", "unsafe", "use", "where", "while",
+    "async", "await", "dyn",
+})
+
+
 def safe_rust_ident(name: str) -> str:
     ident = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
     if not ident:
         ident = "item"
     if ident[0].isdigit():
         ident = f"item_{ident}"
+    if ident in RUST_STRICT_KEYWORDS:
+        ident = f"r#{ident}"
     return ident
 
 
@@ -1294,6 +1305,210 @@ def check_c_cross_layered_evidence(root: Path) -> list[str]:
     return errors
 
 
+def _gate_failure_fingerprint(row: dict[str, Any]) -> str:
+    reason = " ".join(str(row.get("reason") or "unknown failure").split())
+    reason = re.sub(r"0x[0-9A-Fa-f]+", "<addr>", reason)
+    return "|".join(
+        [
+            str(row.get("failure_layer") or row.get("phase") or "unknown"),
+            str(row.get("suite") or "unknown"),
+            str(row.get("source_test") or row.get("scenario_id") or "unknown"),
+            reason,
+        ]
+    )
+
+
+def _active_deferred_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        fingerprint = row.get("fingerprint")
+        if isinstance(fingerprint, str) and fingerprint:
+            latest[fingerprint] = row
+    return {
+        fingerprint: row
+        for fingerprint, row in latest.items()
+        if row.get("status") == "deferred"
+    }
+
+
+def _check_attempt_edit_scopes(attempts: list[dict[str, Any]]) -> list[str]:
+    errors: list[str] = []
+    for index, row in enumerate(attempts, start=1):
+        if row.get("kind") != "repair":
+            continue
+        changed_files = row.get("changed_files")
+        if not isinstance(changed_files, list) or not changed_files:
+            errors.append(f"attempts.jsonl repair record {index} must include changed_files")
+            continue
+        invalid = [
+            path
+            for path in changed_files
+            if not isinstance(path, str)
+            or not Path(path).as_posix().startswith("flashDB_rust/")
+            or ".." in Path(path).parts
+        ]
+        if invalid:
+            errors.append(f"attempts.jsonl repair record {index} changed_files must stay under flashDB_rust/")
+    return errors
+
+
+def _load_c_cross_convergence(root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    c_cross = root / "logs" / "trace" / "c-cross"
+    errors: list[str] = []
+    attempts, attempt_error = load_jsonl(c_cross / "attempts.jsonl")
+    if attempt_error:
+        errors.append(f"attempts.jsonl: {attempt_error}")
+        attempts = []
+    deferred, deferred_error = load_jsonl(c_cross / "deferred.jsonl")
+    if deferred_error:
+        errors.append(f"deferred.jsonl: {deferred_error}")
+        deferred = []
+    return attempts or [], deferred or [], errors
+
+
+def check_c_cross_intermediate_evidence(root: Path) -> list[str]:
+    errors: list[str] = []
+    trace = root / "logs" / "trace"
+    c_cross = trace / "c-cross"
+    matrix, matrix_error = load_json(trace / "validation-matrix.json")
+    if matrix_error:
+        return [f"validation-matrix.json: {matrix_error}"]
+
+    for filename, expected_phase in [
+        ("build-check.json", "build"),
+        ("layout-check.json", "layout"),
+        ("link-check.json", "link"),
+    ]:
+        data, data_error = load_json(c_cross / filename)
+        if data_error:
+            errors.append(f"{filename}: {data_error}")
+            continue
+        if data.get("phase") != expected_phase:
+            errors.append(f"{filename} phase must be {expected_phase}")
+        if data.get("status") != "pass":
+            errors.append(f"{filename} status must be pass before test migration")
+
+    if matrix.get("mode") != "full":
+        errors.append("intermediate C-cross stage completion requires mode full")
+    if matrix.get("scope", "all") != "all":
+        errors.append("intermediate C-cross stage completion requires all-suite scope")
+    matrix_errors = check_validation_matrix(root, allow_not_supported=False)
+    errors.extend(
+        error
+        for error in matrix_errors
+        if not error.startswith("Rust implementation failed C baseline scenarios:")
+    )
+
+    case_rows, case_error = load_jsonl(c_cross / "case-results.jsonl")
+    if case_error:
+        errors.append(f"case-results.jsonl: {case_error}")
+        case_rows = []
+    diagnostics, diagnostics_error = load_jsonl(c_cross / "diagnostics.jsonl")
+    if diagnostics_error:
+        errors.append(f"diagnostics.jsonl: {diagnostics_error}")
+        diagnostics = []
+    attempts, deferred_rows, convergence_errors = _load_c_cross_convergence(root)
+    errors.extend(convergence_errors)
+    errors.extend(_check_attempt_edit_scopes(attempts))
+    active_deferred = _active_deferred_rows(deferred_rows)
+    attempts_by_id = {
+        str(row.get("attempt_id")): row
+        for row in attempts
+        if isinstance(row.get("attempt_id"), str)
+    }
+
+    scenarios = matrix.get("scenarios")
+    scenario_rows = [row for row in scenarios if isinstance(row, dict)] if isinstance(scenarios, list) else []
+    matrix_ids = {row.get("scenario_id") for row in scenario_rows}
+    case_ids = {
+        row.get("scenario_id")
+        for row in case_rows or []
+        if isinstance(row, dict)
+    }
+    if matrix_ids != case_ids:
+        errors.append("case-results.jsonl scenario_id set must match validation-matrix.json scenarios")
+
+    for row in scenario_rows:
+        status = row.get("rust_impl_c_test")
+        if status == "pass":
+            continue
+        scenario_id = str(row.get("scenario_id") or "<unknown>")
+        if status == "not_supported":
+            errors.append(f"intermediate C-cross does not allow not_supported: {scenario_id}")
+            continue
+        fingerprint = _gate_failure_fingerprint(row)
+        if row.get("diagnosis") == "c_cross_result_parse_failed":
+            has_diagnostic = any(
+                isinstance(item, dict)
+                and item.get("diagnosis") == "c_cross_result_parse_failed"
+                for item in diagnostics or []
+            )
+            if not has_diagnostic:
+                errors.append(f"parse failure lacks diagnostics evidence: {scenario_id}")
+            continue
+        deferred = active_deferred.get(fingerprint)
+        if deferred is None:
+            errors.append(f"intermediate C-cross failure lacks active deferred evidence: {scenario_id}")
+            continue
+        if deferred.get("no_progress_count") != 3:
+            errors.append(f"deferred failure must have exactly three no-progress attempts: {scenario_id}")
+        attempt_ids = deferred.get("attempt_ids")
+        if not isinstance(attempt_ids, list) or len(attempt_ids) != 3:
+            errors.append(f"deferred failure must reference three attempts: {scenario_id}")
+            continue
+        referenced = [attempts_by_id.get(str(attempt_id)) for attempt_id in attempt_ids]
+        if any(item is None for item in referenced):
+            errors.append(f"deferred failure references missing attempts: {scenario_id}")
+            continue
+        counts = [
+            item.get("no_progress_counts", {}).get(fingerprint)
+            for item in referenced
+            if isinstance(item, dict)
+        ]
+        if counts != [1, 2, 3] or any(item.get("kind") != "repair" or item.get("progress") is not False for item in referenced if isinstance(item, dict)):
+            errors.append(f"deferred failure attempts must prove consecutive no progress: {scenario_id}")
+    return errors
+
+
+def check_c_cross_final_evidence(root: Path) -> list[str]:
+    errors: list[str] = []
+    trace = root / "logs" / "trace"
+    matrix, matrix_error = load_json(trace / "validation-matrix.json")
+    if matrix_error:
+        return [f"validation-matrix.json: {matrix_error}"]
+    if matrix.get("mode") != "full":
+        errors.append("final C-cross requires mode full")
+    if matrix.get("scope", "all") != "all":
+        errors.append("final C-cross requires all-suite scope")
+    if matrix.get("attempt_kind") != "final":
+        errors.append("final C-cross requires attempt_kind final")
+
+    errors.extend(check_validation_matrix(root, allow_not_supported=False))
+    errors.extend(check_c_cross_layered_evidence(root))
+    scenarios = matrix.get("scenarios")
+    if isinstance(scenarios, list):
+        failed_ids = [
+            str(row.get("scenario_id") or "<unknown>")
+            for row in scenarios
+            if isinstance(row, dict) and row.get("rust_impl_c_test") != "pass"
+        ]
+        if failed_ids:
+            errors.append("final C-cross requires every scenario to pass: " + ", ".join(sorted(failed_ids)))
+
+    attempts, deferred_rows, convergence_errors = _load_c_cross_convergence(root)
+    errors.extend(convergence_errors)
+    errors.extend(_check_attempt_edit_scopes(attempts))
+    if _active_deferred_rows(deferred_rows):
+        errors.append("final C-cross must not contain active deferred failures")
+    execution_id = matrix.get("execution_id")
+    matching_attempts = [row for row in attempts if row.get("attempt_id") == execution_id]
+    if not matching_attempts or matching_attempts[-1].get("kind") != "final":
+        errors.append("final C-cross matrix must have a matching final attempt record")
+    if not attempts or attempts[-1].get("attempt_id") != execution_id or attempts[-1].get("kind") != "final":
+        errors.append("final C-cross matrix must match the latest attempt record")
+    return errors
+
+
 def check_verify_rust_with_c_tests(root: Path) -> list[str]:
     errors = check_common_after_scaffold(root)
     required_stages = [
@@ -1310,8 +1525,7 @@ def check_verify_rust_with_c_tests(root: Path) -> list[str]:
     errors.extend(state_errors)
     if state is None:
         return errors
-    errors.extend(check_validation_matrix(root, allow_not_supported=False))
-    errors.extend(check_c_cross_layered_evidence(root))
+    errors.extend(check_c_cross_intermediate_evidence(root))
     if not (root / "logs" / "trace" / "c-cross" / "layout-check.log").exists():
         errors.append("missing logs/trace/c-cross/layout-check.log")
     if not (root / "logs" / "trace" / "06-5-verify-rust-with-c-tests.md").exists():
@@ -1578,7 +1792,7 @@ def check_report_and_verify(root: Path) -> list[str]:
         errors.append("workflow_state.json current_stage must be DONE for final report")
     if state.get("build_status") != "pass" or state.get("test_status") != "pass":
         errors.append("workflow_state.json build_status and test_status must be pass")
-    errors.extend(check_validation_matrix(root, allow_not_supported=True))
+    errors.extend(check_c_cross_final_evidence(root))
     errors.extend(check_dynamic_test_mapping(root))
     errors.extend(check_test_consistency(root))
     errors.extend(check_subagent_evidence(root))

@@ -94,6 +94,14 @@ cd flashDB_rust
 cargo check
 ```
 
+`cargo check` 通过后可执行一次只到链接层的 C-cross 检查点：
+
+```bash
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode link --attempt-kind checkpoint --trigger scaffold
+```
+
+该检查点用于尽早暴露 staticlib、ABI layout 和 C runner 链接问题，不要求业务测试通过，也不作为最终结论。suite、runner 和测试数量必须动态发现。
+
 并记录：
 
 ```text
@@ -158,6 +166,7 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 - 不链接或编译 C 源码。
 - 不改变 `rust_api_design.json` 的 public API。
 - 本阶段修复仅限骨架编译问题，不实现完整业务语义。
+- 运行时代理不得修改 `work/**`、`INSTRUCTION.md`、`.opencode/**`、设计文档、评测测试或平台 C 输入；工作台问题只写入 `logs/trace/workbench-issues.jsonl`。
 
 ## 下一阶段交接
 

@@ -324,6 +324,30 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertIn("如果外部调度提示与本文档冲突，以本文档为准", implementer)
         self.assertIn("主控调度提示只提供动态上下文", implementer)
 
+    def test_c_cross_convergence_and_runtime_edit_contracts_are_documented(self):
+        instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
+        orchestrator = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        implementer = (PROJECT / "work" / "skills" / "rust-implementer.md").read_text(encoding="utf-8")
+        migrator = (PROJECT / "work" / "skills" / "test-migrator.md").read_text(encoding="utf-8")
+        repairer = (PROJECT / "work" / "skills" / "repairer.md").read_text(encoding="utf-8")
+
+        for text in [instruction, orchestrator, implementer, migrator, repairer]:
+            self.assertIn("不得修改 `work/**`", text)
+            self.assertIn("不得修改 `INSTRUCTION.md`", text)
+            self.assertIn("不得修改 `.opencode/**`", text)
+            self.assertIn("logs/trace/workbench-issues.jsonl", text)
+
+        for text in [instruction, orchestrator, implementer, repairer]:
+            self.assertIn("连续 3 次无进展", text)
+            self.assertIn("deferred", text)
+
+        self.assertIn("deferred 场景可进入 `MIGRATE_TESTS`", instruction)
+        self.assertIn("deferred 场景可进入 `MIGRATE_TESTS`", migrator)
+        self.assertIn("--attempt-kind final --trigger final_verification", instruction)
+        self.assertIn("--attempt-kind final --trigger final_verification", orchestrator)
+        self.assertIn("最终全量 C-cross", instruction)
+        self.assertIn("所有场景必须通过", instruction)
+
     def test_project_local_skills_have_valid_frontmatter_and_clear_scope(self):
         expected = ["flashdb-migration", "flashdb-test-migration", "rust-compile-repair", "flashdb-report"]
         for skill_name in expected:
@@ -717,23 +741,428 @@ class FrameworkCheckpointTests(unittest.TestCase):
                         "scenario_id": "test_missing_case_id",
                         "suite": "tsdb",
                     },
+                    {
+                        "case_id": "4",
+                        "case_name": "missing_suite",
+                        "scenario_id": "test_name_must_not_imply_suite",
+                    },
                 ],
             }), encoding="utf-8")
 
             matrix = cross.build_matrix(root, trace)
 
-            self.assertEqual(3, matrix["total_scenarios"])
+            self.assertEqual(4, matrix["total_scenarios"])
             malformed = [
                 item
                 for item in matrix["scenarios"]
                 if str(item["scenario_id"]).startswith("malformed_case_")
             ]
-            self.assertEqual(2, len(malformed))
+            self.assertEqual(3, len(malformed))
             for item in malformed:
                 self.assertEqual("not_supported", item["rust_impl_c_test"])
                 self.assertEqual("c_cross_harness_not_supported", item["diagnosis"])
                 self.assertIn("malformed scorer_standard_cases entry", item["reason"])
                 self.assertTrue(item["log"].startswith("logs/trace/c-cross/"))
+
+            missing_suite = next(item for item in malformed if "suite" in item["reason"])
+            self.assertIn("missing or non-string suite", missing_suite["reason"])
+
+    def test_c_cross_parses_partial_suite_results_per_test(self):
+        cross = load_tool("c_cross_validate.py")
+
+        result = cross.parse_runner_test_results(
+            "\n".join([
+                "  Running: test_a ...",
+                "  Running: test_b ...",
+                "  FAIL test_b: value == expected (line 9)",
+            ]),
+            ["test_a", "test_b", "test_c"],
+            1,
+        )
+
+        self.assertEqual("parsed", result["status"])
+        self.assertEqual(["test_a", "test_b"], result["started"])
+        self.assertEqual(["test_a"], result["passed"])
+        self.assertEqual(["test_b"], result["failed"])
+        self.assertEqual(["test_c"], result["not_run"])
+        self.assertIn("value == expected", result["failures"]["test_b"])
+
+    def test_c_cross_rejects_unknown_or_duplicate_test_output(self):
+        cross = load_tool("c_cross_validate.py")
+
+        unknown = cross.parse_runner_test_results(
+            "Running: unknown_test ...\n",
+            ["test_a"],
+            1,
+        )
+        duplicate = cross.parse_runner_test_results(
+            "Running: test_a ...\nRunning: test_a ...\n",
+            ["test_a"],
+            0,
+        )
+
+        self.assertEqual("parse_failed", unknown["status"])
+        self.assertIn("unknown started tests", unknown["reason"])
+        self.assertEqual("parse_failed", duplicate["status"])
+        self.assertIn("duplicate start", duplicate["reason"])
+
+    def test_c_cross_rejects_missing_success_output(self):
+        cross = load_tool("c_cross_validate.py")
+
+        result = cross.parse_runner_test_results("", ["test_a"], 0)
+
+        self.assertEqual("parse_failed", result["status"])
+        self.assertIn("successful runner did not start all expected tests", result["reason"])
+
+    def test_c_cross_rejects_unattributed_runner_failure(self):
+        cross = load_tool("c_cross_validate.py")
+
+        result = cross.parse_runner_test_results(
+            "Running: test_a ...\nrunner crashed\n",
+            ["test_a"],
+            1,
+        )
+
+        self.assertEqual("parse_failed", result["status"])
+        self.assertIn("nonzero runner exit has no attributed test failure", result["reason"])
+
+    def test_c_cross_selected_suite_limits_checkpoint_scope(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            trace.mkdir(parents=True)
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "scorer_standard_cases": [
+                    {"case_id": "1", "scenario_id": "test_alpha", "suite": "alpha"},
+                    {"case_id": "2", "scenario_id": "test_beta", "suite": "beta"},
+                ],
+            }), encoding="utf-8")
+
+            matrix = cross.build_matrix(root, trace, selected_suites={"alpha"})
+
+            self.assertEqual("selected", matrix["scope"])
+            self.assertEqual(["alpha"], matrix["selected_suites"])
+            self.assertEqual(1, matrix["total_scenarios"])
+            self.assertEqual(["test_alpha"], [row["scenario_id"] for row in matrix["scenarios"]])
+
+    def test_c_cross_rejects_unknown_selected_suite(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            trace.mkdir(parents=True)
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "scorer_standard_cases": [
+                    {"case_id": "1", "scenario_id": "test_alpha", "suite": "alpha"},
+                ],
+            }), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "unknown requested C-cross suites: missing"):
+                cross.build_matrix(root, trace, selected_suites={"missing"})
+
+    def test_c_cross_cli_writes_selected_checkpoint_snapshot(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            trace.mkdir(parents=True)
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "scorer_standard_cases": [
+                    {"case_id": "1", "scenario_id": "test_alpha", "suite": "alpha"},
+                    {"case_id": "2", "scenario_id": "test_beta", "suite": "beta"},
+                ],
+            }), encoding="utf-8")
+
+            exit_code = cross.main([
+                "--root", str(root),
+                "--out", "logs/trace",
+                "--suite", "alpha",
+                "--attempt-kind", "checkpoint",
+                "--trigger", "core_batch",
+            ])
+
+            self.assertEqual(1, exit_code)
+            matrix = json.loads((trace / "validation-matrix.json").read_text(encoding="utf-8"))
+            self.assertEqual("selected", matrix["scope"])
+            self.assertEqual(["alpha"], matrix["selected_suites"])
+            self.assertEqual("checkpoint", matrix["attempt_kind"])
+            self.assertEqual("core_batch", matrix["trigger"])
+            snapshots = list((trace / "c-cross" / "checkpoints").glob("*.json"))
+            self.assertEqual(1, len(snapshots))
+            self.assertEqual(matrix, json.loads(snapshots[0].read_text(encoding="utf-8")))
+            attempts = [
+                json.loads(line)
+                for line in (trace / "c-cross" / "attempts.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(1, len(attempts))
+            self.assertEqual(matrix["execution_id"], attempts[0]["attempt_id"])
+            self.assertEqual("checkpoint", attempts[0]["kind"])
+
+    def test_c_cross_fingerprint_normalizes_volatile_addresses(self):
+        cross = load_tool("c_cross_validate.py")
+        first = {
+            "failure_layer": "full",
+            "suite": "alpha",
+            "source_test": "test_alpha",
+            "reason": "value at 0x7ffabc != expected (line 12)",
+        }
+        second = dict(first, reason="value at 0x123456 != expected (line 12)")
+
+        self.assertEqual(cross.failure_fingerprint(first), cross.failure_fingerprint(second))
+        self.assertIn("test_alpha", cross.failure_fingerprint(first))
+        self.assertIn("line 12", cross.failure_fingerprint(first))
+
+    def test_c_cross_compare_attempt_detects_progress_and_regression(self):
+        cross = load_tool("c_cross_validate.py")
+
+        def matrix(status: str, reason: str, layer: str = "full"):
+            return {
+                "scenarios": [{
+                    "scenario_id": "test_alpha",
+                    "source_test": "test_alpha",
+                    "suite": "alpha",
+                    "failure_layer": layer,
+                    "rust_impl_c_test": status,
+                    "reason": reason,
+                }],
+            }
+
+        unchanged = cross.compare_attempt(matrix("fail", "assert A"), matrix("fail", "assert A"))
+        later_assertion = cross.compare_attempt(matrix("fail", "assert A"), matrix("fail", "assert B"))
+        passed = cross.compare_attempt(matrix("fail", "assert A"), matrix("pass", "passed"))
+        regressed = cross.compare_attempt(matrix("pass", "passed"), matrix("fail", "assert A"))
+
+        self.assertFalse(unchanged["progress"])
+        self.assertTrue(later_assertion["progress"])
+        self.assertTrue(passed["progress"])
+        self.assertFalse(regressed["progress"])
+        self.assertTrue(regressed["regression"])
+
+    def test_c_cross_selected_checkpoint_does_not_regress_unselected_tests(self):
+        cross = load_tool("c_cross_validate.py")
+        previous = {
+            "scope": "all",
+            "scenarios": [
+                {"source_test": "test_alpha", "suite": "alpha", "rust_impl_c_test": "fail", "failure_layer": "full", "reason": "assert A"},
+                {"source_test": "test_beta", "suite": "beta", "rust_impl_c_test": "pass", "failure_layer": "full", "reason": "passed"},
+            ],
+        }
+        current = {
+            "scope": "selected",
+            "selected_suites": ["alpha"],
+            "scenarios": [
+                {"source_test": "test_alpha", "suite": "alpha", "rust_impl_c_test": "fail", "failure_layer": "full", "reason": "assert A"},
+            ],
+        }
+
+        result = cross.compare_attempt(previous, current)
+
+        self.assertFalse(result["regression"])
+        self.assertFalse(result["progress"])
+        self.assertEqual(result["fingerprints_after"], result["comparable_fingerprints"])
+
+    def test_c_cross_third_no_progress_repair_defers_fingerprint(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            c_cross = Path(td) / "c-cross"
+            c_cross.mkdir()
+            previous = {
+                "execution_id": "initial",
+                "scenarios": [{
+                    "scenario_id": "test_alpha",
+                    "source_test": "test_alpha",
+                    "suite": "alpha",
+                    "failure_layer": "full",
+                    "rust_impl_c_test": "fail",
+                    "reason": "assert A (line 12)",
+                }],
+            }
+
+            for attempt_number in range(1, 4):
+                current = dict(previous, execution_id=f"repair-{attempt_number}")
+                record = cross.record_attempt(
+                    c_cross,
+                    previous,
+                    current,
+                    attempt_kind="repair",
+                    trigger="suite_checkpoint",
+                    changed_files=["flashDB_rust/src/module.rs"],
+                )
+                self.assertEqual(attempt_number, max(record["no_progress_counts"].values()))
+                previous = current
+
+            deferred = [
+                json.loads(line)
+                for line in (c_cross / "deferred.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(1, len(deferred))
+            self.assertEqual("deferred", deferred[0]["status"])
+            self.assertEqual(3, deferred[0]["no_progress_count"])
+            self.assertEqual(3, len(deferred[0]["attempt_ids"]))
+
+    def test_c_cross_repair_attempt_rejects_workbench_changes(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            c_cross = Path(td) / "c-cross"
+            c_cross.mkdir()
+            matrix = {"execution_id": "one", "scenarios": []}
+
+            with self.assertRaisesRegex(ValueError, "repair changed_files must stay under flashDB_rust"):
+                cross.record_attempt(
+                    c_cross,
+                    matrix,
+                    dict(matrix, execution_id="two"),
+                    attempt_kind="repair",
+                    trigger="suite_checkpoint",
+                    changed_files=["work/tools/c_cross_validate.py"],
+                )
+
+    def test_c_cross_reactivated_fingerprint_can_be_deferred_again(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            c_cross = Path(td) / "c-cross"
+            c_cross.mkdir()
+
+            def matrix(execution_id: str, status: str):
+                return {
+                    "execution_id": execution_id,
+                    "scenarios": [{
+                        "scenario_id": "test_alpha",
+                        "source_test": "test_alpha",
+                        "suite": "alpha",
+                        "failure_layer": "full",
+                        "rust_impl_c_test": status,
+                        "reason": "assert A" if status == "fail" else "passed",
+                    }],
+                }
+
+            previous = matrix("initial", "fail")
+            for number in range(1, 4):
+                current = matrix(f"repair-{number}", "fail")
+                cross.record_attempt(
+                    c_cross, previous, current,
+                    attempt_kind="repair", trigger="first_cycle",
+                    changed_files=["flashDB_rust/src/module.rs"],
+                )
+                previous = current
+
+            passed = matrix("confirmation", "pass")
+            cross.record_attempt(
+                c_cross, previous, passed,
+                attempt_kind="confirmation", trigger="new_evidence", changed_files=[],
+            )
+            previous = passed
+            for number in range(4, 7):
+                current = matrix(f"repair-{number}", "fail")
+                cross.record_attempt(
+                    c_cross, previous, current,
+                    attempt_kind="repair", trigger="second_cycle",
+                    changed_files=["flashDB_rust/src/module.rs"],
+                )
+                previous = current
+
+            rows = [
+                json.loads(line)
+                for line in (c_cross / "deferred.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(["deferred", "reactivated", "deferred"], [row["status"] for row in rows])
+
+    def test_c_cross_selected_checkpoint_does_not_reactivate_other_suite(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            c_cross = Path(td) / "c-cross"
+            c_cross.mkdir()
+            fingerprint = "full|beta|test_beta|assert B"
+            (c_cross / "deferred.jsonl").write_text(json.dumps({
+                "fingerprint": fingerprint,
+                "status": "deferred",
+                "no_progress_count": 3,
+                "attempt_ids": ["one", "two", "three"],
+            }) + "\n", encoding="utf-8")
+            previous = {
+                "scope": "all",
+                "scenarios": [{
+                    "source_test": "test_beta", "suite": "beta",
+                    "failure_layer": "full", "rust_impl_c_test": "fail", "reason": "assert B",
+                }],
+            }
+            current = {
+                "execution_id": "alpha-only",
+                "scope": "selected",
+                "selected_suites": ["alpha"],
+                "scenarios": [{
+                    "source_test": "test_alpha", "suite": "alpha",
+                    "failure_layer": "full", "rust_impl_c_test": "pass", "reason": "passed",
+                }],
+            }
+
+            cross.record_attempt(
+                c_cross, previous, current,
+                attempt_kind="checkpoint", trigger="alpha_only", changed_files=[],
+            )
+
+            rows = [
+                json.loads(line)
+                for line in (c_cross / "deferred.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(["deferred"], [row["status"] for row in rows])
+
+    def test_report_writer_summarizes_c_cross_convergence(self):
+        report = load_tool("report_writer.py")
+        matrix = {
+            "attempt_kind": "repair",
+            "scope": "all",
+            "scenarios": [
+                {"source_test": "test_a", "rust_impl_c_test": "pass"},
+                {"source_test": "test_b", "rust_impl_c_test": "fail"},
+                {"source_test": "test_c", "rust_impl_c_test": "not_run"},
+            ],
+        }
+        attempts = [
+            {"attempt_id": "one", "kind": "repair", "progress": True},
+            {"attempt_id": "two", "kind": "repair", "progress": False},
+        ]
+        deferred = [
+            {"fingerprint": "full|alpha|test_b|assert", "status": "deferred"},
+            {"fingerprint": "full|alpha|old|assert", "status": "reactivated"},
+        ]
+        issues = [{"tool": "c_cross_validate.py", "symptom": "parse mismatch"}]
+
+        lines = report.cross_convergence_summary(matrix, attempts, deferred, issues)
+
+        rendered = "\n".join(lines)
+        self.assertIn("per_test: `fail=1, not_run=1, pass=1`", rendered)
+        self.assertIn("attempts: `progress=1, no_progress=1`", rendered)
+        self.assertIn("active_deferred: `1`", rendered)
+        self.assertIn("workbench_issues: `1`", rendered)
+        self.assertIn("latest_attempt_kind: `repair`", rendered)
+        self.assertIn("final_c_cross: `not_verified`", rendered)
+
+    def test_report_final_c_cross_requires_matching_latest_final_attempt(self):
+        report = load_tool("report_writer.py")
+        matrix = {
+            "mode": "full",
+            "scope": "all",
+            "attempt_kind": "final",
+            "execution_id": "final-2",
+            "scenarios": [{"rust_impl_c_test": "pass"}],
+        }
+
+        self.assertFalse(report.final_c_cross_verified(
+            matrix,
+            [],
+            [{"attempt_id": "final-1", "kind": "final"}],
+        ))
+        self.assertTrue(report.final_c_cross_verified(
+            matrix,
+            [],
+            [{"attempt_id": "final-2", "kind": "final"}],
+        ))
 
     def test_c_cross_run_times_out_without_hanging(self):
         cross = load_tool("c_cross_validate.py")
@@ -814,11 +1243,13 @@ pub extern "C" fn fdb_probe() -> i32 {
             (c_root / "tests").mkdir(parents=True)
             (c_root / "inc" / "flashdb.h").write_text("int fdb_probe(void);\n", encoding="utf-8")
             (c_root / "tests" / "kvdb_main.c").write_text(
-                '#include <flashdb.h>\nint main(void) { return fdb_probe() == 7 ? 0 : 1; }\n',
+                '#include <stdio.h>\n#include <flashdb.h>\n'
+                'int main(void) { puts("Running: test_fdb_kvdb_init ..."); return fdb_probe() == 7 ? 0 : 1; }\n',
                 encoding="utf-8",
             )
             (c_root / "tests" / "tsdb_main.c").write_text(
-                '#include <flashdb.h>\nint main(void) { return fdb_probe() == 7 ? 0 : 1; }\n',
+                '#include <stdio.h>\n#include <flashdb.h>\n'
+                'int main(void) { puts("Running: test_fdb_tsl_append ..."); return fdb_probe() == 7 ? 0 : 1; }\n',
                 encoding="utf-8",
             )
             (trace / "workflow_state.json").write_text(json.dumps({"input_path": str(c_root)}), encoding="utf-8")
@@ -881,6 +1312,80 @@ pub extern "C" fn fdb_probe() -> i32 {
                 self.assertEqual("none", item["handoff"])
                 self.assertIn("source_runner", item)
                 self.assertIn("source_test", item)
+
+    def test_c_cross_matrix_uses_per_test_results_for_failed_dynamic_suite(self):
+        cross = load_tool("c_cross_validate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            trace.mkdir(parents=True)
+            project = root / "flashDB_rust"
+            (project / "src").mkdir(parents=True)
+            (project / "Cargo.toml").write_text(
+                """
+[package]
+name = "flashdb_rust"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "flashdb_rust"
+path = "src/lib.rs"
+crate-type = ["staticlib"]
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            (project / "src" / "lib.rs").write_text("pub fn marker() {}\n", encoding="utf-8")
+            c_root = root / "FlashDB"
+            (c_root / "inc").mkdir(parents=True)
+            (c_root / "tests").mkdir(parents=True)
+            (c_root / "inc" / "flashdb.h").write_text("/* test header */\n", encoding="utf-8")
+            (c_root / "tests" / "alpha_main.c").write_text(
+                "#include <stdio.h>\n"
+                "int main(void) {\n"
+                '  puts("Running: test_alpha_ok ...");\n'
+                '  puts("Running: test_alpha_bad ...");\n'
+                '  fputs("FAIL test_alpha_bad: value == expected (line 12)\\n", stderr);\n'
+                "  return 1;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            (trace / "workflow_state.json").write_text(
+                json.dumps({"input_path": str(c_root)}),
+                encoding="utf-8",
+            )
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "registered_test_invocations": [
+                    {
+                        "suite": "alpha",
+                        "runner": "tests/alpha_main.c",
+                        "test_function": "test_alpha_ok",
+                        "order": 1,
+                        "scenarios": ["test_alpha_ok"],
+                    },
+                    {
+                        "suite": "alpha",
+                        "runner": "tests/alpha_main.c",
+                        "test_function": "test_alpha_bad",
+                        "order": 2,
+                        "scenarios": ["test_alpha_bad"],
+                    },
+                ],
+                "scorer_standard_cases": [
+                    {"case_id": "1", "scenario_id": "test_alpha_ok", "suite": "alpha"},
+                    {"case_id": "2", "scenario_id": "test_alpha_bad", "suite": "alpha"},
+                ],
+            }), encoding="utf-8")
+
+            matrix = cross.build_matrix(root, trace, project_name="flashDB_rust")
+
+            rows = {row["source_test"]: row for row in matrix["scenarios"]}
+            self.assertEqual("pass", rows["test_alpha_ok"]["rust_impl_c_test"])
+            self.assertEqual("fail", rows["test_alpha_bad"]["rust_impl_c_test"])
+            self.assertEqual("c_test_case_failed", rows["test_alpha_bad"]["diagnosis"])
+            self.assertIn("value == expected", rows["test_alpha_bad"]["reason"])
+            self.assertEqual({"fail": 1, "pass": 1}, matrix["summary"]["rust_impl_c_test"])
 
     def test_c_cross_validate_fails_fast_on_layout_mismatch(self):
         cross = load_tool("c_cross_validate.py")
@@ -1126,6 +1631,162 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             valid = gate.check_c_cross_layered_evidence(root)
 
             self.assertEqual([], valid)
+
+    def test_c_cross_intermediate_accepts_three_attempt_deferred_but_final_rejects_it(self):
+        gate = load_tool("gate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            c_cross = trace / "c-cross"
+            c_cross.mkdir(parents=True)
+            fingerprint = "full|alpha|test_alpha|assert A (line 12)"
+            scenario = {
+                "scenario_id": "test_alpha",
+                "scorer_case_id": "1",
+                "suite": "alpha",
+                "phase": "full",
+                "failure_layer": "full",
+                "source_runner": "tests/alpha_main.c",
+                "source_test": "test_alpha",
+                "c_impl_c_test": "baseline",
+                "rust_impl_c_test": "fail",
+                "c_impl_rust_test": "not_run",
+                "rust_impl_rust_test": "pending",
+                "diagnosis": "c_test_case_failed",
+                "reason": "assert A (line 12)",
+                "log": "logs/trace/c-cross/test_alpha.log",
+                "handoff": "rust-implementer",
+            }
+            matrix = {
+                "stage": "VERIFY_RUST_WITH_C_TESTS",
+                "policy": "strict",
+                "mode": "full",
+                "scope": "all",
+                "attempt_kind": "repair",
+                "execution_id": "repair-3",
+                "total_scenarios": 1,
+                "summary": {"rust_impl_c_test": {"fail": 1}},
+                "scenarios": [scenario],
+            }
+            (trace / "validation-matrix.json").write_text(json.dumps(matrix), encoding="utf-8")
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "scorer_standard_cases": [{"case_id": "1", "scenario_id": "test_alpha", "suite": "alpha"}],
+            }), encoding="utf-8")
+            for filename, payload in {
+                "build-check.json": {"phase": "build", "status": "pass"},
+                "layout-check.json": {"phase": "layout", "status": "pass"},
+                "link-check.json": {"phase": "link", "status": "pass", "suites": {"alpha": "pass"}},
+            }.items():
+                (c_cross / filename).write_text(json.dumps(payload), encoding="utf-8")
+            (c_cross / "case-results.jsonl").write_text(json.dumps(scenario) + "\n", encoding="utf-8")
+            (c_cross / "diagnostics.jsonl").write_text(json.dumps({
+                "phase": "full",
+                "diagnosis": "c_test_case_failed",
+                "suite": "alpha",
+                "source_test": "test_alpha",
+                "handoff": "rust-implementer",
+                "reason": "assert A (line 12)",
+                "log": "logs/trace/c-cross/test_alpha.log",
+            }) + "\n", encoding="utf-8")
+            attempts = []
+            for number in range(1, 4):
+                attempts.append({
+                    "attempt_id": f"repair-{number}",
+                    "kind": "repair",
+                    "changed_files": ["flashDB_rust/src/module.rs"],
+                    "progress": False,
+                    "fingerprints_after": [fingerprint],
+                    "no_progress_counts": {fingerprint: number},
+                    "matrix_snapshot": f"logs/trace/c-cross/checkpoints/repair-{number}.json",
+                })
+            (c_cross / "attempts.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in attempts),
+                encoding="utf-8",
+            )
+            (c_cross / "deferred.jsonl").write_text(json.dumps({
+                "fingerprint": fingerprint,
+                "status": "deferred",
+                "no_progress_count": 3,
+                "attempt_ids": ["repair-1", "repair-2", "repair-3"],
+                "final_requirement": "must pass final full C-cross",
+            }) + "\n", encoding="utf-8")
+
+            intermediate_errors = gate.check_c_cross_intermediate_evidence(root)
+            final_errors = gate.check_c_cross_final_evidence(root)
+
+            self.assertEqual([], intermediate_errors)
+            self.assertIn("final C-cross requires every scenario to pass: test_alpha", final_errors)
+            self.assertIn("final C-cross must not contain active deferred failures", final_errors)
+
+    def test_c_cross_final_accepts_fresh_all_suite_full_pass(self):
+        gate = load_tool("gate.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            c_cross = trace / "c-cross"
+            c_cross.mkdir(parents=True)
+            scenario = {
+                "scenario_id": "test_alpha",
+                "scorer_case_id": "1",
+                "suite": "alpha",
+                "phase": "full",
+                "failure_layer": "full",
+                "source_runner": "tests/alpha_main.c",
+                "source_test": "test_alpha",
+                "c_impl_c_test": "baseline",
+                "rust_impl_c_test": "pass",
+                "c_impl_rust_test": "not_run",
+                "rust_impl_rust_test": "pending",
+                "diagnosis": "rust_implementation_matches_c_baseline_for_scenario",
+                "reason": "test_alpha passed",
+                "log": "logs/trace/c-cross/test_alpha.log",
+                "handoff": "none",
+            }
+            (trace / "validation-matrix.json").write_text(json.dumps({
+                "stage": "VERIFY_RUST_WITH_C_TESTS",
+                "policy": "strict",
+                "mode": "full",
+                "scope": "all",
+                "attempt_kind": "final",
+                "execution_id": "final-1",
+                "total_scenarios": 1,
+                "summary": {"rust_impl_c_test": {"pass": 1}},
+                "scenarios": [scenario],
+            }), encoding="utf-8")
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "scorer_standard_cases": [{"case_id": "1", "scenario_id": "test_alpha", "suite": "alpha"}],
+            }), encoding="utf-8")
+            for filename, payload in {
+                "build-check.json": {"phase": "build", "status": "pass"},
+                "layout-check.json": {"phase": "layout", "status": "pass"},
+                "link-check.json": {"phase": "link", "status": "pass", "suites": {"alpha": "pass"}},
+            }.items():
+                (c_cross / filename).write_text(json.dumps(payload), encoding="utf-8")
+            (c_cross / "case-results.jsonl").write_text(json.dumps(scenario) + "\n", encoding="utf-8")
+            (c_cross / "diagnostics.jsonl").write_text("", encoding="utf-8")
+            (c_cross / "attempts.jsonl").write_text(json.dumps({
+                "attempt_id": "final-1",
+                "kind": "final",
+                "changed_files": [],
+                "progress": True,
+                "fingerprints_after": [],
+                "no_progress_counts": {},
+                "matrix_snapshot": "logs/trace/c-cross/checkpoints/final-1.json",
+            }) + "\n", encoding="utf-8")
+            (c_cross / "deferred.jsonl").write_text("", encoding="utf-8")
+
+            self.assertEqual([], gate.check_c_cross_final_evidence(root))
+
+            with (c_cross / "attempts.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "attempt_id": "later-checkpoint",
+                    "kind": "checkpoint",
+                    "changed_files": [],
+                }) + "\n")
+            self.assertIn(
+                "final C-cross matrix must match the latest attempt record",
+                gate.check_c_cross_final_evidence(root),
+            )
 
     def test_validation_matrix_rejects_blocking_rows_without_handoff_context(self):
         gate = load_tool("gate.py")
@@ -2310,70 +2971,83 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 (trace / name).write_text("# 阶段\n\n中文验证记录。\n", encoding="utf-8")
             (trace / "validation-matrix.json").write_text(json.dumps({
                 "stage": "VERIFY_RUST_WITH_C_TESTS",
-                "policy": "advisory",
+                "policy": "strict",
                 "mode": "full",
+                "scope": "all",
+                "attempt_kind": "final",
+                "execution_id": "final-1",
                 "total_scenarios": 2,
-                "summary": {"rust_impl_c_test": {"not_supported": 2}},
+                "summary": {"rust_impl_c_test": {"pass": 2}},
                 "scenarios": [
                     {
                         "scenario_id": "test_fdb_gc",
                         "scorer_case_id": "10",
                         "suite": "kvdb",
-                        "failure_layer": "link",
+                        "failure_layer": "none",
                         "source_runner": "tests/kvdb_main.c",
                         "source_test": "test_fdb_gc",
                         "c_impl_c_test": "baseline",
-                        "rust_impl_c_test": "not_supported",
+                        "rust_impl_c_test": "pass",
                         "c_impl_rust_test": "not_run",
                         "rust_impl_rust_test": "pending",
-                        "diagnosis": "c_cross_harness_not_supported",
-                        "reason": "fixture advisory matrix",
+                        "diagnosis": "none",
+                        "reason": "C test passed against Rust implementation",
                         "log": "logs/trace/c-cross/test_fdb_gc.log",
-                        "handoff": "rust-implementer",
+                        "handoff": "none",
                     },
                     {
                         "scenario_id": "test_fdb_tsl_append",
                         "scorer_case_id": "15",
                         "suite": "tsdb",
-                        "failure_layer": "link",
+                        "failure_layer": "none",
                         "source_runner": "tests/tsdb_main.c",
                         "source_test": "test_fdb_tsl_append",
                         "c_impl_c_test": "baseline",
-                        "rust_impl_c_test": "not_supported",
+                        "rust_impl_c_test": "pass",
                         "c_impl_rust_test": "not_run",
                         "rust_impl_rust_test": "pending",
-                        "diagnosis": "c_cross_harness_not_supported",
-                        "reason": "fixture advisory matrix",
+                        "diagnosis": "none",
+                        "reason": "C test passed against Rust implementation",
                         "log": "logs/trace/c-cross/test_fdb_tsl_append.log",
-                        "handoff": "rust-implementer",
+                        "handoff": "none",
                     },
                 ],
             }), encoding="utf-8")
             (trace / "c-cross").mkdir(exist_ok=True)
-            (trace / "c-cross" / "diagnostics.jsonl").write_text(
-                "\n".join([
-                    json.dumps({
-                        "phase": "link",
-                        "diagnosis": "c_runner_link_failed",
-                        "scenario_id": "test_fdb_gc",
-                        "suite": "kvdb",
-                        "handoff": "rust-implementer",
-                        "reason": "fixture link failure",
-                        "log": "logs/trace/c-cross/test_fdb_gc.log",
-                    }),
-                    json.dumps({
-                        "phase": "link",
-                        "diagnosis": "c_runner_link_failed",
-                        "scenario_id": "test_fdb_tsl_append",
-                        "suite": "tsdb",
-                        "handoff": "rust-implementer",
-                        "reason": "fixture link failure",
-                        "log": "logs/trace/c-cross/test_fdb_tsl_append.log",
-                    }),
-                ])
+            for filename, phase in [
+                ("build-check.json", "build"),
+                ("layout-check.json", "layout"),
+                ("link-check.json", "link"),
+            ]:
+                (trace / "c-cross" / filename).write_text(
+                    json.dumps({"phase": phase, "status": "pass"}),
+                    encoding="utf-8",
+                )
+            case_rows = [
+                {
+                    "phase": "full",
+                    "scenario_id": scenario_id,
+                    "rust_impl_c_test": "pass",
+                }
+                for scenario_id in ["test_fdb_gc", "test_fdb_tsl_append"]
+            ]
+            (trace / "c-cross" / "case-results.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in case_rows) + "\n",
+                encoding="utf-8",
+            )
+            (trace / "c-cross" / "diagnostics.jsonl").write_text("", encoding="utf-8")
+            (trace / "c-cross" / "attempts.jsonl").write_text(
+                json.dumps({
+                    "attempt_id": "final-1",
+                    "kind": "final",
+                    "trigger": "final_verification",
+                    "changed_files": [],
+                    "progress": True,
+                })
                 + "\n",
                 encoding="utf-8",
             )
+            (trace / "c-cross" / "deferred.jsonl").write_text("", encoding="utf-8")
             (trace / "agent-registry.json").write_text(json.dumps({
                 "subagents": {
                     "c-analyzer": {
@@ -2432,9 +3106,8 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             self.assertIn("Cross Validation Matrix", output_text)
             self.assertIn("C tests on Rust", output_text)
             self.assertIn("Cross Validation Diagnostics", output_text)
-            self.assertIn("failure_layers: `link=2`", output_text)
-            self.assertIn("handoff: `rust-implementer=2`", output_text)
-            self.assertIn("diagnostics: `c_runner_link_failed=2`", output_text)
+            self.assertIn("Cross Validation Convergence", output_text)
+            self.assertIn("final_c_cross: `verified`", output_text)
 
             final_gate = subprocess.run(
                 [sys.executable, str(gate), "--stage", "REPORT_AND_VERIFY", "--root", str(root)],

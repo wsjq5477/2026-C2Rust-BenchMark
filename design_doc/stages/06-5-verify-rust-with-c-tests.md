@@ -35,6 +35,9 @@ logs/trace/c-cross/link-check.json
 logs/trace/c-cross/cross-test.log
 logs/trace/c-cross/case-results.jsonl
 logs/trace/c-cross/diagnostics.jsonl
+logs/trace/c-cross/attempts.jsonl
+logs/trace/c-cross/deferred.jsonl
+logs/trace/c-cross/checkpoints/<execution-id>.json
 logs/trace/validation-matrix.json
 logs/trace/06-5-verify-rust-with-c-tests.md
 logs/trace/workflow_state.json
@@ -45,7 +48,7 @@ logs/trace/workflow_state.json
 运行：
 
 ```bash
-python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind checkpoint --trigger core_complete
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```
 
@@ -58,9 +61,9 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 --mode full    # build + layout + link + 运行 C runner，写 case-results.jsonl 和 validation-matrix.json
 ```
 
-默认和最终 gate 使用 `--mode full`。工具先编译 Rust `staticlib`，再生成并运行 `logs/trace/c-cross/layout_checker.c`。layout checker 必须链接 Rust staticlib，比较 C/Rust 两侧 ABI struct 的 `sizeof`、`alignof` 和关键字段 offset。
+阶段结束的中间 gate 使用 all-suite `--mode full`。局部实现期间可重复传入动态发现的 `--suite <suite>`，但不得硬编码 suite 名、用例数、通过比例或固定时间预算。工具先编译 Rust `staticlib`，再生成并运行 `logs/trace/c-cross/layout_checker.c`。layout checker 必须链接 Rust staticlib，比较 C/Rust 两侧 ABI struct 的 `sizeof`、`alignof` 和关键字段 offset。
 
-layout checker 通过后，才允许用系统 C 编译器编译 `tests/kvdb_main.c` 和 `tests/tsdb_main.c`，把原始 C 测试 runner 链接到 Rust C ABI facade。临时 checker、runner、二进制和运行目录只能写入 `logs/trace/c-cross/`。
+layout checker 通过后，才允许用系统 C 编译器编译模型动态发现的原始 C runner，并链接到 Rust C ABI facade。临时 checker、runner、二进制和运行目录只能写入 `logs/trace/c-cross/`。
 
 如果 layout mismatch，必须：
 
@@ -70,7 +73,16 @@ layout checker 通过后，才允许用系统 C 编译器编译 `tests/kvdb_main
 - 不继续运行功能 C runner；
 - 将对应 scorer cases 写成 `fail`。
 
-第一版 runner 以 suite 为执行粒度：KVDB 原始测试 runner 通过则 KVDB scorer cases 通过，TSDB runner 通过则 TSDB scorer cases 通过；任一 suite 编译或运行失败，必须把该 suite 对应 scorer cases 写成 `fail`。不得把全量 unsupported 当作阶段通过。
+工具直接解析原始 runner 的 `Running: <test>` 和 `FAIL <test>:` 输出，将结果归因到逐测试场景。同一 suite 内允许部分通过、部分失败。重复测试名、未知测试名、退出成功但缺少预期测试、退出失败但没有可归因失败项都必须标记 `c_cross_result_parse_failed`，不得把整个 suite 粗略复制成统一结果。
+
+## 收敛与 deferred
+
+- 每次 checkpoint、repair、confirmation、final 都追加 `attempts.jsonl`，记录 scope、触发原因、变更文件和进展判断。
+- 失败指纹由失败层、suite、测试和去除地址等波动值后的原因组成。
+- 同一指纹连续 3 次可比较的 repair 均无进展后，才追加 active deferred；无进展是指通过场景集合没有增加、失败层没有前移、断言证据没有增加。
+- 任何进展都会重置该指纹计数。后续实现或测试证据使指纹消失时，写入 reactivated 记录。
+- repair 的 `changed_files` 只能位于 `flashDB_rust/**`。运行时代理不得修改工作台；发现问题只追加 `logs/trace/workbench-issues.jsonl`。
+- deferred 是中间调度状态，不是通过。它允许把剩余时间投入 Rust 测试迁移以获取新证据，最终必须清零。
 
 分层证据要求：
 
@@ -84,20 +96,7 @@ layout checker 通过后，才允许用系统 C 编译器编译 `tests/kvdb_main
 
 矩阵必须覆盖 `c_test_model.json.scorer_standard_cases`：
 
-```json
-{
-  "stage": "VERIFY_RUST_WITH_C_TESTS",
-  "policy": "strict",
-  "mode": "full",
-  "total_scenarios": 24,
-  "summary": {
-    "rust_impl_c_test": {
-      "pass": 24
-    }
-  },
-  "scenarios": []
-}
-```
+顶层字段必须包含 `stage: VERIFY_RUST_WITH_C_TESTS`、`policy: strict`、`mode`、`scope`、`attempt_kind`、`execution_id`、`total_scenarios`、`summary` 和 `scenarios`。`total_scenarios` 必须是从 `scorer_standard_cases` 实际推导的整数，summary 计数必须由本次 scenarios 聚合，文档和工具均不得预置固定总数。
 
 每个 scenario 至少包含：
 
@@ -116,7 +115,7 @@ log
 
 ## Gate 检查
 
-`gate.py --stage VERIFY_RUST_WITH_C_TESTS` 必须检查：
+`gate.py --stage VERIFY_RUST_WITH_C_TESTS` 是中间 gate，必须检查：
 
 - `workflow_state.json.current_stage == VERIFY_RUST_WITH_C_TESTS`；
 - `workflow_state.json.checkpoint == VERIFY_RUST_WITH_C_TESTS`；
@@ -125,13 +124,15 @@ log
 - `validation-matrix.json.mode == full`；
 - matrix scenario 与 scorer case 一一对应；
 - `build-check.json`、`layout-check.json`、`link-check.json` 存在且 `status == pass`；
-- `case-results.jsonl` 存在，scenario 集合与 `validation-matrix.json.scenarios` 一致，且最终 gate 下每条记录是 `phase == full` / `rust_impl_c_test == pass`；
+- `case-results.jsonl` 存在，scenario 集合与 `validation-matrix.json.scenarios` 一致；
 - `diagnostics.jsonl` 存在且格式合法；任一诊断 log 必须位于 `logs/trace/c-cross/`；
 - `logs/trace/c-cross/layout-check.log` 存在；
-- `rust_impl_c_test == fail` 必须阻断后续阶段；
+- 非 deferred 的 `rust_impl_c_test == fail` 必须阻断后续阶段；deferred 必须有连续三次无进展 attempts 的完整引用；
 - `not_supported` 在本阶段 strict gate 中不允许通过；
 - `fail` 必须包含 reason 和 `logs/trace/c-cross/` 下的 log；
 - `flashDB_rust/src/` 下递归不存在 `.c` 文件。
+
+`REPORT_AND_VERIFY` 使用最终 gate：所有 Rust 修复和测试结束后执行 `--mode full --attempt-kind final --trigger final_verification`，不得选择局部 suite；每个场景必须 pass，不得存在 active deferred，并且 matrix 的 execution id 必须匹配 final attempt。
 
 ## 失败归因
 
@@ -150,4 +151,4 @@ log
 
 ## 下一阶段交接
 
-成功后进入 `MIGRATE_TESTS`。
+中间 gate 成功后进入 `MIGRATE_TESTS`。这只说明分层证据有效且剩余失败已满足 deferred 规则，不代表最终 C-cross 通过。

@@ -47,6 +47,14 @@ cd flashDB_rust
 cargo check
 ```
 
+当一个或多个动态 suite 对应的实现批次完成时，可运行定向 C-cross 检查点：
+
+```bash
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --suite <model-derived-suite> --attempt-kind checkpoint --trigger implementation_batch
+```
+
+`<model-derived-suite>` 必须来自当前模型，不预置 suite 名。检查点只提供局部反馈；阶段结束仍需执行 all-suite 中间验证。
+
 失败时先修当前批次，不进入下一批。修复可以由主控完成；如果错误复杂，可以调用 `repairer`，但主控必须复跑 `cargo check` 并归档日志。
 
 每批记录到：
@@ -105,6 +113,7 @@ python3 ../work/tools/gate.py --stage REWRITE_CORE_MODULES --root ..
 - unsafe 必须极少且有注释；优先 safe Rust。
 - 不改变已固定 public API，除非回退到 `DESIGN_RUST_API` 并记录原因。
 - 默认不全文读取 C 源码或 trace 大 JSON。只有模型事实不足以指导实现时，才允许说明缺口后读取 C 源码局部窗口；超过 400 行的 C/Rust 文件禁止全文读取。
+- 运行时代理不得修改 `work/**`、`INSTRUCTION.md`、`.opencode/**`、设计文档、评测测试或平台 C 输入；工作台问题只写入 `logs/trace/workbench-issues.jsonl`。
 
 ## 下一阶段交接
 

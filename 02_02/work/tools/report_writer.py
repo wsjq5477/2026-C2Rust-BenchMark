@@ -61,7 +61,7 @@ def cross_diagnostics_summary(matrix: dict[str, Any], diagnostics: list[dict[str
     blocking = [
         item
         for item in rows
-        if item.get("rust_impl_c_test") in {"fail", "not_supported"}
+        if item.get("rust_impl_c_test") in {"fail", "not_run", "not_supported"}
         or item.get("c_impl_c_test") in {"fail", "not_supported"}
     ]
     failure_layers = Counter(str(item.get("failure_layer")) for item in blocking if isinstance(item.get("failure_layer"), str))
@@ -80,6 +80,61 @@ def cross_diagnostics_summary(matrix: dict[str, Any], diagnostics: list[dict[str
     ]
 
 
+def _active_deferred_count(rows: list[dict[str, Any]]) -> int:
+    latest: dict[str, str] = {}
+    for row in rows:
+        fingerprint = row.get("fingerprint")
+        status = row.get("status")
+        if isinstance(fingerprint, str) and isinstance(status, str):
+            latest[fingerprint] = status
+    return sum(status == "deferred" for status in latest.values())
+
+
+def final_c_cross_verified(
+    matrix: dict[str, Any],
+    deferred: list[dict[str, Any]],
+    attempts: list[dict[str, Any]],
+) -> bool:
+    scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else None
+    latest_attempt = attempts[-1] if attempts else {}
+    return (
+        matrix.get("mode") == "full"
+        and matrix.get("scope") == "all"
+        and matrix.get("attempt_kind") == "final"
+        and isinstance(scenarios, list)
+        and bool(scenarios)
+        and all(isinstance(row, dict) and row.get("rust_impl_c_test") == "pass" for row in scenarios)
+        and _active_deferred_count(deferred) == 0
+        and latest_attempt.get("attempt_id") == matrix.get("execution_id")
+        and latest_attempt.get("kind") == "final"
+    )
+
+
+def cross_convergence_summary(
+    matrix: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    deferred: list[dict[str, Any]],
+    workbench_issues: list[dict[str, Any]],
+) -> list[str]:
+    scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else []
+    per_test = Counter(
+        str(row.get("rust_impl_c_test"))
+        for row in scenarios
+        if isinstance(row, dict) and isinstance(row.get("rust_impl_c_test"), str)
+    ) if isinstance(scenarios, list) else Counter()
+    progress_count = sum(row.get("progress") is True for row in attempts)
+    no_progress_count = sum(row.get("progress") is False for row in attempts)
+    latest_attempt_kind = matrix.get("attempt_kind", "missing") if isinstance(matrix, dict) else "missing"
+    return [
+        _counter_line("per_test", per_test),
+        f"- attempts: `progress={progress_count}, no_progress={no_progress_count}`",
+        f"- active_deferred: `{_active_deferred_count(deferred)}`",
+        f"- workbench_issues: `{len(workbench_issues)}`",
+        f"- latest_attempt_kind: `{latest_attempt_kind}`",
+        f"- final_c_cross: `{'verified' if final_c_cross_verified(matrix, deferred, attempts) else 'not_verified'}`",
+    ]
+
+
 def write_report(root: Path, output: Path, issues: Path) -> None:
     trace = root / "logs" / "trace"
     state = load_json(trace / "workflow_state.json")
@@ -88,15 +143,20 @@ def write_report(root: Path, output: Path, issues: Path) -> None:
     design = load_json(trace / "rust_api_design.json")
     matrix = load_json(trace / "validation-matrix.json")
     diagnostics = load_jsonl(trace / "c-cross" / "diagnostics.jsonl")
+    attempts = load_jsonl(trace / "c-cross" / "attempts.jsonl")
+    deferred = load_jsonl(trace / "c-cross" / "deferred.jsonl")
+    workbench_issues = load_jsonl(trace / "workbench-issues.jsonl")
     mapping = load_json(trace / "rust_test_mapping.json")
     matrix_lines = "\n".join(validation_matrix_summary(matrix))
     diagnostics_lines = "\n".join(cross_diagnostics_summary(matrix, diagnostics))
+    convergence_lines = "\n".join(cross_convergence_summary(matrix, attempts, deferred, workbench_issues))
 
     success = (
         state.get("current_stage") == "DONE"
         and state.get("build_status") == "pass"
         and state.get("test_status") == "pass"
         and float(ratio.get("unsafe_ratio", 1.0)) <= 0.10
+        and final_c_cross_verified(matrix, deferred, attempts)
     )
     status = "SUCCESS" if success else "FAILED"
 
@@ -143,6 +203,10 @@ STATUS: {status}
 ## Cross Validation Diagnostics
 
 {diagnostics_lines}
+
+## Cross Validation Convergence
+
+{convergence_lines}
 """,
         encoding="utf-8",
     )

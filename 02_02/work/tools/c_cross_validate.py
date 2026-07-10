@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -55,25 +56,322 @@ def _run(command: list[str], *, cwd: Path | None = None, timeout: float = 60) ->
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
+        stdout = (exc.stdout or b"").decode("utf-8", errors="replace")
+        stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
         return -124, f"{stdout}{stderr}\nTIMEOUT: killed after {timeout}s\n"
-    return completed.returncode, f"{completed.stdout}{completed.stderr}"
+    stdout = completed.stdout.decode("utf-8", errors="replace") if isinstance(completed.stdout, bytes) else (completed.stdout or "")
+    stderr = completed.stderr.decode("utf-8", errors="replace") if isinstance(completed.stderr, bytes) else (completed.stderr or "")
+    return completed.returncode, f"{stdout}{stderr}"
+
+
+def parse_runner_test_results(output: str, expected_tests: list[str], exit_code: int) -> dict[str, Any]:
+    expected = list(dict.fromkeys(expected_tests))
+    if len(expected) != len(expected_tests):
+        return {
+            "status": "parse_failed",
+            "started": [],
+            "passed": [],
+            "failed": [],
+            "not_run": expected,
+            "failures": {},
+            "reason": "expected test list contains duplicates",
+        }
+
+    start_pattern = re.compile(r"^\s*Running:\s*([A-Za-z_][A-Za-z0-9_]*)\b", re.MULTILINE)
+    failure_pattern = re.compile(r"^\s*FAIL\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+?)\s*$", re.MULTILINE)
+    started = start_pattern.findall(output)
+    failure_matches = failure_pattern.findall(output)
+    failures: dict[str, str] = {}
+    for test_name, detail in failure_matches:
+        normalized = " ".join(detail.split())
+        if test_name in failures:
+            failures[test_name] = f"{failures[test_name]} | {normalized}"
+        else:
+            failures[test_name] = normalized
+
+    expected_set = set(expected)
+    duplicate_starts = sorted({name for name in started if started.count(name) > 1})
+    unknown_started = sorted(set(started) - expected_set)
+    unknown_failed = sorted(set(failures) - expected_set)
+    failed_without_start = sorted(set(failures) - set(started))
+    reasons: list[str] = []
+    if duplicate_starts:
+        reasons.append("duplicate start records: " + ", ".join(duplicate_starts))
+    if unknown_started:
+        reasons.append("unknown started tests: " + ", ".join(unknown_started))
+    if unknown_failed:
+        reasons.append("unknown failed tests: " + ", ".join(unknown_failed))
+    if failed_without_start:
+        reasons.append("failed tests missing start records: " + ", ".join(failed_without_start))
+    if exit_code == 0 and failures:
+        reasons.append("successful runner reported test failures")
+    if exit_code == 0 and set(started) != expected_set:
+        reasons.append("successful runner did not start all expected tests")
+    if exit_code != 0 and not failures:
+        reasons.append("nonzero runner exit has no attributed test failure")
+
+    failed = [name for name in expected if name in failures]
+    started_set = set(started)
+    passed = [name for name in expected if name in started_set and name not in failures]
+    not_run = [name for name in expected if name not in started_set]
+    return {
+        "status": "parse_failed" if reasons else "parsed",
+        "started": [name for name in expected if name in started_set],
+        "passed": passed,
+        "failed": failed,
+        "not_run": not_run,
+        "failures": failures,
+        "reason": "; ".join(reasons) if reasons else "runner output mapped to expected tests",
+    }
+
+
+def _normalized_failure_reason(reason: Any) -> str:
+    text = " ".join(str(reason or "unknown failure").split())
+    text = re.sub(r"0x[0-9A-Fa-f]+", "<addr>", text)
+    return text
+
+
+def failure_fingerprint(row: dict[str, Any]) -> str:
+    return "|".join(
+        [
+            str(row.get("failure_layer") or row.get("phase") or "unknown"),
+            str(row.get("suite") or "unknown"),
+            str(row.get("source_test") or row.get("scenario_id") or "unknown"),
+            _normalized_failure_reason(row.get("reason")),
+        ]
+    )
+
+
+def _matrix_outcomes(matrix: dict[str, Any] | None) -> dict[str, Any]:
+    scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else []
+    rows = [row for row in scenarios if isinstance(row, dict)] if isinstance(scenarios, list) else []
+    passed: set[str] = set()
+    failed: set[str] = set()
+    not_run: set[str] = set()
+    failures: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        source_test = str(row.get("source_test") or row.get("scenario_id") or "unknown")
+        status = row.get("rust_impl_c_test")
+        if status == "pass":
+            passed.add(source_test)
+        elif status == "not_run":
+            not_run.add(source_test)
+            failures[source_test] = row
+        else:
+            failed.add(source_test)
+            failures[source_test] = row
+    return {
+        "passed": passed,
+        "failed": failed,
+        "not_run": not_run,
+        "failures": failures,
+        "fingerprints": {failure_fingerprint(row) for row in failures.values()},
+    }
+
+
+def compare_attempt(previous: dict[str, Any] | None, current: dict[str, Any]) -> dict[str, Any]:
+    before = _matrix_outcomes(previous)
+    after = _matrix_outcomes(current)
+    previous_scope = before["passed"] | before["failed"] | before["not_run"]
+    current_scope = after["passed"] | after["failed"] | after["not_run"]
+    regression = bool((before["passed"] & current_scope) - after["passed"])
+    progress_reasons: list[str] = []
+    if after["passed"] - before["passed"]:
+        progress_reasons.append("passed set increased")
+
+    layer_order = {"model": 0, "scaffold": 1, "build": 2, "layout": 3, "link": 4, "full": 5}
+    for source_test in sorted(set(before["failures"]) & set(after["failures"])):
+        before_row = before["failures"][source_test]
+        after_row = after["failures"][source_test]
+        before_layer = str(before_row.get("failure_layer") or before_row.get("phase") or "unknown")
+        after_layer = str(after_row.get("failure_layer") or after_row.get("phase") or "unknown")
+        if layer_order.get(after_layer, -1) > layer_order.get(before_layer, -1):
+            progress_reasons.append(f"{source_test} advanced from {before_layer} to {after_layer}")
+        elif failure_fingerprint(before_row) != failure_fingerprint(after_row):
+            progress_reasons.append(f"{source_test} advanced to a different assertion or error")
+
+    progress = bool(progress_reasons) and not regression
+    return {
+        "progress": progress,
+        "regression": regression,
+        "progress_reasons": progress_reasons,
+        "before": {
+            "passed": sorted(before["passed"]),
+            "failed": sorted(before["failed"]),
+            "not_run": sorted(before["not_run"]),
+        },
+        "after": {
+            "passed": sorted(after["passed"]),
+            "failed": sorted(after["failed"]),
+            "not_run": sorted(after["not_run"]),
+        },
+        "fingerprints_before": sorted(before["fingerprints"]),
+        "fingerprints_after": sorted(after["fingerprints"]),
+        "comparable_fingerprints": sorted(
+            failure_fingerprint(row)
+            for source_test, row in after["failures"].items()
+            if source_test in previous_scope
+        ),
+    }
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        value = json.loads(line)
+        if isinstance(value, dict):
+            rows.append(value)
+    return rows
+
+
+def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def record_attempt(
+    c_cross: Path,
+    previous: dict[str, Any] | None,
+    current: dict[str, Any],
+    *,
+    attempt_kind: str,
+    trigger: str,
+    changed_files: list[str],
+) -> dict[str, Any]:
+    if attempt_kind == "repair":
+        invalid_changes = [
+            path
+            for path in changed_files
+            if not Path(path).as_posix().startswith("flashDB_rust/") or ".." in Path(path).parts
+        ]
+        if invalid_changes:
+            raise ValueError(
+                "repair changed_files must stay under flashDB_rust/: " + ", ".join(sorted(invalid_changes))
+            )
+
+    comparison = compare_attempt(previous, current)
+    attempts_path = c_cross / "attempts.jsonl"
+    prior_attempts = _read_jsonl(attempts_path)
+    current_fingerprints = comparison["fingerprints_after"]
+    recent_fingerprints = {
+        fingerprint
+        for row in prior_attempts[-2:]
+        for fingerprint in row.get("fingerprints_after", [])
+        if isinstance(fingerprint, str)
+    }
+    cycle_detected = bool(current_fingerprints) and any(
+        fingerprint in recent_fingerprints and fingerprint not in comparison["fingerprints_before"]
+        for fingerprint in current_fingerprints
+    )
+    if cycle_detected:
+        comparison["progress"] = False
+        comparison["progress_reasons"] = ["failure fingerprint cycle detected"]
+
+    previous_counts: dict[str, int] = {}
+    if prior_attempts:
+        raw_counts = prior_attempts[-1].get("no_progress_counts")
+        if isinstance(raw_counts, dict):
+            previous_counts = {
+                str(key): int(value)
+                for key, value in raw_counts.items()
+                if isinstance(value, int)
+            }
+    no_progress_counts: dict[str, int] = {}
+    comparable_fingerprints = set(comparison["comparable_fingerprints"])
+    for fingerprint in current_fingerprints:
+        if attempt_kind != "repair" or comparison["progress"] or fingerprint not in comparable_fingerprints:
+            no_progress_counts[fingerprint] = 0
+        else:
+            no_progress_counts[fingerprint] = previous_counts.get(fingerprint, 0) + 1
+
+    attempt_id = str(current.get("execution_id") or f"attempt-{time.time_ns()}")
+    deferred_fingerprints = sorted(
+        fingerprint for fingerprint, count in no_progress_counts.items() if count >= 3
+    )
+    record = {
+        "attempt_id": attempt_id,
+        "kind": attempt_kind,
+        "trigger": trigger,
+        "suite": sorted({
+            str(row.get("suite"))
+            for row in current.get("scenarios", [])
+            if isinstance(row, dict) and row.get("suite")
+        }),
+        "changed_files": list(changed_files),
+        **comparison,
+        "no_progress_counts": no_progress_counts,
+        "next_action": "defer" if deferred_fingerprints else ("continue" if current_fingerprints else "pass"),
+        "matrix_snapshot": f"logs/trace/c-cross/checkpoints/{attempt_id}.json",
+    }
+    _append_jsonl(attempts_path, record)
+
+    deferred_path = c_cross / "deferred.jsonl"
+    existing_deferred = _read_jsonl(deferred_path)
+    latest_deferred: dict[str, dict[str, Any]] = {}
+    for row in existing_deferred:
+        fingerprint = row.get("fingerprint")
+        if isinstance(fingerprint, str):
+            latest_deferred[fingerprint] = row
+    active_deferred = {
+        fingerprint: row
+        for fingerprint, row in latest_deferred.items()
+        if row.get("status") == "deferred"
+    }
+    for fingerprint in deferred_fingerprints:
+        if fingerprint in active_deferred:
+            continue
+        attempt_ids = [
+            str(row.get("attempt_id"))
+            for row in prior_attempts + [record]
+            if fingerprint in row.get("fingerprints_after", [])
+        ][-3:]
+        _append_jsonl(
+            deferred_path,
+            {
+                "fingerprint": fingerprint,
+                "status": "deferred",
+                "no_progress_count": no_progress_counts[fingerprint],
+                "attempt_ids": attempt_ids,
+                "reactivation": "related Rust implementation change followed by changed C-cross evidence",
+                "final_requirement": "must pass final full C-cross",
+            },
+        )
+
+    for fingerprint, deferred_row in active_deferred.items():
+        if fingerprint in current_fingerprints:
+            continue
+        if current.get("scope") == "selected":
+            fingerprint_parts = fingerprint.split("|", 3)
+            fingerprint_suite = fingerprint_parts[1] if len(fingerprint_parts) > 1 else ""
+            selected = current.get("selected_suites")
+            selected_suites = {str(item) for item in selected} if isinstance(selected, list) else set()
+            if fingerprint_suite not in selected_suites:
+                continue
+        _append_jsonl(
+            deferred_path,
+            {
+                "fingerprint": fingerprint,
+                "status": "reactivated",
+                "reactivated_by": attempt_id,
+                "reason": "related execution produced changed evidence",
+                "deferred_attempt_ids": deferred_row.get("attempt_ids", []),
+            },
+        )
+    return record
 
 
 def _suite_for_case(case: dict[str, Any]) -> str:
     suite = case.get("suite")
     if isinstance(suite, str) and suite:
         return suite
-    scenario = str(case.get("scenario_id", "")).lower()
-    if "tsl" in scenario or "tsdb" in scenario or "github_issue" in scenario:
-        return "tsdb"
-    if "kv" in scenario or "gc" in scenario or "scale" in scenario:
-        return "kvdb"
     return "unknown"
 
 
@@ -396,6 +694,8 @@ def _malformed_row(index: int, case: Any, c_cross: Path, root: Path) -> dict[str
             missing_fields.append("scenario_id")
         if not isinstance(case.get("case_id"), str):
             missing_fields.append("case_id")
+        if not isinstance(case.get("suite"), str) or not case.get("suite"):
+            missing_fields.append("suite")
         reason = f"malformed scorer_standard_cases entry at index {index}: missing or non-string {', '.join(missing_fields)}"
     else:
         reason = f"malformed scorer_standard_cases entry at index {index}: expected object, got {type(case).__name__}"
@@ -428,17 +728,34 @@ def _source_evidence_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[s
         if not isinstance(item, dict):
             continue
         runner = item.get("runner")
-        test_function = item.get("test_function")
+        test_function = item.get("test_function") or item.get("name")
         scenarios = item.get("scenarios")
-        if not isinstance(runner, str) or not isinstance(test_function, str) or not isinstance(scenarios, list):
+        if not isinstance(scenarios, list) and isinstance(test_function, str):
+            scenarios = [test_function]
+        if not isinstance(test_function, str) or not isinstance(scenarios, list):
             continue
         for scenario in scenarios:
             if isinstance(scenario, str) and scenario not in evidence:
-                evidence[scenario] = {
-                    "source_runner": runner,
-                    "source_test": test_function,
-                }
+                item_evidence = {"source_test": test_function}
+                if isinstance(runner, str) and runner:
+                    item_evidence["source_runner"] = runner
+                evidence[scenario] = item_evidence
     return evidence
+
+
+def _expected_tests_by_suite(
+    cases: list[dict[str, Any]],
+    source_evidence: dict[str, dict[str, str]],
+) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for case in cases:
+        scenario_id = str(case["scenario_id"])
+        suite = _suite_for_case(case)
+        source_test = source_evidence.get(scenario_id, {}).get("source_test", scenario_id)
+        tests = result.setdefault(suite, [])
+        if source_test not in tests:
+            tests.append(source_test)
+    return result
 
 
 def _handoff_for_diagnosis(diagnosis: str) -> str:
@@ -459,6 +776,7 @@ def _handoff_for_diagnosis(diagnosis: str) -> str:
 def _suite_result_rows(
     cases: list[dict[str, Any]],
     suite_results: dict[str, tuple[str, str]],
+    suite_test_results: dict[str, dict[str, Any]],
     suite_phases: dict[str, str],
     suite_diagnoses: dict[str, str],
     source_evidence: dict[str, dict[str, str]],
@@ -476,6 +794,31 @@ def _suite_result_rows(
         log = c_cross / f"{scenario_id}.log"
         phase = suite_phases.get(suite, "full")
         diagnosis = suite_diagnoses.get(suite)
+        evidence = source_evidence.get(scenario_id, {})
+        source_test = evidence.get("source_test", scenario_id)
+        source_runner = evidence.get("source_runner", f"{suite}_runner")
+        parsed = suite_test_results.get(suite)
+        if phase == "full" and parsed is not None:
+            if parsed.get("status") != "parsed":
+                status = "fail"
+                diagnosis = "c_cross_result_parse_failed"
+                reason = str(parsed.get("reason") or reason)
+            elif source_test in parsed.get("passed", []):
+                status = "pass"
+                diagnosis = "rust_implementation_matches_c_baseline_for_scenario"
+                reason = f"{source_test} passed in original C runner"
+            elif source_test in parsed.get("failed", []):
+                status = "fail"
+                diagnosis = "c_test_case_failed"
+                reason = str(parsed.get("failures", {}).get(source_test) or f"{source_test} failed")
+            elif source_test in parsed.get("not_run", []):
+                status = "not_run"
+                diagnosis = "c_runner_runtime_failed"
+                reason = f"{source_test} was not run before the runner exited"
+            else:
+                status = "fail"
+                diagnosis = "c_cross_result_parse_failed"
+                reason = f"no parsed result for expected source test {source_test}"
         if not diagnosis:
             if status == "pass":
                 diagnosis = "rust_implementation_matches_c_baseline_for_scenario"
@@ -483,14 +826,7 @@ def _suite_result_rows(
                 diagnosis = "rust_implementation_failed_c_baseline"
             else:
                 diagnosis = "c_cross_harness_not_supported"
-        evidence = source_evidence.get(
-            scenario_id,
-            {
-                "source_runner": f"{suite}_runner",
-                "source_test": scenario_id,
-            },
-        )
-        _write(log, f"suite={suite}\nstatus={status}\nreason={reason}\n")
+        _write(log, f"suite={suite}\nsource_test={source_test}\nstatus={status}\nreason={reason}\n")
         rows.append(
             {
                 "scenario_id": scenario_id,
@@ -498,8 +834,8 @@ def _suite_result_rows(
                 "suite": suite,
                 "phase": phase,
                 "failure_layer": phase,
-                "source_runner": evidence["source_runner"],
-                "source_test": evidence["source_test"],
+                "source_runner": source_runner,
+                "source_test": source_test,
                 "c_impl_c_test": "baseline",
                 "rust_impl_c_test": status,
                 "c_impl_rust_test": "not_run",
@@ -513,7 +849,16 @@ def _suite_result_rows(
     return rows
 
 
-def build_matrix(root: Path, out: Path, project_name: str = "flashDB_rust", mode: str = "full") -> dict[str, Any]:
+def build_matrix(
+    root: Path,
+    out: Path,
+    project_name: str = "flashDB_rust",
+    mode: str = "full",
+    selected_suites: set[str] | None = None,
+    attempt_kind: str = "checkpoint",
+    trigger: str = "manual",
+    changed_files: list[str] | None = None,
+) -> dict[str, Any]:
     if mode not in {"build", "layout", "link", "full"}:
         raise ValueError(f"unsupported c-cross mode: {mode}")
     trace = out
@@ -532,18 +877,29 @@ def build_matrix(root: Path, out: Path, project_name: str = "flashDB_rust", mode
             not isinstance(case, dict)
             or not isinstance(case.get("scenario_id"), str)
             or not isinstance(case.get("case_id"), str)
+            or not isinstance(case.get("suite"), str)
+            or not case.get("suite")
         ):
             malformed.append(_malformed_row(index, case, c_cross, root))
         else:
             valid_cases.append(case)
 
+    available_suites = {_suite_for_case(case) for case in valid_cases}
+    if selected_suites is not None:
+        unknown_suites = sorted(selected_suites - available_suites)
+        if unknown_suites:
+            raise ValueError("unknown requested C-cross suites: " + ", ".join(unknown_suites))
+        valid_cases = [case for case in valid_cases if _suite_for_case(case) in selected_suites]
+
     compile_log: list[str] = []
     test_log: list[str] = []
     suite_results: dict[str, tuple[str, str]] = {}
+    suite_test_results: dict[str, dict[str, Any]] = {}
     suite_phases: dict[str, str] = {}
     suite_diagnoses: dict[str, str] = {}
     diagnostics: list[dict[str, Any]] = []
     source_evidence = _source_evidence_by_scenario(test_model)
+    expected_tests_by_suite = _expected_tests_by_suite(valid_cases, source_evidence)
     c_root = _find_c_project_root(root, trace)
     project = (root / project_name).resolve()
     suites = sorted({_suite_for_case(case) for case in valid_cases})
@@ -689,6 +1045,11 @@ def build_matrix(root: Path, out: Path, project_name: str = "flashDB_rust", mode
                             "pass" if run_ok else "fail",
                             run_reason,
                         )
+                        suite_test_results[suite] = parse_runner_test_results(
+                            run_output,
+                            expected_tests_by_suite.get(suite, []),
+                            0 if run_ok else 1,
+                        )
                         suite_phases[suite] = "full"
                         suite_diagnoses[suite] = (
                             "rust_implementation_matches_c_baseline_for_scenario"
@@ -715,6 +1076,7 @@ def build_matrix(root: Path, out: Path, project_name: str = "flashDB_rust", mode
     scenarios = malformed + _suite_result_rows(
         valid_cases,
         suite_results,
+        suite_test_results,
         suite_phases,
         suite_diagnoses,
         source_evidence,
@@ -728,6 +1090,11 @@ def build_matrix(root: Path, out: Path, project_name: str = "flashDB_rust", mode
         "stage": "VERIFY_RUST_WITH_C_TESTS",
         "policy": "strict",
         "mode": mode,
+        "scope": "selected" if selected_suites is not None else "all",
+        "selected_suites": sorted(selected_suites if selected_suites is not None else available_suites),
+        "attempt_kind": attempt_kind,
+        "trigger": trigger,
+        "changed_files": list(changed_files or []),
         "total_scenarios": len(scenarios),
         "summary": {"rust_impl_c_test": dict(sorted(summary.items()))},
         "scenarios": scenarios,
@@ -740,13 +1107,49 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", default="flashDB_rust", help="Rust project path, relative to root.")
     parser.add_argument("--out", default="logs/trace", help="Trace output directory, relative to root.")
     parser.add_argument("--mode", choices=["build", "layout", "link", "full"], default="full", help="C-cross checkpoint depth.")
+    parser.add_argument("--suite", action="append", dest="suites", help="Run only a suite discovered from the current C test model. Repeatable.")
+    parser.add_argument(
+        "--attempt-kind",
+        choices=["checkpoint", "repair", "confirmation", "final"],
+        default="checkpoint",
+        help="Classify this execution for convergence and final-gate policy.",
+    )
+    parser.add_argument("--trigger", default="manual", help="Machine-stable reason for this execution.")
+    parser.add_argument("--changed-file", action="append", default=[], help="File changed before a repair execution. Repeatable.")
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
     out = (root / args.out).resolve()
-    matrix = build_matrix(root, out, project_name=args.project, mode=args.mode)
     matrix_path = out / "validation-matrix.json"
-    matrix_path.write_text(json.dumps(matrix, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    previous_matrix = load_json(matrix_path) if matrix_path.exists() else None
+    matrix = build_matrix(
+        root,
+        out,
+        project_name=args.project,
+        mode=args.mode,
+        selected_suites=set(args.suites) if args.suites else None,
+        attempt_kind=args.attempt_kind,
+        trigger=args.trigger,
+        changed_files=args.changed_file,
+    )
+    execution_id = f"{time.time_ns()}-{_safe_c_suffix(args.attempt_kind)}-{_safe_c_suffix(args.trigger)}"
+    matrix["execution_id"] = execution_id
+    attempt = record_attempt(
+        out / "c-cross",
+        previous_matrix,
+        matrix,
+        attempt_kind=args.attempt_kind,
+        trigger=args.trigger,
+        changed_files=args.changed_file,
+    )
+    matrix["convergence"] = {
+        "progress": attempt["progress"],
+        "regression": attempt["regression"],
+        "no_progress_counts": attempt["no_progress_counts"],
+        "next_action": attempt["next_action"],
+    }
+    _write_json(out / "c-cross" / "checkpoints" / f"{execution_id}.json", matrix)
+    _write_json(matrix_path, matrix)
     counts = matrix["summary"]["rust_impl_c_test"]
     print("VERIFY_RUST_WITH_C_TESTS: MATRIX_WRITTEN")
     print(f"mapped_scenarios={matrix['total_scenarios']}")

@@ -17,6 +17,8 @@ permission:
 
 你是 FlashDB C-to-Rust opencode 工作台的主控 Agent。你负责读取 `INSTRUCTION.md`，维护 `logs/trace/workflow_state.json`，按阶段调用工具和 Skill，并在最终 `REPORT_AND_VERIFY` gate 后停止。
 
+每次运行时调度必须直接写明编辑边界：只允许当前职责内的 `flashDB_rust/**`、`logs/trace/**` 和规定的 `result/issues/**`；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。工作台问题只追加到 `logs/trace/workbench-issues.jsonl`，不得现场修改脚本或契约。
+
 如果当前会话不是 `@flashdb-orchestrator` primary agent，也不能运行中自切换 primary agent；默认 Build agent 必须完整读取本 Markdown 并按同一流程执行。
 
 ## 当前检查点范围
@@ -190,7 +192,7 @@ python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
 运行：
 
 ```bash
-python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind checkpoint --trigger core_complete
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```
 
@@ -202,7 +204,7 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 - `logs/trace/validation-matrix.json`
 - 中文 `logs/trace/06-5-verify-rust-with-c-tests.md`
 
-本阶段使用原始 C 测试证据验证 Rust 实现。`c_cross_validate.py` 必须先生成并运行 C ABI layout checker，比较 C/Rust 两侧 `sizeof`、`alignof` 和字段 offset；layout mismatch 必须输出 `[LAYOUT MISMATCH]`，写入 `layout-check.log`，并阻止后续功能 runner。layout checker 通过后才允许运行原始 C 测试 runner。临时 C harness 只能写入 `logs/trace/c-cross/`，不得进入 `flashDB_rust/src/`，不得让最终 Rust 项目依赖 FlashDB C 实现。
+本阶段使用原始 C 测试证据验证 Rust 实现。suite 和测试必须动态发现，runner 的 `Running:` / `FAIL` 输出必须形成逐测试结果。同一失败指纹连续 3 次无进展 repair 后才可 deferred；中间 gate 可让证据完整的 deferred 进入测试迁移，但 `not_supported` 或不可归因结果仍阻断。临时 C harness 只能写入 `logs/trace/c-cross/`，不得进入 `flashDB_rust/src/`。
 
 ## MIGRATE_TESTS
 
@@ -213,7 +215,7 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 - `logs/trace/c_test_model.json`
 - `logs/trace/rust_api_design.json`
 
-必须在 `VERIFY_RUST_WITH_C_TESTS` gate 通过后执行。如果 opencode 原生 subagent 可用，优先使用 `test-migrator`；如果不可用，由主控按 Markdown fallback 执行同一契约。最终 gate 只认产物和测试结果。
+必须在 `VERIFY_RUST_WITH_C_TESTS` 中间 gate 通过后执行；证据完整的 deferred 场景可进入 `MIGRATE_TESTS`，但不代表最终 C-cross 通过。如果 opencode 原生 subagent 可用，优先使用 `test-migrator`；如果不可用，由主控按 Markdown fallback 执行同一契约。
 
 运行：
 
@@ -277,11 +279,14 @@ python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 运行：
 
 ```bash
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind final --trigger final_verification
 python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json
 python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json
 python3 work/tools/report_writer.py --root . --output result/output.md --issues result/issues/00-summary.md
 python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 ```
+
+最终全量 C-cross 必须在所有 Rust 修复后执行，不带 `--suite`，所有场景通过且没有 active deferred。
 
 写入：
 

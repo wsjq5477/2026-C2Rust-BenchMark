@@ -582,5 +582,417 @@ design_doc/参赛工程设计文档.md
 5. unresolved 类型/签名采用关键路径严格 fail。C runner 调用、scorer case 覆盖、layout checker 检查的函数和类型如果 unresolved，必须阻断 gate；当前测试和评分不用的扩展 API 可记录为 unresolved，但必须带 `reason`、`source`、`owner` 和后续去向。
 6. `c_type_map` 采用中等粒度，覆盖生成正确 C ABI wrapper 必需的信息：primitive、typedef 链、enum/status code、struct value/pointer、`const char *`、`void *`、buffer + length、ownership/nullability。callback/function pointer 必须明确支持或 unresolved，不允许猜。
 7. scaffold 必须生成 typed FFI。`src/ffi/c_types.rs`、`src/ffi/c_abi.rs`、`src/ffi/layout_probe.rs` 在 `GENERATE_RUST_SCAFFOLD` 阶段就要固定 ABI shape；业务函数体可返回中性默认值，但签名和布局必须真实，不能退化成 `fn() -> *mut c_void` 或返回合同常量伪装通过。
-8. C cross 诊断第一阶段做到 C test function 级。suite 级结果继续保留，但 matrix 和 `case-results.jsonl` 必须关联 `source_runner` 与 `source_test`；assert 级结构化诊断暂不强制，失败细节先保留在原始 runner 输出和 log tail。
+8. C cross 诊断第一阶段的目标是做到 C test function 级。suite 级结果继续保留，但 matrix 和 `case-results.jsonl` 必须根据 runner 的真实执行输出分别判定每个 `source_test`；仅关联 `source_runner` 与 `source_test`、再把 suite 状态复制给全部 scenario，不算完成逐 test 判定。assert 级结构化诊断暂不强制，失败细节先保留在原始 runner 输出和 log tail。
 9. repairer 回派策略进入 gate 和 report，但只做字段和枚举校验，不扩展成复杂自动调度系统。失败 scenario 必须包含 `failure_layer`、`diagnosis`、`reason`、`log`、`handoff`；`handoff` 使用有限枚举，并约束 repairer 默认只读失败局部、diagnostics、log tail 和必要 ABI 局部。
+
+## 运行失败复盘与二次优化方案
+
+本节基于 2026-07-09 的一次完整转换记录，对前述方案做二次复审。前述 ABI 合同前移、真实 layout checker、原始 C runner 和 strict final gate 继续保留；本节重点修正逐 test 判定、阶段阻断、修复收敛和运行写权限问题。
+
+### 1. 本次失败的实际结论
+
+本次真实执行链路不是环境或 C harness 启动失败：
+
+- Rust `staticlib` 构建成功；
+- C/Rust `sizeof`、`alignof` 和字段 offset 检查成功；
+- KVDB、TSDB 原始 C runner 编译和链接成功；
+- 两个 runner 都真实启动并执行测试；
+- 原始 FlashDB C 实现在隔离临时目录中运行相同 KVDB、TSDB 测试均通过。
+
+Rust 实现链接原始 C runner 后，实际明确失败的是 5 个 C test：
+
+```text
+test_fdb_gc
+test_fdb_gc2
+test_fdb_scale_up
+test_fdb_tsl_set_status
+test_fdb_tsl_iter_by_time_1
+```
+
+因此，本次失败属于 Rust 业务语义尚未完全匹配 C 基线，不属于 C 编译器缺失、layout checker 不可靠或 runner 无法链接。
+
+### 2. 当前实现存在的工程问题
+
+#### 2.1 suite 失败被错误放大为全部 scenario 失败
+
+当前实现先得到 KVDB 或 TSDB runner 的整体退出码，再把同一个 suite 状态复制给 suite 下全部 scenario。结果是 5 个明确失败被写成全量 scenario 失败。
+
+这会产生三个后果：
+
+- 通过率失真，无法判断实现已经覆盖了哪些语义；
+- repair agent 收到过大的错误范围，容易重复分析和大范围修改；
+- 同一轮修复前后的进展无法比较。
+
+`case-results.jsonl` 中出现 `source_test` 字段不等于已经完成逐 test 判定。只有每个 test 的状态来自该 test 的真实执行证据，才能标记为 `pass`、`fail` 或 `not_run`。
+
+#### 2.2 阶段日志与实际修改时间不一致
+
+本次 `REWRITE_CORE_MODULES` 阶段日志较早声明完成，但之后 Rust FFI、storage、KVDB 和 TSDB 文件仍持续修改，并且中间穿插运行 C cross。说明当前阶段状态只能表示“写过阶段日志”，不能证明实现和验证已经稳定结束。
+
+后续不能再用一份提前写出的阶段 markdown 代替真实批次记录。每次实现和复测必须进入机器可读的 attempt 记录，最终 gate 以最后一次有效记录为准。
+
+#### 2.3 C cross 命令不慢，未受控的修复过程才是风险
+
+本次完整 build/layout/link/run 命令约数秒完成，未发现 `c_cross_validate.py` 自身存在无界循环。其外部命令已经有超时保护。
+
+主要风险来自：
+
+- 验证失败后没有统一的修复轮次定义；
+- 没有判断本轮是否产生进展；
+- 没有稳定失败指纹，代理可能重复修同一个问题；
+- 运行代理曾修改工作台脚本，混淆了“修 Rust 实现”和“改验证规则”；
+- 中间 C cross strict fail 直接阻断后续 Rust 测试，失去后续证据和统一修复机会。
+
+### 3. 二次优化原则
+
+二次优化不删除 C cross，也不降低最终质量要求。采用以下原则：
+
+1. C cross 是原始 C 行为基线验证器，不负责现场修工作台；
+2. 中间 C cross 是可继续的诊断 checkpoint，最终 C cross 是 strict gate；
+3. 不依赖固定 wall-clock 时长控制循环，按失败指纹和结果是否收敛控制；
+4. 不用固定通过比例作为放行条件，通过比例只用于安排修复优先级；
+5. 增量验证按当前输入动态发现的 suite 和依赖执行，不固定 KVDB、TSDB 名称或 case 数；
+6. 运行任务只修改迁移产物和证据，不修改工作台、设计文档或平台输入；
+7. 最终仍要求原始 C tests 对 Rust 实现全部通过，`deferred` 不是最终豁免。
+
+### 4. 调整后的执行流程
+
+```text
+GENERATE_RUST_SCAFFOLD
+  -> cargo check
+  -> c-cross build/layout/link checkpoint
+
+REWRITE_CORE_MODULES
+  -> 按动态模块批次实现
+  -> 每批 cargo check
+  -> 当前 suite 的依赖满足后，只运行该 suite
+  -> 解析逐 C test 结果
+  -> 有进展则继续定向修复
+  -> 同一失败指纹连续 3 次无进展则 deferred
+
+MIGRATE_TESTS + BUILD_TEST_REPAIR
+  -> 即使中间存在 deferred C tests 也继续
+  -> 利用 Rust tests 和新实现证据修复
+  -> 相关实现变化后重新激活 deferred tests
+
+REPORT_AND_VERIFY 前
+  -> full C cross
+  -> cargo build/test
+  -> 全部严格通过后才允许 STATUS: SUCCESS
+```
+
+不强制为了执行 C cross 更换 agent。当前 `rust-implementer` 可以直接运行确定性命令并继续修复 Rust；主控负责检查 attempt 记录、推进 checkpoint 和执行最终 gate。是否切换 session 不是验收条件，产物和结果才是验收条件。
+
+### 5. 增量 C cross 设计
+
+#### 5.1 scaffold checkpoint
+
+typed FFI scaffold 生成并通过 `cargo check` 后，立即执行：
+
+```text
+build -> layout -> link
+```
+
+此时不要求业务 runtime tests 通过，目标是提前确认：
+
+- Rust `staticlib` 可以生成；
+- C/Rust struct layout 一致；
+- 当前输入需要的 C symbols 可以链接；
+- typed function signature 没有把错误继续推迟到业务实现末尾。
+
+build/layout/link 的中间失败写入诊断，但不伪装成 runtime test 失败。`cargo check` 或 Rust build 失败必须在继续实现前修复；layout/link 缺口进入当前实现批次的待修列表。
+
+#### 5.2 suite checkpoint
+
+suite 列表、suite 到 C test 的关系以及所需 symbols 必须从当前输入动态产生：
+
+```text
+c_test_model.registered_test_invocations
+c_test_model.scorer_standard_cases
+rust_api_design.c_abi_facade.functions[].required_by
+core_rewrite_batches.jsonl
+```
+
+当某个 suite 依赖的 wrapper 和 owner module 已标记实现完成后，运行该 suite。修复后只重跑受影响 suite，不重复执行与本轮修改无关的 suite。
+
+如果现有模型无法可靠证明某 suite 的依赖已经满足，则不猜依赖关系；该 suite 延迟到 core 全部完成后的 full checkpoint。
+
+#### 5.3 full checkpoint
+
+所有 core batch 完成后运行一次 full C cross。该次结果用于建立进入 Rust test migration 前的 C evidence baseline，但中间 runtime case 失败不再直接阻断 `MIGRATE_TESTS`。失败项进入 deferred/repair 流程，最终报告前必须再次 full 验证。
+
+### 6. 原始 runner 的逐 test 判定
+
+第一版不生成、不改写 C instrumentation runner，也不修改平台 C tests。直接运行原始 runner，结合模型中的注册顺序解析原始输出。
+
+当前 FlashDB runner 的关键证据形如：
+
+```text
+Running: test_xxx ...
+FAIL test_xxx: assertion text
+```
+
+判定规则：
+
+- 出现 start/running 证据，且没有该 test 的 fail 证据：`pass`；
+- 出现明确的 `FAIL test_name`：`fail`；
+- runner 提前退出，模型中预期但没有 start 证据：`not_run`；
+- runner 自身异常退出且无法归属到 test：suite 级 `runtime_error`，不能复制成全部 test fail；
+- 输出中的 test 名必须映射到 `registered_test_invocations`；
+- expected、started、failed、not_run 集合必须可闭合校验；
+- 出现未知 test、重复歧义或集合无法闭合时：`c_cross_result_parse_failed`。
+
+无法解析时必须 fail closed，不能猜测通过，也不能把 suite 状态批量复制给所有 scenario。中间 parse failure 可以记录后继续后续阶段；最终 full C cross 必须得到完整可解析结果。
+
+#### 采用原始输出解析的原因
+
+- 验证的仍是平台原始 runner；
+- 不改测试宏，不引入临时测试语义变化；
+- 一次 suite 运行即可得到多个 test 的结果；
+- 当前输入已经输出稳定的 test 名和 fail 行；
+- 比为每个 static C test 重新生成 runner 更轻量，也避免破坏共享 setup、teardown 和持久化状态。
+
+其限制是依赖 runner 提供可关联的 test 名。该限制通过严格集合校验和 `c_cross_result_parse_failed` 显式暴露，不通过猜测兜底。
+
+### 7. 修复轮次与进展判定
+
+#### 7.1 失败指纹
+
+每个失败至少形成以下稳定指纹：
+
+```text
+failure_layer
+suite
+source_test
+normalized assertion/error
+```
+
+编译、layout、link、timeout 和 result parse 失败也必须有自己的指纹，不能全部归入 `c_runner_runtime_failed`。
+
+#### 7.2 一次有效修复尝试
+
+一次 attempt 必须同时包含：
+
+1. 基于一个或一组相关失败指纹，对允许范围内文件做定向修改；
+2. 清理对应 c-cross run directory；
+3. 使用同一输入、配置和 runner 重跑受影响 suite；
+4. 记录修改前后的 test 集合和失败指纹。
+
+只重复命令但没有定向修改，不算一次修复 attempt。用于确认偶发错误的同条件重跑必须单独标记为 `confirmation_run`。
+
+#### 7.3 有进展
+
+以下任一情况视为有进展：
+
+- 至少一个失败 test 变成 pass；
+- 失败层次向后推进，例如 build -> link -> runtime；
+- 同一个 test 原断言通过，失败移动到后续新断言；
+- 一个公共修复消除了多个失败指纹；
+- 通过集合严格增加，且没有引入更严重的回归。
+
+有进展时，相关失败指纹的连续无进展计数清零。
+
+#### 7.4 无进展
+
+以下情况记为一次无进展：
+
+- 同一 test 仍在同一断言或同一 normalized error 上失败；
+- 通过集合没有增加，失败集合也没有向更后层次移动；
+- 修改导致 build 回退或让原本通过的 tests 失败；
+- 失败在近期指纹之间循环，例如 A -> B -> A。
+
+超时、runner 崩溃或环境异常造成不可比较结果时，先自动做一次 confirmation run，不直接计入业务修复无进展。连续出现相同异常后，形成独立异常指纹并进入正常计数。
+
+#### 7.5 deferred 规则
+
+同一失败指纹连续 3 次无进展后：
+
+- 标记 `status: deferred`；
+- 停止在中间阶段继续消耗修复轮次；
+- 进入后续 Rust test migration 和统一 repair；
+- 只有相关 Rust 实现发生变化、Rust tests 提供新证据或失败指纹变化后，才重新激活；
+- 最终 full C cross 不接受 deferred，必须转为 pass，否则最终 gate 失败。
+
+### 8. 通过比例的用途
+
+不设置 `80%`、`90%` 等固定中间放行比例。固定比例无法表达关键性：一个公共状态机错误可能造成大量失败，一个孤立的 reload/GC 失败也可能是评分关键语义。
+
+通过比例和通过集合只用于：
+
+- 判断修复是否收敛；
+- 优先处理能消除多个失败的公共根因；
+- 在少量孤立失败时缩小读取和修改范围；
+- 在报告中展示迁移进展。
+
+中间流程是否继续由 deferred 和进展规则决定；最终是否成功仍由完整 C baseline、Rust build/test 和 final gate 共同决定。
+
+### 9. 运行期写权限边界
+
+比赛运行不等待人工审批，也不新增哈希清单或文件完整性工具。通过主控和各 subagent 的权威提示词明确写权限。
+
+允许范围：
+
+| agent | 允许运行时修改 |
+| --- | --- |
+| `flashdb-orchestrator` | `logs/**`、`result/**`，以及正常调度生成的状态证据 |
+| `c-analyzer` | `logs/**` 中的 C 模型、API 设计和阶段证据 |
+| `rust-implementer` | `flashDB_rust/**`、`logs/**` 中的实现与 C-cross 证据 |
+| `test-migrator` | `flashDB_rust/tests/**`、测试所需 Rust 文件、`logs/**` 中的 mapping/证据 |
+| `repairer` | triage 明确授权的 `flashDB_rust/**`、`logs/**`、`result/issues/**` |
+
+所有运行 agent 禁止修改：
+
+```text
+INSTRUCTION.md
+work/**
+.opencode/**
+tests/**
+design_doc/**
+平台提供的 C 源码和 C tests
+```
+
+C cross 失败不能作为修改验证脚本、gate、skill 或设计文档的理由。如果运行中发现工作台缺陷，只写入：
+
+```text
+logs/trace/workbench-issues.jsonl
+```
+
+并包含 `tool`、`symptom`、`evidence`、`impact` 和建议维护动作。比赛运行继续使用赛前固定的工作台，不现场修工具。
+
+### 10. 新增或调整的机器证据
+
+在现有分层产物基础上，增加 attempt 和 deferred 证据：
+
+```text
+logs/trace/c-cross/attempts.jsonl
+logs/trace/c-cross/deferred.jsonl
+logs/trace/workbench-issues.jsonl
+```
+
+`attempts.jsonl` 每条至少包含：
+
+```json
+{
+  "attempt_id": "dynamic-id",
+  "kind": "repair",
+  "trigger": "suite_checkpoint",
+  "suite": "dynamic-suite",
+  "changed_files": ["flashDB_rust/src/example.rs"],
+  "before": {
+    "passed": ["test_a"],
+    "failed": ["test_b"],
+    "not_run": []
+  },
+  "after": {
+    "passed": ["test_a", "test_b"],
+    "failed": [],
+    "not_run": []
+  },
+  "fingerprints_before": ["runtime|suite|test_b|assertion"],
+  "fingerprints_after": [],
+  "progress": true,
+  "no_progress_count": 0,
+  "next_action": "continue"
+}
+```
+
+`deferred.jsonl` 必须记录：
+
+- failure fingerprint；
+- 连续无进展次数；
+- 三次 attempt 的 evidence path；
+- 当前允许继续的后续阶段；
+- 重新激活条件；
+- 最终仍需通过的声明。
+
+### 11. Gate 语义调整
+
+#### 中间 checkpoint
+
+中间 C cross 允许以下状态进入后续阶段：
+
+```text
+pass
+fail_with_progress
+deferred
+parse_failed_recorded
+```
+
+但必须满足：
+
+- 真实命令已执行，不允许 `not_supported` 冒充执行；
+- 逐 test 集合可解释，或已明确记录 parse failure；
+- 每个失败都有 fingerprint、evidence 和 next action；
+- deferred 满足连续三次无进展证据；
+- 没有修改禁止范围文件的自报记录；
+- Rust 项目至少可以完成当前阶段要求的 `cargo check`。
+
+这里的“允许进入后续阶段”不是宣告 C baseline 已通过，只是避免中间证据不足时永久阻断后续 Rust 测试和统一 repair。
+
+#### 最终 checkpoint
+
+最终 `REPORT_AND_VERIFY` 前的 full C cross 必须满足：
+
+- build/layout/link 全部 pass；
+- expected C tests 全部有可解析执行证据；
+- 每个 scorer scenario 一一映射到真实 C test 结果；
+- 所有 `rust_impl_c_test == pass`；
+- 不存在 `fail`、`not_run`、`deferred`、`not_supported` 或未处理 parse failure；
+- final full run 使用当前最终 Rust staticlib，不复用旧结果；
+- cargo build/test 和其他最终 gate 条件继续满足。
+
+只有最终 checkpoint 满足后，才允许输出 `STATUS: SUCCESS`。
+
+### 12. 落地范围
+
+后续实现应最小化修改并保持合同同步，重点范围为：
+
+```text
+02_02/work/tools/c_cross_validate.py
+02_02/work/tools/gate.py
+02_02/work/tools/report_writer.py
+02_02/work/skills/flashdb-orchestrator.md
+02_02/work/skills/rust-implementer.md
+02_02/work/skills/test-migrator.md
+02_02/work/skills/repairer.md
+02_02/work/skills/flashdb-migration/SKILL.md
+02_02/.opencode/skills 对应镜像
+02_02/INSTRUCTION.md
+design_doc/stages/05-generate-rust-scaffold.md
+design_doc/stages/06-rewrite-core-modules.md
+design_doc/stages/06-5-verify-rust-with-c-tests.md
+design_doc/stages/08-build-test-repair.md
+02_02/tests/test_conversion_system.py
+```
+
+不得把本次本地 Rust 实现中的固定函数、固定 test 名或固定 suite 数写入工作台逻辑。文档中的 5 个失败 test 只作为本次复盘证据，不作为 validator 的固定清单。
+
+### 13. 二次优化验收标准
+
+完成实现后必须验证：
+
+- 本次 runner 输出能够得到真实的部分通过和 5 个明确失败，而不是全量失败；
+- 未在 runner 中启动的 test 能标记为 `not_run`；
+- 未知或歧义输出能得到 `c_cross_result_parse_failed`，不会猜测；
+- suite checkpoint 只运行当前输入动态选择的 suite；
+- 相关 suite 修复后通过集合增加会被判定为 progress；
+- 同一指纹连续三次不变会进入 deferred；
+- 新证据或相关实现变化能重新激活 deferred；
+- 中间 deferred 不阻断 `MIGRATE_TESTS` 和 `BUILD_TEST_REPAIR`；
+- final full C cross 仍拒绝任何非 pass 状态；
+- 运行 agent 的文档明确禁止修改工作台和平台输入；
+- `workbench_issue` 只记录证据，不触发比赛运行中修改工具；
+- 所有 case、suite、symbol 和依赖关系来自当前输入模型，不固定数量或名称。
+
+## 二次复审后的已确认决策
+
+1. 保留真实 C cross；它已证明能发现 Rust 编译和普通 Rust tests 未必能发现的 C 行为差异。
+2. 中间 C cross 改为可继续的诊断 checkpoint，最终 full C cross 保持 strict。
+3. 不使用固定五小时或其他 wall-clock 作为工作台内部控制条件。
+4. 同一失败指纹连续 3 次无进展后 deferred；有进展时相关计数清零。
+5. 不设置固定通过比例作为中间放行条件，通过集合仅用于进展判定和修复排序。
+6. 第一版解析原始 runner 的 start/fail 输出，不生成或改写 C instrumentation runner。
+7. C cross 按实现批次和动态 suite 增量执行，全部 core 完成及最终报告前各执行一次 full。
+8. 不强制为验证切换 agent；当前实现 agent 可以运行 C cross 并继续定向修 Rust。
+9. 比赛运行只通过权威提示词约束写范围，不新增哈希清单或人工审批。
+10. 运行中发现工作台问题只写 `workbench-issues.jsonl`，不得修改 `work/**`、gate、validator、skills 或设计文档。
