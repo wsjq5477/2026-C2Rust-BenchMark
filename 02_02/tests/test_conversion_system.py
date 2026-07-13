@@ -76,6 +76,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
 
         forbidden_paths = [
             PROJECT / "opencode.json",
+            PROJECT / "write_all_files.py",
             PROJECT / "flashDB_rust",
             PROJECT / "work" / "agents",
             PROJECT / "work" / "skills" / "c-to-rust",

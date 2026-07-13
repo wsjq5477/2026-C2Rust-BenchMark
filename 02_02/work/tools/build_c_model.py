@@ -515,6 +515,21 @@ def call_args(body: str, *suffixes: str) -> list[str]:
     ]
 
 
+def callback_arg_from_call(function_name: str, raw_args: str) -> str | None:
+    if "iter" not in function_name.lower():
+        return None
+    for arg in split_params(raw_args)[1:]:
+        token = arg.strip()
+        if not re.fullmatch(IDENT, token):
+            continue
+        lower = token.lower()
+        if lower in {"null", "true", "false"}:
+            continue
+        if "cb" in lower or "callback" in lower:
+            return token
+    return None
+
+
 def semantic_markers_from_body(body: str, assertion_targets: list[str]) -> list[str]:
     markers: list[str] = []
     lower = body.lower()
@@ -679,21 +694,10 @@ def extract_test_semantics(body: str) -> dict[str, Any]:
     scenario_features = scenario_features_from_body(body, data_shape)
     semantic_markers = semantic_markers_from_body(body, assertion_targets)
     callback_bindings: list[dict[str, str]] = []
-    callback_positions = {
-        "fdb_tsl_iter": 1,
-        "fdb_tsl_iter_reverse": 1,
-        "fdb_tsl_iter_by_time": 3,
-    }
     for match in iter_call_matches(body):
         iterator_api = match.group(1)
-        callback_position = callback_positions.get(iterator_api)
-        if callback_position is None:
-            continue
-        args = split_params(match.group("args"))
-        if callback_position >= len(args):
-            continue
-        callback = args[callback_position].strip()
-        if re.fullmatch(IDENT, callback):
+        callback = callback_arg_from_call(iterator_api, match.group("args"))
+        if callback is not None:
             callback_bindings.append({"iterator_api": iterator_api, "callback": callback})
     return {
         "called_functions": calls,

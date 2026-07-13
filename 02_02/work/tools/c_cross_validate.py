@@ -368,11 +368,7 @@ def _c_include_args(c_root: Path, c_cross: Path) -> list[str]:
             target_name = template.name.replace("_template.h", ".h")
             if not (inc / target_name).exists():
                 content = template.read_text(encoding="utf-8", errors="ignore")
-                if target_name == "fdb_cfg.h":
-                    content = content.replace(
-                        "#define _FDB_CFG_H_",
-                        "#define _FDB_CFG_H_\n\n#include <stdbool.h>\n#include <time.h>",
-                    )
+                content = "#include <stdbool.h>\n#include <time.h>\n" + content
                 (generated_include / target_name).write_text(
                     content,
                     encoding="utf-8",
@@ -913,7 +909,7 @@ def _expected_tests_by_suite(
         suite = _suite_for_case(case)
         source_test = source_evidence.get(scenario_id, {}).get("source_test", scenario_id)
         tests = result.setdefault(suite, [])
-        # When same source_test maps to multiple scenarios (e.g. test_fdb_tsl_clean and test_fdb_tsl_clean__2),
+        # When same source_test maps to multiple scenarios,
         # include each scenario_id in expected_tests list instead of deduplicating by source_test.
         # This allows parse_runner_test_results to match multiple Running: lines to different scenario_ids.
         tests.append(scenario_id)
