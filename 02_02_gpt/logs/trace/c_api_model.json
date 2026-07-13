@@ -1,0 +1,5083 @@
+{
+  "abi_layouts": [
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 8,
+      "dependency_of": [
+        "fdb_blob"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "void *",
+          "name": "buf",
+          "offset": 0,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "size_t",
+          "name": "size",
+          "offset": 8,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "struct { uint32_t meta_addr; uint32_t addr; size_t len; }",
+          "name": "saved",
+          "offset": 16,
+          "sizeof": 16
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "fdb_blob",
+      "sizeof": 32
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 8,
+      "dependency_of": [
+        "fdb_db",
+        "fdb_kvdb",
+        "fdb_tsdb"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "const char *",
+          "name": "name",
+          "offset": 0,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "fdb_db_type",
+          "name": "type",
+          "offset": 8,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "union { const char *dir; }",
+          "name": "storage",
+          "offset": 16,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "sec_size",
+          "offset": 24,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "max_size",
+          "offset": 28,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "oldest_addr",
+          "offset": 32,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "_Bool",
+          "name": "init_ok",
+          "offset": 36,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "_Bool",
+          "name": "file_mode",
+          "offset": 37,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "_Bool",
+          "name": "not_formatable",
+          "offset": 38,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "cur_file_sec",
+          "offset": 40,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "int",
+          "name": "cur_file",
+          "offset": 48,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "cur_sec",
+          "offset": 56,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "void (*lock)(fdb_db_t db)",
+          "name": "lock",
+          "offset": 64,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "void (*unlock)(fdb_db_t db)",
+          "name": "unlock",
+          "offset": 72,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "void *",
+          "name": "user_data",
+          "offset": 80,
+          "sizeof": 8
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "fdb_db",
+      "sizeof": 88
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 8,
+      "dependency_of": [
+        "fdb_default_kv",
+        "fdb_kvdb"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "struct fdb_default_kv_node *",
+          "name": "kvs",
+          "offset": 0,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "size_t",
+          "name": "num",
+          "offset": 8,
+          "sizeof": 8
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "fdb_default_kv",
+      "sizeof": 16
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 8,
+      "dependency_of": [
+        "fdb_default_kv",
+        "fdb_default_kv_node",
+        "fdb_kvdb"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "char *",
+          "name": "key",
+          "offset": 0,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "void *",
+          "name": "value",
+          "offset": 8,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "size_t",
+          "name": "value_len",
+          "offset": 16,
+          "sizeof": 8
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "fdb_default_kv_node",
+      "sizeof": 24
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 4,
+      "dependency_of": [
+        "fdb_kv",
+        "fdb_kv_iterator",
+        "fdb_kvdb"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "fdb_kv_status_t",
+          "name": "status",
+          "offset": 0,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "_Bool",
+          "name": "crc_is_ok",
+          "offset": 4,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "uint8_t",
+          "name": "name_len",
+          "offset": 5,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "magic",
+          "offset": 8,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "len",
+          "offset": 12,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "value_len",
+          "offset": 16,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "char",
+          "name": "name",
+          "offset": 20,
+          "sizeof": 64
+        },
+        {
+          "condition": null,
+          "ctype": "struct { uint32_t start; uint32_t value; }",
+          "name": "addr",
+          "offset": 84,
+          "sizeof": 8
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "fdb_kv",
+      "sizeof": 92
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 8,
+      "dependency_of": [
+        "fdb_kv_iterator"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "struct fdb_kv",
+          "name": "curr_kv",
+          "offset": 0,
+          "sizeof": 92
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "iterated_cnt",
+          "offset": 92,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "size_t",
+          "name": "iterated_obj_bytes",
+          "offset": 96,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "size_t",
+          "name": "iterated_value_bytes",
+          "offset": 104,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "sector_addr",
+          "offset": 112,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "traversed_len",
+          "offset": 116,
+          "sizeof": 4
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "fdb_kv_iterator",
+      "sizeof": 120
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 8,
+      "dependency_of": [
+        "fdb_kvdb"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "struct fdb_db",
+          "name": "parent",
+          "offset": 0,
+          "sizeof": 88
+        },
+        {
+          "condition": null,
+          "ctype": "struct fdb_default_kv",
+          "name": "default_kvs",
+          "offset": 88,
+          "sizeof": 16
+        },
+        {
+          "condition": null,
+          "ctype": "_Bool",
+          "name": "gc_request",
+          "offset": 104,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "_Bool",
+          "name": "in_recovery_check",
+          "offset": 105,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "struct fdb_kv",
+          "name": "cur_kv",
+          "offset": 108,
+          "sizeof": 92
+        },
+        {
+          "condition": null,
+          "ctype": "struct kvdb_sec_info",
+          "name": "cur_sector",
+          "offset": 200,
+          "sizeof": 40
+        },
+        {
+          "condition": null,
+          "ctype": "_Bool",
+          "name": "last_is_complete_del",
+          "offset": 240,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "struct kv_cache_node",
+          "name": "kv_cache_table",
+          "offset": 244,
+          "sizeof": 512
+        },
+        {
+          "condition": null,
+          "ctype": "struct kvdb_sec_info",
+          "name": "sector_cache_table",
+          "offset": 760,
+          "sizeof": 320
+        },
+        {
+          "condition": null,
+          "ctype": "void *",
+          "name": "user_data",
+          "offset": 1080,
+          "sizeof": 8
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "fdb_kvdb",
+      "sizeof": 1088
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 8,
+      "dependency_of": [
+        "fdb_tsdb"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "struct fdb_db",
+          "name": "parent",
+          "offset": 0,
+          "sizeof": 88
+        },
+        {
+          "condition": null,
+          "ctype": "struct tsdb_sec_info",
+          "name": "cur_sec",
+          "offset": 88,
+          "sizeof": 56
+        },
+        {
+          "condition": null,
+          "ctype": "fdb_time_t",
+          "name": "last_time",
+          "offset": 144,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "fdb_get_time",
+          "name": "get_time",
+          "offset": 152,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "size_t",
+          "name": "max_len",
+          "offset": 160,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "_Bool",
+          "name": "rollover",
+          "offset": 168,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "void *",
+          "name": "user_data",
+          "offset": 176,
+          "sizeof": 8
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "fdb_tsdb",
+      "sizeof": 184
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 4,
+      "dependency_of": [
+        "fdb_tsl"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "fdb_tsl_status_t",
+          "name": "status",
+          "offset": 0,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "fdb_time_t",
+          "name": "time",
+          "offset": 4,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "log_len",
+          "offset": 8,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "struct { uint32_t index; uint32_t log; }",
+          "name": "addr",
+          "offset": 12,
+          "sizeof": 8
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "fdb_tsl",
+      "sizeof": 20
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 4,
+      "dependency_of": [
+        "fdb_kvdb"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "uint16_t",
+          "name": "name_crc",
+          "offset": 0,
+          "sizeof": 2
+        },
+        {
+          "condition": null,
+          "ctype": "uint16_t",
+          "name": "active",
+          "offset": 2,
+          "sizeof": 2
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "addr",
+          "offset": 4,
+          "sizeof": 4
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "kv_cache_node",
+      "sizeof": 8
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 8,
+      "dependency_of": [
+        "fdb_kvdb"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "_Bool",
+          "name": "check_ok",
+          "offset": 0,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "struct { fdb_sector_store_status_t store; fdb_sector_dirty_status_t dirty; }",
+          "name": "status",
+          "offset": 4,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "addr",
+          "offset": 12,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "magic",
+          "offset": 16,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "combined",
+          "offset": 20,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "size_t",
+          "name": "remain",
+          "offset": 24,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "empty_kv",
+          "offset": 32,
+          "sizeof": 4
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "kvdb_sec_info",
+      "sizeof": 40
+    },
+    {
+      "active_macros": {
+        "FDB_BYTE_ERASED": "0xFF",
+        "FDB_BYTE_WRITTEN": "0x00",
+        "FDB_DATA_UNUSED": "0xFFFFFFFF",
+        "FDB_DEBUG_ENABLE": "1",
+        "FDB_DIRTY_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+        "FDB_FAILED_ADDR": "0xFFFFFFFF",
+        "FDB_FILE_CACHE_TABLE_SIZE": "2",
+        "FDB_KVDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_KVDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_KVDB_CTRL_SET_LOCK": "0x02",
+        "FDB_KVDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_KVDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_KVDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_KVDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_KV_CACHE_TABLE_SIZE": "64",
+        "FDB_KV_NAME_MAX": "64",
+        "FDB_KV_STATUS_NUM": "6",
+        "FDB_KV_USING_CACHE": "1",
+        "FDB_SECTOR_CACHE_TABLE_SIZE": "8",
+        "FDB_SECTOR_DIRTY_STATUS_NUM": "4",
+        "FDB_SECTOR_STORE_STATUS_NUM": "4",
+        "FDB_STORE_STATUS_TABLE_SIZE": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+        "FDB_SW_VERSION": "\"2.2.99\"",
+        "FDB_SW_VERSION_NUM": "0x20299",
+        "FDB_TSDB_CTRL_GET_LAST_TIME": "0x06",
+        "FDB_TSDB_CTRL_GET_ROLLOVER": "0x05",
+        "FDB_TSDB_CTRL_GET_SEC_SIZE": "0x01",
+        "FDB_TSDB_CTRL_SET_FILE_MODE": "0x09",
+        "FDB_TSDB_CTRL_SET_LOCK": "0x02",
+        "FDB_TSDB_CTRL_SET_MAX_SIZE": "0x0A",
+        "FDB_TSDB_CTRL_SET_NOT_FORMAT": "0x0B",
+        "FDB_TSDB_CTRL_SET_ROLLOVER": "0x04",
+        "FDB_TSDB_CTRL_SET_SEC_SIZE": "0x00",
+        "FDB_TSDB_CTRL_SET_UNLOCK": "0x03",
+        "FDB_TSL_STATUS_NUM": "6",
+        "FDB_USING_FILE_MODE": "1",
+        "FDB_USING_FILE_POSIX_MODE": "1",
+        "FDB_USING_KVDB": "1",
+        "FDB_USING_TSDB": "1",
+        "FDB_WRITE_GRAN": "1"
+      },
+      "alignof": 8,
+      "dependency_of": [
+        "fdb_tsdb"
+      ],
+      "fields": [
+        {
+          "condition": null,
+          "ctype": "_Bool",
+          "name": "check_ok",
+          "offset": 0,
+          "sizeof": 1
+        },
+        {
+          "condition": null,
+          "ctype": "fdb_sector_store_status_t",
+          "name": "status",
+          "offset": 4,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "addr",
+          "offset": 8,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "magic",
+          "offset": 12,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "fdb_time_t",
+          "name": "start_time",
+          "offset": 16,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "fdb_time_t",
+          "name": "end_time",
+          "offset": 20,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "end_idx",
+          "offset": 24,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "fdb_tsl_status_t",
+          "name": "end_info_stat",
+          "offset": 28,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "size_t",
+          "name": "remain",
+          "offset": 40,
+          "sizeof": 8
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "empty_idx",
+          "offset": 48,
+          "sizeof": 4
+        },
+        {
+          "condition": null,
+          "ctype": "uint32_t",
+          "name": "empty_data",
+          "offset": 52,
+          "sizeof": 4
+        }
+      ],
+      "header": "inc/fdb_def.h",
+      "name": "tsdb_sec_info",
+      "sizeof": 56
+    }
+  ],
+  "all_functions": [
+    {
+      "file": "inc/fdb_def.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "bool"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_time_t"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_continue_ff_addr"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_db_path"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_deinit"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_flash_erase"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_flash_read"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_flash_write"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_flash_write_align"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_get_status"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_init_ex"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_init_finish"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_read_status"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_set_status"
+    },
+    {
+      "file": "inc/fdb_low_lvl.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_write_status"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_blob_make"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_blob_read"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_calc_crc32"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_del"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_get"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_get_blob"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_get_obj"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_iterate"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_iterator_init"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_print"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_set"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_set_blob"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_set_default"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kv_to_blob"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kvdb_check"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kvdb_control"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kvdb_deinit"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_kvdb_init"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsdb_control"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsdb_deinit"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsdb_init"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsl_append"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsl_append_with_ts"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsl_clean"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsl_iter"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsl_iter_by_time"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsl_iter_reverse"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsl_max_blob_count"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsl_query_count"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsl_set_status"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fdb_tsl_to_blob"
+    },
+    {
+      "file": "src/fdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_db_path"
+    },
+    {
+      "file": "src/fdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_deinit"
+    },
+    {
+      "file": "src/fdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_init_ex"
+    },
+    {
+      "file": "src/fdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_init_finish"
+    },
+    {
+      "file": "src/fdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "fail"
+    },
+    {
+      "file": "src/fdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "size"
+    },
+    {
+      "file": "src/fdb_file.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_file_erase"
+    },
+    {
+      "file": "src/fdb_file.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_file_read"
+    },
+    {
+      "file": "src/fdb_file.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_file_write"
+    },
+    {
+      "file": "src/fdb_file.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_db_file_path"
+    },
+    {
+      "file": "src/fdb_file.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_file_from_cache"
+    },
+    {
+      "file": "src/fdb_file.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "open_db_file"
+    },
+    {
+      "file": "src/fdb_file.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "path"
+    },
+    {
+      "file": "src/fdb_file.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "update_file_cache"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "KV"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "_fdb_kv_load"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "alloc_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "alloc_kv_cb"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "check_and_recovery_gc_cb"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "check_and_recovery_kv_cb"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "check_oldest_addr_cb"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "check_sec_hdr_cb"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "create_kv_blob"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "db_sec_size"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "del_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "do_gc"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "fdb_is_str"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_del"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_get"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_get_blob"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_get_obj"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_iterate"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_iterator_init"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_print"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_set"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_set_blob"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_set_default"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kv_to_blob"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kvdb_check"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kvdb_control"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kvdb_deinit"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_kvdb_init"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "find_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "find_kv_cb"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "find_kv_no_cache"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "find_next_kv_addr"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "format_sector"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "gc_check_cb"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "prototype",
+      "linkage": "internal",
+      "name": "gc_collect"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "prototype",
+      "linkage": "internal",
+      "name": "gc_collect_by_free_size"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_kv_from_cache"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_next_kv_addr"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_next_sector_addr"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_sector_from_cache"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "kv_auto_update"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "kv_iterator"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "length"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "move_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "new_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "new_kv_ex"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "print_kv_cb"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "read_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "read_sector_info"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "sector"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "sector_iterator"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "sector_statistics_cb"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "set_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "update_kv_cache"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "update_sec_status"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "update_sector_cache"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "update_sector_empty_addr_cache"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "update_sector_status_store_cache"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "write_kv_hdr"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "TSL"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "check_sec_hdr_cb"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "db_max_size"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "failed"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsdb_control"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsdb_deinit"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsdb_init"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsl_append"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsl_append_with_ts"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsl_clean"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsl_iter"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsl_iter_by_time"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsl_iter_reverse"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsl_max_blob_count"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsl_query_count"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsl_set_status"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_tsl_to_blob"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "format_all_cb"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "format_sector"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_last_sector_addr"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_last_tsl_addr"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_next_sector_addr"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_next_tsl_addr"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "length"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "query_count_cb"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "read_sector_info"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "read_tsl"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "search_start_tsl_addr"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "sector_iterator"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "size"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "timestamp"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "tsl_append"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "tsl_format_all"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "update_sec_status"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "write_tsl"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "FDB_WG_ALIGN"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_continue_ff_addr"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_file_erase"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_file_read"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "_fdb_file_write"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_flash_erase"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_flash_read"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_flash_write"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_flash_write_align"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_get_status"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_read_status"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_set_status"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "_fdb_write_status"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_blob_make"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_blob_read"
+    },
+    {
+      "file": "src/fdb_utils.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "fdb_calc_crc32"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_calc"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_end"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_get_time"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_kvdb_del"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_kvdb_get_blob"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_kvdb_get_string"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_kvdb_iterate"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_kvdb_set_blob"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_kvdb_set_string"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_kvdb_update_string"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_print"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_start"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_tsdb_append"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_tsdb_iter"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_tsdb_iter_by_time"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "bench_tsdb_query_count"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "cleanup"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "dir_delete"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "get"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "main"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "print_separator"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "set"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "tsdb_iter_cb"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "unlink"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "update"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "dir_delete"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "fdb_reboot"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "iter_all_kv"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_check_fdb_by_kvs"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_by_kvs"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_change_kv"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_change_kv_blob"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_create_kv"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_create_kv_blob"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_del_kv"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_del_kv_blob"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_gc"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_gc2"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "prototype",
+      "linkage": "internal",
+      "name": "test_fdb_kvdb_deinit"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_kvdb_init"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_kvdb_init_by_8_sectors"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_kvdb_init_by_sector_num"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_kvdb_init_check"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_kvdb_set_default"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_scale_up"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_save_fdb_by_kvs"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "testcase"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "utest_tc_cleanup"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "utest_tc_init"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "est_fdb_tsl_set_status_cb"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "fdb_reboot"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_sector_info_cb"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "get_time"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "query_cb"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_github_issue_249"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsdb_deinit"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsdb_init_ex"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsl_append"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsl_clean"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsl_clean_cb"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsl_iter"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsl_iter_by_time"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsl_iter_by_time_1"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsl_iter_cb"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsl_query_count"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsl_sector_bound_test"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_fdb_tsl_set_status"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_tsdb_data_by_time"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "testcase"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "utest_tc_cleanup"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "utest_tc_init"
+    },
+    {
+      "file": "tests/kvdb_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "dir_delete_simple"
+    },
+    {
+      "file": "tests/kvdb_main.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "main"
+    },
+    {
+      "file": "tests/main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "clean_test_dirs"
+    },
+    {
+      "file": "tests/main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "dir_delete"
+    },
+    {
+      "file": "tests/main.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "main"
+    },
+    {
+      "file": "tests/main.c",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "testcase"
+    },
+    {
+      "file": "tests/test_helpers.h",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "slist_append"
+    },
+    {
+      "file": "tests/test_helpers.h",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "slist_init"
+    },
+    {
+      "file": "tests/test_helpers.h",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "slist_len"
+    },
+    {
+      "file": "tests/test_helpers.h",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_msleep"
+    },
+    {
+      "file": "tests/test_helpers.h",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "test_tick_get"
+    },
+    {
+      "file": "tests/test_helpers.h",
+      "kind": "prototype",
+      "linkage": "external",
+      "name": "void"
+    },
+    {
+      "file": "tests/tsdb_main.c",
+      "kind": "definition",
+      "linkage": "internal",
+      "name": "dir_delete_simple"
+    },
+    {
+      "file": "tests/tsdb_main.c",
+      "kind": "definition",
+      "linkage": "external",
+      "name": "main"
+    }
+  ],
+  "common_symbols": [
+    "fdb_blob_make",
+    "fdb_blob_read",
+    "fdb_calc_crc32"
+  ],
+  "enum_map": {
+    "fdb_db_type": {
+      "category": "enum",
+      "file": "inc/fdb_def.h"
+    },
+    "fdb_err_t": {
+      "category": "enum",
+      "file": "inc/fdb_def.h"
+    },
+    "fdb_kv_status": {
+      "category": "enum",
+      "file": "inc/fdb_def.h"
+    },
+    "fdb_sector_dirty_status": {
+      "category": "enum",
+      "file": "inc/fdb_def.h"
+    },
+    "fdb_sector_store_status": {
+      "category": "enum",
+      "file": "inc/fdb_def.h"
+    },
+    "fdb_tsl_status": {
+      "category": "enum",
+      "file": "inc/fdb_def.h"
+    }
+  },
+  "enum_values": [
+    "FDB_DB_TYPE_KV",
+    "FDB_DB_TYPE_TS",
+    "FDB_ERASE_ERR",
+    "FDB_INIT_FAILED",
+    "FDB_KV_DELETED",
+    "FDB_KV_ERR_HDR",
+    "FDB_KV_NAME_ERR",
+    "FDB_KV_NAME_EXIST",
+    "FDB_KV_PRE_DELETE",
+    "FDB_KV_PRE_WRITE",
+    "FDB_KV_UNUSED",
+    "FDB_KV_WRITE",
+    "FDB_NO_ERR",
+    "FDB_READ_ERR",
+    "FDB_SAVED_FULL",
+    "FDB_SECTOR_DIRTY_FALSE",
+    "FDB_SECTOR_DIRTY_GC",
+    "FDB_SECTOR_DIRTY_TRUE",
+    "FDB_SECTOR_DIRTY_UNUSED",
+    "FDB_SECTOR_STORE_EMPTY",
+    "FDB_SECTOR_STORE_FULL",
+    "FDB_SECTOR_STORE_UNUSED",
+    "FDB_SECTOR_STORE_USING",
+    "FDB_TSL_DELETED",
+    "FDB_TSL_PRE_WRITE",
+    "FDB_TSL_UNUSED",
+    "FDB_TSL_USER_STATUS1",
+    "FDB_TSL_USER_STATUS2",
+    "FDB_TSL_WRITE",
+    "FDB_WRITE_ERR"
+  ],
+  "enums": [
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_db_type"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_err_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_kv_status"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_sector_dirty_status"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_sector_store_status"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_tsl_status"
+    }
+  ],
+  "function_signatures": {
+    "fdb_blob_make": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_blob_t fdb_blob_make(fdb_blob_t blob, const void *value_buf, size_t buf_len);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_blob_make",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_blob",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "blob",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_blob_t"
+        },
+        {
+          "canonical": "pointer:primitive:void",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 1,
+          "name": "value_buf",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const void *"
+        },
+        {
+          "canonical": "primitive:size_t",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 2,
+          "name": "buf_len",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "size_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "pointer:struct fdb_blob",
+        "category": "struct_pointer",
+        "pointer_depth": 1,
+        "raw": "fdb_blob_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_blob_read": {
+      "confidence": "compiler_accepted",
+      "declaration": "size_t fdb_blob_read(fdb_db_t db, fdb_blob_t blob);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_blob_read",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_db",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_db_t"
+        },
+        {
+          "canonical": "pointer:struct fdb_blob",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "blob",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_blob_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:size_t",
+        "category": "primitive",
+        "pointer_depth": 0,
+        "raw": "size_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_calc_crc32": {
+      "confidence": "compiler_accepted",
+      "declaration": "uint32_t fdb_calc_crc32(uint32_t crc, const void *buf, size_t size);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_calc_crc32",
+      "params": [
+        {
+          "canonical": "primitive:uint32_t",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "crc",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "uint32_t"
+        },
+        {
+          "canonical": "pointer:primitive:void",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 1,
+          "name": "buf",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const void *"
+        },
+        {
+          "canonical": "primitive:size_t",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 2,
+          "name": "size",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "size_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:uint32_t",
+        "category": "primitive",
+        "pointer_depth": 0,
+        "raw": "uint32_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_del": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_kv_del(fdb_kvdb_t db, const char *key);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_del",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 1,
+          "name": "key",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_get": {
+      "confidence": "compiler_accepted",
+      "declaration": "char * fdb_kv_get(fdb_kvdb_t db, const char *key);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_get",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 1,
+          "name": "key",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        }
+      ],
+      "return_type": {
+        "canonical": "pointer:primitive:char",
+        "category": "primitive",
+        "pointer_depth": 1,
+        "raw": "char *"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_get_blob": {
+      "confidence": "compiler_accepted",
+      "declaration": "size_t fdb_kv_get_blob(fdb_kvdb_t db, const char *key, fdb_blob_t blob);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_get_blob",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 1,
+          "name": "key",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        },
+        {
+          "canonical": "pointer:struct fdb_blob",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 2,
+          "name": "blob",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_blob_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:size_t",
+        "category": "primitive",
+        "pointer_depth": 0,
+        "raw": "size_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_get_obj": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_kv_t fdb_kv_get_obj(fdb_kvdb_t db, const char *key, fdb_kv_t kv);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_get_obj",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 1,
+          "name": "key",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        },
+        {
+          "canonical": "pointer:struct fdb_kv",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 2,
+          "name": "kv",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kv_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "pointer:struct fdb_kv",
+        "category": "struct_pointer",
+        "pointer_depth": 1,
+        "raw": "fdb_kv_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_iterate": {
+      "confidence": "compiler_accepted",
+      "declaration": "bool fdb_kv_iterate(fdb_kvdb_t db, fdb_kv_iterator_t itr);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_iterate",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        },
+        {
+          "canonical": "pointer:struct fdb_kv_iterator",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "itr",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kv_iterator_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:bool",
+        "category": "primitive",
+        "pointer_depth": 0,
+        "raw": "bool"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_iterator_init": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_kv_iterator_t fdb_kv_iterator_init(fdb_kvdb_t db, fdb_kv_iterator_t itr);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_iterator_init",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        },
+        {
+          "canonical": "pointer:struct fdb_kv_iterator",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "itr",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kv_iterator_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "pointer:struct fdb_kv_iterator",
+        "category": "struct_pointer",
+        "pointer_depth": 1,
+        "raw": "fdb_kv_iterator_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_print": {
+      "confidence": "compiler_accepted",
+      "declaration": "void fdb_kv_print(fdb_kvdb_t db);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_print",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:void",
+        "category": "void",
+        "pointer_depth": 0,
+        "raw": "void"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_set": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_kv_set(fdb_kvdb_t db, const char *key, const char *value);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_set",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 1,
+          "name": "key",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 2,
+          "name": "value",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_set_blob": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_kv_set_blob(fdb_kvdb_t db, const char *key, fdb_blob_t blob);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_set_blob",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 1,
+          "name": "key",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        },
+        {
+          "canonical": "pointer:struct fdb_blob",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 2,
+          "name": "blob",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_blob_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_set_default": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_kv_set_default(fdb_kvdb_t db);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_set_default",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kv_to_blob": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_blob_t fdb_kv_to_blob(fdb_kv_t kv, fdb_blob_t blob);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kv_to_blob",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kv",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "kv",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kv_t"
+        },
+        {
+          "canonical": "pointer:struct fdb_blob",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "blob",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_blob_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "pointer:struct fdb_blob",
+        "category": "struct_pointer",
+        "pointer_depth": 1,
+        "raw": "fdb_blob_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kvdb_check": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_kvdb_check(fdb_kvdb_t db);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kvdb_check",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kvdb_control": {
+      "confidence": "compiler_accepted",
+      "declaration": "void fdb_kvdb_control(fdb_kvdb_t db, int cmd, void *arg);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kvdb_control",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        },
+        {
+          "canonical": "primitive:int",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "cmd",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "int"
+        },
+        {
+          "canonical": "pointer:primitive:void",
+          "const": false,
+          "declared_pointer_depth": 1,
+          "index": 2,
+          "name": "arg",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "void *"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:void",
+        "category": "void",
+        "pointer_depth": 0,
+        "raw": "void"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kvdb_deinit": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_kvdb_deinit(fdb_kvdb_t db);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kvdb_deinit",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_kvdb_init": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_kvdb_init(fdb_kvdb_t db, const char *name, const char *path, struct fdb_default_kv *default_kv, void *user_data);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_kvdb_init",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_kvdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_kvdb_t"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 1,
+          "name": "name",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 2,
+          "name": "path",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        },
+        {
+          "canonical": "pointer:struct fdb_default_kv",
+          "const": false,
+          "declared_pointer_depth": 1,
+          "index": 3,
+          "name": "default_kv",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "struct fdb_default_kv *"
+        },
+        {
+          "canonical": "pointer:primitive:void",
+          "const": false,
+          "declared_pointer_depth": 1,
+          "index": 4,
+          "name": "user_data",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "void *"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsdb_control": {
+      "confidence": "compiler_accepted",
+      "declaration": "void fdb_tsdb_control(fdb_tsdb_t db, int cmd, void *arg);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsdb_control",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        },
+        {
+          "canonical": "primitive:int",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "cmd",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "int"
+        },
+        {
+          "canonical": "pointer:primitive:void",
+          "const": false,
+          "declared_pointer_depth": 1,
+          "index": 2,
+          "name": "arg",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "void *"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:void",
+        "category": "void",
+        "pointer_depth": 0,
+        "raw": "void"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsdb_deinit": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_tsdb_deinit(fdb_tsdb_t db);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsdb_deinit",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsdb_init": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_tsdb_init(fdb_tsdb_t db, const char *name, const char *path, fdb_get_time get_time, size_t max_len, void *user_data);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsdb_init",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 1,
+          "name": "name",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        },
+        {
+          "canonical": "pointer:primitive:char",
+          "const": true,
+          "declared_pointer_depth": 1,
+          "index": 2,
+          "name": "path",
+          "nullable": "unknown",
+          "ownership": "borrowed",
+          "pointer_depth": 1,
+          "raw_type": "const char *"
+        },
+        {
+          "canonical": "function_pointer:fdb_get_time",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 3,
+          "name": "get_time",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_get_time"
+        },
+        {
+          "canonical": "primitive:size_t",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 4,
+          "name": "max_len",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "size_t"
+        },
+        {
+          "canonical": "pointer:primitive:void",
+          "const": false,
+          "declared_pointer_depth": 1,
+          "index": 5,
+          "name": "user_data",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "void *"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsl_append": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_tsl_append(fdb_tsdb_t db, fdb_blob_t blob);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsl_append",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        },
+        {
+          "canonical": "pointer:struct fdb_blob",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "blob",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_blob_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsl_append_with_ts": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_tsl_append_with_ts(fdb_tsdb_t db, fdb_blob_t blob, fdb_time_t timestamp);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsl_append_with_ts",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        },
+        {
+          "canonical": "pointer:struct fdb_blob",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "blob",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_blob_t"
+        },
+        {
+          "canonical": "primitive:int32_t",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 2,
+          "name": "timestamp",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "fdb_time_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsl_clean": {
+      "confidence": "compiler_accepted",
+      "declaration": "void fdb_tsl_clean(fdb_tsdb_t db);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsl_clean",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:void",
+        "category": "void",
+        "pointer_depth": 0,
+        "raw": "void"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsl_iter": {
+      "confidence": "compiler_accepted",
+      "declaration": "void fdb_tsl_iter(fdb_tsdb_t db, fdb_tsl_cb cb, void *cb_arg);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsl_iter",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        },
+        {
+          "canonical": "function_pointer:fdb_tsl_cb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "cb",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsl_cb"
+        },
+        {
+          "canonical": "pointer:primitive:void",
+          "const": false,
+          "declared_pointer_depth": 1,
+          "index": 2,
+          "name": "cb_arg",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "void *"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:void",
+        "category": "void",
+        "pointer_depth": 0,
+        "raw": "void"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsl_iter_by_time": {
+      "confidence": "compiler_accepted",
+      "declaration": "void fdb_tsl_iter_by_time(fdb_tsdb_t db, fdb_time_t from, fdb_time_t to, fdb_tsl_cb cb, void *cb_arg);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsl_iter_by_time",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        },
+        {
+          "canonical": "primitive:int32_t",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "from",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "fdb_time_t"
+        },
+        {
+          "canonical": "primitive:int32_t",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 2,
+          "name": "to",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "fdb_time_t"
+        },
+        {
+          "canonical": "function_pointer:fdb_tsl_cb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 3,
+          "name": "cb",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsl_cb"
+        },
+        {
+          "canonical": "pointer:primitive:void",
+          "const": false,
+          "declared_pointer_depth": 1,
+          "index": 4,
+          "name": "cb_arg",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "void *"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:void",
+        "category": "void",
+        "pointer_depth": 0,
+        "raw": "void"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsl_iter_reverse": {
+      "confidence": "compiler_accepted",
+      "declaration": "void fdb_tsl_iter_reverse(fdb_tsdb_t db, fdb_tsl_cb cb, void *cb_arg);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsl_iter_reverse",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        },
+        {
+          "canonical": "function_pointer:fdb_tsl_cb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "cb",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsl_cb"
+        },
+        {
+          "canonical": "pointer:primitive:void",
+          "const": false,
+          "declared_pointer_depth": 1,
+          "index": 2,
+          "name": "cb_arg",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "void *"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:void",
+        "category": "void",
+        "pointer_depth": 0,
+        "raw": "void"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsl_max_blob_count": {
+      "confidence": "compiler_accepted",
+      "declaration": "size_t fdb_tsl_max_blob_count(fdb_tsdb_t db);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsl_max_blob_count",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:size_t",
+        "category": "primitive",
+        "pointer_depth": 0,
+        "raw": "size_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsl_query_count": {
+      "confidence": "compiler_accepted",
+      "declaration": "size_t fdb_tsl_query_count(fdb_tsdb_t db, fdb_time_t from, fdb_time_t to, fdb_tsl_status_t status);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsl_query_count",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        },
+        {
+          "canonical": "primitive:int32_t",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "from",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "fdb_time_t"
+        },
+        {
+          "canonical": "primitive:int32_t",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 2,
+          "name": "to",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "fdb_time_t"
+        },
+        {
+          "canonical": "enum fdb_tsl_status",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 3,
+          "name": "status",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "fdb_tsl_status_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "primitive:size_t",
+        "category": "primitive",
+        "pointer_depth": 0,
+        "raw": "size_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsl_set_status": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_err_t fdb_tsl_set_status(fdb_tsdb_t db, fdb_tsl_t tsl, fdb_tsl_status_t status);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsl_set_status",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsdb",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "db",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsdb_t"
+        },
+        {
+          "canonical": "pointer:struct fdb_tsl",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "tsl",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsl_t"
+        },
+        {
+          "canonical": "enum fdb_tsl_status",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 2,
+          "name": "status",
+          "nullable": "unknown",
+          "ownership": "value",
+          "pointer_depth": 0,
+          "raw_type": "fdb_tsl_status_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "enum",
+        "category": "status_code",
+        "pointer_depth": 0,
+        "raw": "fdb_err_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    },
+    "fdb_tsl_to_blob": {
+      "confidence": "compiler_accepted",
+      "declaration": "fdb_blob_t fdb_tsl_to_blob(fdb_tsl_t tsl, fdb_blob_t blob);",
+      "header": "inc/flashdb.h",
+      "name": "fdb_tsl_to_blob",
+      "params": [
+        {
+          "canonical": "pointer:struct fdb_tsl",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 0,
+          "name": "tsl",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_tsl_t"
+        },
+        {
+          "canonical": "pointer:struct fdb_blob",
+          "const": false,
+          "declared_pointer_depth": 0,
+          "index": 1,
+          "name": "blob",
+          "nullable": "unknown",
+          "ownership": "borrowed_mut",
+          "pointer_depth": 1,
+          "raw_type": "fdb_blob_t"
+        }
+      ],
+      "return_type": {
+        "canonical": "pointer:struct fdb_blob",
+        "category": "struct_pointer",
+        "pointer_depth": 1,
+        "raw": "fdb_blob_t"
+      },
+      "source": "public_header",
+      "varargs": false
+    }
+  },
+  "input_digest": "ff175c4ec62915a60350dd5a428f4fa5d2b35639cdab8c9a18b54fd86d4707f4",
+  "kvdb_symbols": [
+    "fdb_kv_del",
+    "fdb_kv_get",
+    "fdb_kv_get_blob",
+    "fdb_kv_get_obj",
+    "fdb_kv_iterate",
+    "fdb_kv_iterator_init",
+    "fdb_kv_print",
+    "fdb_kv_set",
+    "fdb_kv_set_blob",
+    "fdb_kv_set_default",
+    "fdb_kv_to_blob",
+    "fdb_kvdb_check",
+    "fdb_kvdb_control",
+    "fdb_kvdb_deinit",
+    "fdb_kvdb_init"
+  ],
+  "macro_values": {
+    "FDB_BYTE_ERASED": {
+      "evaluated_value": "0xFF",
+      "evaluation_status": "literal",
+      "raw_expression": "0xFF",
+      "source": "active_preprocessor"
+    },
+    "FDB_BYTE_WRITTEN": {
+      "evaluated_value": "0x00",
+      "evaluation_status": "literal",
+      "raw_expression": "0x00",
+      "source": "active_preprocessor"
+    },
+    "FDB_DATA_UNUSED": {
+      "evaluated_value": "0xFFFFFFFF",
+      "evaluation_status": "literal",
+      "raw_expression": "0xFFFFFFFF",
+      "source": "active_preprocessor"
+    },
+    "FDB_DEBUG_ENABLE": {
+      "evaluated_value": "1",
+      "evaluation_status": "literal",
+      "raw_expression": "1",
+      "source": "active_preprocessor"
+    },
+    "FDB_DIRTY_STATUS_TABLE_SIZE": {
+      "evaluated_value": null,
+      "evaluation_status": "expression",
+      "raw_expression": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_DIRTY_STATUS_NUM)",
+      "source": "active_preprocessor"
+    },
+    "FDB_FAILED_ADDR": {
+      "evaluated_value": "0xFFFFFFFF",
+      "evaluation_status": "literal",
+      "raw_expression": "0xFFFFFFFF",
+      "source": "active_preprocessor"
+    },
+    "FDB_FILE_CACHE_TABLE_SIZE": {
+      "evaluated_value": "2",
+      "evaluation_status": "literal",
+      "raw_expression": "2",
+      "source": "active_preprocessor"
+    },
+    "FDB_KVDB_CTRL_GET_SEC_SIZE": {
+      "evaluated_value": "0x01",
+      "evaluation_status": "literal",
+      "raw_expression": "0x01",
+      "source": "active_preprocessor"
+    },
+    "FDB_KVDB_CTRL_SET_FILE_MODE": {
+      "evaluated_value": "0x09",
+      "evaluation_status": "literal",
+      "raw_expression": "0x09",
+      "source": "active_preprocessor"
+    },
+    "FDB_KVDB_CTRL_SET_LOCK": {
+      "evaluated_value": "0x02",
+      "evaluation_status": "literal",
+      "raw_expression": "0x02",
+      "source": "active_preprocessor"
+    },
+    "FDB_KVDB_CTRL_SET_MAX_SIZE": {
+      "evaluated_value": "0x0A",
+      "evaluation_status": "literal",
+      "raw_expression": "0x0A",
+      "source": "active_preprocessor"
+    },
+    "FDB_KVDB_CTRL_SET_NOT_FORMAT": {
+      "evaluated_value": "0x0B",
+      "evaluation_status": "literal",
+      "raw_expression": "0x0B",
+      "source": "active_preprocessor"
+    },
+    "FDB_KVDB_CTRL_SET_SEC_SIZE": {
+      "evaluated_value": "0x00",
+      "evaluation_status": "literal",
+      "raw_expression": "0x00",
+      "source": "active_preprocessor"
+    },
+    "FDB_KVDB_CTRL_SET_UNLOCK": {
+      "evaluated_value": "0x03",
+      "evaluation_status": "literal",
+      "raw_expression": "0x03",
+      "source": "active_preprocessor"
+    },
+    "FDB_KV_CACHE_TABLE_SIZE": {
+      "evaluated_value": "64",
+      "evaluation_status": "literal",
+      "raw_expression": "64",
+      "source": "active_preprocessor"
+    },
+    "FDB_KV_NAME_MAX": {
+      "evaluated_value": "64",
+      "evaluation_status": "literal",
+      "raw_expression": "64",
+      "source": "active_preprocessor"
+    },
+    "FDB_KV_STATUS_NUM": {
+      "evaluated_value": "6",
+      "evaluation_status": "literal",
+      "raw_expression": "6",
+      "source": "active_preprocessor"
+    },
+    "FDB_KV_USING_CACHE": {
+      "evaluated_value": "1",
+      "evaluation_status": "literal",
+      "raw_expression": "1",
+      "source": "active_preprocessor"
+    },
+    "FDB_SECTOR_CACHE_TABLE_SIZE": {
+      "evaluated_value": "8",
+      "evaluation_status": "literal",
+      "raw_expression": "8",
+      "source": "active_preprocessor"
+    },
+    "FDB_SECTOR_DIRTY_STATUS_NUM": {
+      "evaluated_value": "4",
+      "evaluation_status": "literal",
+      "raw_expression": "4",
+      "source": "active_preprocessor"
+    },
+    "FDB_SECTOR_STORE_STATUS_NUM": {
+      "evaluated_value": "4",
+      "evaluation_status": "literal",
+      "raw_expression": "4",
+      "source": "active_preprocessor"
+    },
+    "FDB_STORE_STATUS_TABLE_SIZE": {
+      "evaluated_value": null,
+      "evaluation_status": "expression",
+      "raw_expression": "FDB_STATUS_TABLE_SIZE(FDB_SECTOR_STORE_STATUS_NUM)",
+      "source": "active_preprocessor"
+    },
+    "FDB_SW_VERSION": {
+      "evaluated_value": null,
+      "evaluation_status": "expression",
+      "raw_expression": "\"2.2.99\"",
+      "source": "active_preprocessor"
+    },
+    "FDB_SW_VERSION_NUM": {
+      "evaluated_value": "0x20299",
+      "evaluation_status": "literal",
+      "raw_expression": "0x20299",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSDB_CTRL_GET_LAST_TIME": {
+      "evaluated_value": "0x06",
+      "evaluation_status": "literal",
+      "raw_expression": "0x06",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSDB_CTRL_GET_ROLLOVER": {
+      "evaluated_value": "0x05",
+      "evaluation_status": "literal",
+      "raw_expression": "0x05",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSDB_CTRL_GET_SEC_SIZE": {
+      "evaluated_value": "0x01",
+      "evaluation_status": "literal",
+      "raw_expression": "0x01",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSDB_CTRL_SET_FILE_MODE": {
+      "evaluated_value": "0x09",
+      "evaluation_status": "literal",
+      "raw_expression": "0x09",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSDB_CTRL_SET_LOCK": {
+      "evaluated_value": "0x02",
+      "evaluation_status": "literal",
+      "raw_expression": "0x02",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSDB_CTRL_SET_MAX_SIZE": {
+      "evaluated_value": "0x0A",
+      "evaluation_status": "literal",
+      "raw_expression": "0x0A",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSDB_CTRL_SET_NOT_FORMAT": {
+      "evaluated_value": "0x0B",
+      "evaluation_status": "literal",
+      "raw_expression": "0x0B",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSDB_CTRL_SET_ROLLOVER": {
+      "evaluated_value": "0x04",
+      "evaluation_status": "literal",
+      "raw_expression": "0x04",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSDB_CTRL_SET_SEC_SIZE": {
+      "evaluated_value": "0x00",
+      "evaluation_status": "literal",
+      "raw_expression": "0x00",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSDB_CTRL_SET_UNLOCK": {
+      "evaluated_value": "0x03",
+      "evaluation_status": "literal",
+      "raw_expression": "0x03",
+      "source": "active_preprocessor"
+    },
+    "FDB_TSL_STATUS_NUM": {
+      "evaluated_value": "6",
+      "evaluation_status": "literal",
+      "raw_expression": "6",
+      "source": "active_preprocessor"
+    },
+    "FDB_USING_FILE_MODE": {
+      "evaluated_value": "1",
+      "evaluation_status": "literal",
+      "raw_expression": "1",
+      "source": "active_preprocessor"
+    },
+    "FDB_USING_FILE_POSIX_MODE": {
+      "evaluated_value": "1",
+      "evaluation_status": "literal",
+      "raw_expression": "1",
+      "source": "active_preprocessor"
+    },
+    "FDB_USING_KVDB": {
+      "evaluated_value": "1",
+      "evaluation_status": "literal",
+      "raw_expression": "1",
+      "source": "active_preprocessor"
+    },
+    "FDB_USING_TSDB": {
+      "evaluated_value": "1",
+      "evaluation_status": "literal",
+      "raw_expression": "1",
+      "source": "active_preprocessor"
+    },
+    "FDB_WRITE_GRAN": {
+      "evaluated_value": "1",
+      "evaluation_status": "literal",
+      "raw_expression": "1",
+      "source": "active_preprocessor"
+    }
+  },
+  "macros": [
+    "BENCH_ITER_COUNT",
+    "BENCH_KVDB_SECS",
+    "BENCH_KV_BLOB_SIZE",
+    "BENCH_KV_COUNT",
+    "BENCH_SEC_SIZE",
+    "BENCH_TSDB_SECS",
+    "BENCH_TSL_BLOB_SIZE",
+    "BENCH_TSL_COUNT",
+    "BUF_SIZE",
+    "DB_NAME_MAX",
+    "DB_PATH_MAX",
+    "FAILED_ADDR",
+    "FDB_ALIGN",
+    "FDB_ALIGN_DOWN",
+    "FDB_ARRAY_SIZE",
+    "FDB_ASSERT",
+    "FDB_BYTE_ERASED",
+    "FDB_BYTE_WRITTEN",
+    "FDB_DATA_UNUSED",
+    "FDB_DEBUG",
+    "FDB_DEBUG_ENABLE",
+    "FDB_DIRTY_STATUS_TABLE_SIZE",
+    "FDB_FAILED_ADDR",
+    "FDB_FILE_CACHE_TABLE_SIZE",
+    "FDB_GC_EMPTY_SEC_THRESHOLD",
+    "FDB_INFO",
+    "FDB_KVDB_CTRL_GET_SEC_SIZE",
+    "FDB_KVDB_CTRL_SET_FILE_MODE",
+    "FDB_KVDB_CTRL_SET_LOCK",
+    "FDB_KVDB_CTRL_SET_MAX_SIZE",
+    "FDB_KVDB_CTRL_SET_NOT_FORMAT",
+    "FDB_KVDB_CTRL_SET_SEC_SIZE",
+    "FDB_KVDB_CTRL_SET_UNLOCK",
+    "FDB_KV_CACHE_TABLE_SIZE",
+    "FDB_KV_NAME_MAX",
+    "FDB_KV_STATUS_NUM",
+    "FDB_KV_USING_CACHE",
+    "FDB_LOG_PREFIX",
+    "FDB_LOG_PREFIX1",
+    "FDB_LOG_PREFIX2",
+    "FDB_LOG_TAG",
+    "FDB_PRINT",
+    "FDB_SECTOR_CACHE_TABLE_SIZE",
+    "FDB_SECTOR_DIRTY_STATUS_NUM",
+    "FDB_SECTOR_STORE_STATUS_NUM",
+    "FDB_SEC_REMAIN_THRESHOLD",
+    "FDB_STATUS_TABLE_SIZE",
+    "FDB_STORE_STATUS_TABLE_SIZE",
+    "FDB_STR_KV_VALUE_MAX_SIZE",
+    "FDB_SW_VERSION",
+    "FDB_SW_VERSION_NUM",
+    "FDB_TSDB_CTRL_GET_LAST_TIME",
+    "FDB_TSDB_CTRL_GET_ROLLOVER",
+    "FDB_TSDB_CTRL_GET_SEC_SIZE",
+    "FDB_TSDB_CTRL_SET_FILE_MODE",
+    "FDB_TSDB_CTRL_SET_LOCK",
+    "FDB_TSDB_CTRL_SET_MAX_SIZE",
+    "FDB_TSDB_CTRL_SET_NOT_FORMAT",
+    "FDB_TSDB_CTRL_SET_ROLLOVER",
+    "FDB_TSDB_CTRL_SET_SEC_SIZE",
+    "FDB_TSDB_CTRL_SET_UNLOCK",
+    "FDB_TSL_STATUS_NUM",
+    "FDB_USING_FILE_MODE",
+    "FDB_USING_FILE_POSIX_MODE",
+    "FDB_USING_KVDB",
+    "FDB_USING_TSDB",
+    "FDB_WG_ALIGN",
+    "FDB_WG_ALIGN_DOWN",
+    "FDB_WRITE_GRAN",
+    "FLASH_WRITE",
+    "GC_MIN_EMPTY_SEC_NUM",
+    "KVDB_PATH",
+    "KV_HDR_DATA_SIZE",
+    "KV_LEN_OFFSET",
+    "KV_MAGIC_OFFSET",
+    "KV_MAGIC_WORD",
+    "KV_NAME_LEN_OFFSET",
+    "KV_STATUS_TABLE_SIZE",
+    "LOG_IDX_BASE_SIZE",
+    "LOG_IDX_DATA_SIZE",
+    "LOG_IDX_PADDING_SIZE",
+    "LOG_IDX_TS_OFFSET",
+    "LOG_W",
+    "SECTOR_COMBINED",
+    "SECTOR_DIRTY_OFFSET",
+    "SECTOR_END0_IDX_OFFSET",
+    "SECTOR_END0_STATUS_OFFSET",
+    "SECTOR_END0_TIME_OFFSET",
+    "SECTOR_END1_IDX_OFFSET",
+    "SECTOR_END1_STATUS_OFFSET",
+    "SECTOR_END1_TIME_OFFSET",
+    "SECTOR_HDR_DATA_SIZE",
+    "SECTOR_HDR_PADDING_SIZE",
+    "SECTOR_MAGIC_OFFSET",
+    "SECTOR_MAGIC_WORD",
+    "SECTOR_NOT_COMBINED",
+    "SECTOR_NUM",
+    "SECTOR_START_TIME_OFFSET",
+    "SECTOR_STORE_OFFSET",
+    "TEST_ITER1_COUNT",
+    "TEST_ITER1_SECTORS",
+    "TEST_KVDB_SECTOR_NUM",
+    "TEST_KVDB_SECTOR_SIZE",
+    "TEST_KV_BLOB_NAME",
+    "TEST_KV_MAX_NUM",
+    "TEST_KV_NAME",
+    "TEST_KV_VALUE_LEN",
+    "TEST_RUN",
+    "TEST_SECTOR_SIZE",
+    "TEST_TIME_STEP",
+    "TEST_TS_COUNT",
+    "TEST_TS_COUNT_BASE",
+    "TEST_TS_DELETED_COUNT",
+    "TEST_TS_PART_NAME",
+    "TEST_TS_USER_STATUS1_COUNT",
+    "TSDB_PATH",
+    "TSL_STATUS_TABLE_SIZE",
+    "TSL_TIME_ALIGN_SIZE",
+    "TSL_UINT32_ALIGN_SIZE",
+    "VER_NUM_KV_NAME",
+    "_FDB_BENCH_CFG_H_",
+    "_FDB_CFG_H_",
+    "_FDB_DEF_H_",
+    "_FDB_LOW_LVL_H_",
+    "_FDB_WRITE_STATUS",
+    "_FLASHDB_H_",
+    "_TEST_HELPERS_H_",
+    "_TKV_BASE",
+    "_TKV_KV_HDR_RAW_SZ",
+    "_TKV_KV_HDR_SZ",
+    "_TKV_KV_STATUS_SZ",
+    "_TKV_MAX_VAL_ALIGNED",
+    "_TKV_NAME_ALIGNED",
+    "_TKV_SEC_HDR_RAW_SZ",
+    "_TKV_SEC_HDR_SZ",
+    "_TKV_THRESHOLD",
+    "_TKV_USABLE",
+    "_TKV_W",
+    "_TSIL_IDX_BASE_SZ",
+    "_TSIL_IDX_DATA_SZ",
+    "_TSIL_LOGBUF_ALIGN_SZ",
+    "_TSIL_PER_SECTOR",
+    "_TSIL_PER_SECTOR_STR",
+    "_TSIL_SEC_HDR_RAW_SZ",
+    "_TSIL_SEC_HDR_SZ",
+    "_TSIL_TIME_ALIGN_SZ",
+    "_TSIL_TSL_STATUS_SZ",
+    "_TSIL_U32_ALIGN_SZ",
+    "_TSL_FDBTIME_SIZE",
+    "__is_print",
+    "db_init_ok",
+    "db_lock",
+    "db_max_size",
+    "db_name",
+    "db_oldest_addr",
+    "db_sec_size",
+    "db_unlock",
+    "slist_entry",
+    "test_assert_buf_equal",
+    "test_assert_int_equal",
+    "test_assert_int_not_equal",
+    "test_assert_not_null",
+    "test_assert_null",
+    "test_assert_str_equal",
+    "test_assert_true"
+  ],
+  "public_functions": [
+    "fdb_blob_make",
+    "fdb_blob_read",
+    "fdb_calc_crc32",
+    "fdb_kv_del",
+    "fdb_kv_get",
+    "fdb_kv_get_blob",
+    "fdb_kv_get_obj",
+    "fdb_kv_iterate",
+    "fdb_kv_iterator_init",
+    "fdb_kv_print",
+    "fdb_kv_set",
+    "fdb_kv_set_blob",
+    "fdb_kv_set_default",
+    "fdb_kv_to_blob",
+    "fdb_kvdb_check",
+    "fdb_kvdb_control",
+    "fdb_kvdb_deinit",
+    "fdb_kvdb_init",
+    "fdb_tsdb_control",
+    "fdb_tsdb_deinit",
+    "fdb_tsdb_init",
+    "fdb_tsl_append",
+    "fdb_tsl_append_with_ts",
+    "fdb_tsl_clean",
+    "fdb_tsl_iter",
+    "fdb_tsl_iter_by_time",
+    "fdb_tsl_iter_reverse",
+    "fdb_tsl_max_blob_count",
+    "fdb_tsl_query_count",
+    "fdb_tsl_set_status",
+    "fdb_tsl_to_blob"
+  ],
+  "public_headers": [
+    "inc/fdb_cfg_template.h",
+    "inc/fdb_def.h",
+    "inc/fdb_low_lvl.h",
+    "inc/flashdb.h"
+  ],
+  "structs": [
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_blob"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_db"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_default_kv"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_default_kv_node"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_kv"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_kv_iterator"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_kvdb"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_tsdb"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_tsl"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "kv_cache_node"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "kvdb_sec_info"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "tsdb_sec_info"
+    },
+    {
+      "file": "inc/flashdb.h",
+      "name": "fdb_default_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "name": "alloc_kv_cb_args"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "name": "fdb_blob"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "name": "fdb_default_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "name": "fdb_kv"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "name": "gc_cb_args"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "name": "kv_hdr_data"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "name": "kvdb_sec_info"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "name": "sector_hdr_data"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "name": "check_sec_hdr_cb_args"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "name": "fdb_tsl"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "name": "log_idx_data"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "name": "query_count_args"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "name": "sector_hdr_data"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "name": "tsdb_sec_info"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "name": "dirent"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "name": "fdb_blob"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "name": "fdb_kv_iterator"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "name": "fdb_kvdb"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "name": "fdb_tsdb"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "name": "timespec"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "name": "dirent"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "name": "fdb_blob"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "name": "fdb_kv"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "name": "fdb_kv_iterator"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "name": "fdb_kvdb"
+    },
+    {
+      "file": "tests/fdb_kvdb_tc.c",
+      "name": "test_kv"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "name": "fdb_blob"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "name": "fdb_tsdb"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "name": "test_tls_data"
+    },
+    {
+      "file": "tests/fdb_tsdb_tc.c",
+      "name": "test_tls_sector"
+    },
+    {
+      "file": "tests/kvdb_main.c",
+      "name": "dirent"
+    },
+    {
+      "file": "tests/main.c",
+      "name": "dirent"
+    },
+    {
+      "file": "tests/test_helpers.h",
+      "name": "slist_node"
+    },
+    {
+      "file": "tests/test_helpers.h",
+      "name": "timespec"
+    },
+    {
+      "file": "tests/tsdb_main.c",
+      "name": "dirent"
+    }
+  ],
+  "tsdb_symbols": [
+    "fdb_tsdb_control",
+    "fdb_tsdb_deinit",
+    "fdb_tsdb_init",
+    "fdb_tsl_append",
+    "fdb_tsl_append_with_ts",
+    "fdb_tsl_clean",
+    "fdb_tsl_iter",
+    "fdb_tsl_iter_by_time",
+    "fdb_tsl_iter_reverse",
+    "fdb_tsl_max_blob_count",
+    "fdb_tsl_query_count",
+    "fdb_tsl_set_status",
+    "fdb_tsl_to_blob"
+  ],
+  "typedef_map": {
+    "fdb_blob_t": {
+      "category": "pointer_alias",
+      "pointer_depth": 1,
+      "raw": "typedef struct fdb_blob *fdb_blob_t;",
+      "target": "struct fdb_blob"
+    },
+    "fdb_db_t": {
+      "category": "pointer_alias",
+      "pointer_depth": 1,
+      "raw": "typedef struct fdb_db *fdb_db_t;",
+      "target": "struct fdb_db"
+    },
+    "fdb_db_type": {
+      "category": "enum",
+      "raw": "typedef enum { FDB_DB_TYPE_KV, FDB_DB_TYPE_TS, } fdb_db_type;",
+      "target": "enum"
+    },
+    "fdb_err_t": {
+      "category": "enum",
+      "raw": "typedef enum { FDB_NO_ERR, FDB_ERASE_ERR, FDB_READ_ERR, FDB_WRITE_ERR, FDB_KV_NAME_ERR, FDB_KV_NAME_EXIST, FDB_SAVED_FULL, FDB_INIT_FAILED, } fdb_err_t;",
+      "target": "enum"
+    },
+    "fdb_get_time": {
+      "category": "function_pointer",
+      "params": "void",
+      "pointer_depth": 1,
+      "raw": "typedef fdb_time_t (*fdb_get_time)(void);",
+      "target": "fdb_time_t"
+    },
+    "fdb_kv_iterator_t": {
+      "category": "pointer_alias",
+      "pointer_depth": 1,
+      "raw": "typedef struct fdb_kv_iterator *fdb_kv_iterator_t;",
+      "target": "struct fdb_kv_iterator"
+    },
+    "fdb_kv_status_t": {
+      "category": "alias",
+      "pointer_depth": 0,
+      "raw": "typedef enum fdb_kv_status fdb_kv_status_t;",
+      "target": "enum fdb_kv_status"
+    },
+    "fdb_kv_t": {
+      "category": "pointer_alias",
+      "pointer_depth": 1,
+      "raw": "typedef struct fdb_kv *fdb_kv_t;",
+      "target": "struct fdb_kv"
+    },
+    "fdb_kvdb_t": {
+      "category": "pointer_alias",
+      "pointer_depth": 1,
+      "raw": "typedef struct fdb_kvdb *fdb_kvdb_t;",
+      "target": "struct fdb_kvdb"
+    },
+    "fdb_sector_dirty_status_t": {
+      "category": "alias",
+      "pointer_depth": 0,
+      "raw": "typedef enum fdb_sector_dirty_status fdb_sector_dirty_status_t;",
+      "target": "enum fdb_sector_dirty_status"
+    },
+    "fdb_sector_store_status_t": {
+      "category": "alias",
+      "pointer_depth": 0,
+      "raw": "typedef enum fdb_sector_store_status fdb_sector_store_status_t;",
+      "target": "enum fdb_sector_store_status"
+    },
+    "fdb_time_t": {
+      "abi_size": 4,
+      "category": "alias",
+      "compiler_confirmed": true,
+      "pointer_depth": 0,
+      "raw": "typedef int32_t fdb_time_t;",
+      "target": "int32_t"
+    },
+    "fdb_tsdb_t": {
+      "category": "pointer_alias",
+      "pointer_depth": 1,
+      "raw": "typedef struct fdb_tsdb *fdb_tsdb_t;",
+      "target": "struct fdb_tsdb"
+    },
+    "fdb_tsl_cb": {
+      "category": "function_pointer",
+      "params": "fdb_tsl_t tsl, void *arg",
+      "pointer_depth": 1,
+      "raw": "typedef bool (*fdb_tsl_cb)(fdb_tsl_t tsl, void *arg);",
+      "target": "bool"
+    },
+    "fdb_tsl_status_t": {
+      "category": "alias",
+      "pointer_depth": 0,
+      "raw": "typedef enum fdb_tsl_status fdb_tsl_status_t;",
+      "target": "enum fdb_tsl_status"
+    },
+    "fdb_tsl_t": {
+      "category": "pointer_alias",
+      "pointer_depth": 1,
+      "raw": "typedef struct fdb_tsl *fdb_tsl_t;",
+      "target": "struct fdb_tsl"
+    },
+    "kv_cache_node_t": {
+      "category": "pointer_alias",
+      "pointer_depth": 1,
+      "raw": "typedef struct kv_cache_node *kv_cache_node_t;",
+      "target": "struct kv_cache_node"
+    },
+    "kv_sec_info_t": {
+      "category": "pointer_alias",
+      "pointer_depth": 1,
+      "raw": "typedef struct kvdb_sec_info *kv_sec_info_t;",
+      "target": "struct kvdb_sec_info"
+    },
+    "tsdb_sec_info_t": {
+      "category": "pointer_alias",
+      "pointer_depth": 1,
+      "raw": "typedef struct tsdb_sec_info *tsdb_sec_info_t;",
+      "target": "struct tsdb_sec_info"
+    }
+  },
+  "typedefs": [
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_blob_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_db_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_db_type"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_err_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_kv_iterator_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_kv_status_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_kv_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_kvdb_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_sector_dirty_status_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_sector_store_status_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_time_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_tsdb_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_tsl_status_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "fdb_tsl_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "kv_cache_node_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "kv_sec_info_t"
+    },
+    {
+      "file": "inc/fdb_def.h",
+      "name": "tsdb_sec_info_t"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "name": "kv_hdr_data_t"
+    },
+    {
+      "file": "src/fdb_kvdb.c",
+      "name": "sector_hdr_data_t"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "name": "log_idx_data_t"
+    },
+    {
+      "file": "src/fdb_tsdb.c",
+      "name": "sector_hdr_data_t"
+    },
+    {
+      "file": "tests/benchmark/bench_main.c",
+      "name": "elapsed_us"
+    },
+    {
+      "file": "tests/test_helpers.h",
+      "name": "next"
+    }
+  ],
+  "unresolved_signatures": [],
+  "unresolved_types": []
+}

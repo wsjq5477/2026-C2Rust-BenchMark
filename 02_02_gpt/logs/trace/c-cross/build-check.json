@@ -1,0 +1,7 @@
+{
+  "command": "cargo build --release",
+  "log": "logs/trace/c-cross/cross-compile.log",
+  "phase": "build",
+  "staticlib": "flashDB_rust/target/release/libflashdb_rust.a",
+  "status": "pass"
+}

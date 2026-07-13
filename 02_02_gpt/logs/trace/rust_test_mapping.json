@@ -1,0 +1,4964 @@
+{
+  "extension": [],
+  "implementation_status": "pending",
+  "kvdb": [
+    "test_fdb_kvdb_init",
+    "test_fdb_kvdb_init_check",
+    "test_fdb_create_kv_blob",
+    "test_fdb_change_kv_blob",
+    "test_fdb_del_kv_blob",
+    "test_fdb_create_kv",
+    "test_fdb_change_kv",
+    "test_fdb_del_kv",
+    "test_fdb_gc",
+    "test_fdb_gc2",
+    "test_fdb_scale_up",
+    "test_fdb_kvdb_set_default",
+    "test_fdb_kvdb_deinit"
+  ],
+  "scenarios": [
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_kvdb_init",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_kvdb_init",
+      "parent_test": "test_fdb_kvdb_init",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_kvdb_init"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_kvdb_init"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_kvdb_init",
+      "scorer_case_id": "1",
+      "scorer_case_name": "kvdb_init",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_details": [
+          {
+            "expression": "fdb_kvdb_init(&test_kvdb, \"test_kv\", TEST_TS_PART_NAME, NULL, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_kvdb_init",
+              "test_kv",
+              "test_kvdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_TS_PART_NAME",
+          "fdb_kvdb_init",
+          "test_kv",
+          "test_kvdb"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "access",
+          "fdb_kvdb_control",
+          "fdb_kvdb_init",
+          "mkdir",
+          "test_assert_true",
+          "test_fdb_kvdb_init_by_sector_num"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_KVDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_kvdb_control"
+          },
+          {
+            "command": "FDB_KVDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_kvdb_control"
+          },
+          {
+            "command": "FDB_KVDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_kvdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_fdb_kvdb_init_by_sector_num"
+        ],
+        "local_function_calls": [
+          "test_fdb_kvdb_init_by_sector_num"
+        ],
+        "observed_c_symbols": [
+          "fdb_kvdb_control",
+          "fdb_kvdb_init"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_kvdb_control",
+          "fdb_kvdb_init"
+        ],
+        "scenario_features": [],
+        "semantic_markers": [
+          "use_control_interface"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kvdb_control",
+        "calls:fdb_kvdb_init",
+        "helper:test_fdb_kvdb_init_by_sector_num",
+        "init",
+        "use_control_interface"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "init",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kvdb_control",
+        "calls:fdb_kvdb_init",
+        "helper:test_fdb_kvdb_init_by_sector_num",
+        "init",
+        "use_control_interface"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_kvdb_init_check",
+          "validated_obligation": "verify_addr_alignment"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_kvdb_init_check",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_kvdb_init_check",
+      "parent_test": "test_fdb_kvdb_init_check",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_kvdb_init_check"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_kvdb_init_check"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_kvdb_init_check",
+      "scorer_case_id": "2",
+      "scorer_case_name": "kvdb_init_check",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_details": [
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_ALIGN_DOWN",
+          "TEST_KVDB_SECTOR_SIZE",
+          "oldest_addr",
+          "parent",
+          "test_kvdb"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "FDB_ALIGN_DOWN",
+          "test_assert_true"
+        ],
+        "control_usage": [],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [],
+        "local_function_calls": [],
+        "observed_c_symbols": [],
+        "private_function_calls": [],
+        "public_api_calls": [],
+        "scenario_features": [],
+        "semantic_markers": [
+          "verify_addr_alignment"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "init",
+        "verify_addr_alignment"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "init",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "init",
+        "verify_addr_alignment"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_create_kv_blob",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_create_kv_blob",
+      "parent_test": "test_fdb_create_kv_blob",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_create_kv_blob"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_create_kv_blob"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_create_kv_blob",
+      "scorer_case_id": "3",
+      "scorer_case_name": "create_kv_blob",
+      "semantic_facts": {
+        "assertion_count": 7,
+        "assertion_details": [
+          {
+            "expression": "result == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "result"
+            ]
+          },
+          {
+            "expression": "blob.saved.len, sizeof(read_tick)",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "blob",
+              "len",
+              "read_tick",
+              "saved"
+            ]
+          },
+          {
+            "expression": "blob.saved.len, read_len",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "blob",
+              "len",
+              "read_len",
+              "saved"
+            ]
+          },
+          {
+            "expression": "tick, read_tick",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "read_tick",
+              "tick"
+            ]
+          },
+          {
+            "expression": "fdb_kv_get_obj(&test_kvdb, TEST_KV_BLOB_NAME, &kv_obj) != NULL",
+            "macro": "test_assert_true",
+            "targets": [
+              "NULL",
+              "TEST_KV_BLOB_NAME",
+              "fdb_kv_get_obj",
+              "kv_obj",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "read_len, sizeof(value_buf)",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "read_len",
+              "value_buf"
+            ]
+          },
+          {
+            "expression": "&tick, value_buf, sizeof(value_buf)",
+            "macro": "test_assert_buf_equal",
+            "targets": [
+              "tick",
+              "value_buf"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_buf_equal",
+          "test_assert_int_equal",
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_KV_BLOB_NAME",
+          "blob",
+          "fdb_kv_get_obj",
+          "kv_obj",
+          "len",
+          "read_len",
+          "read_tick",
+          "result",
+          "saved",
+          "test_kvdb",
+          "tick",
+          "value_buf"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_get_blob",
+          "fdb_kv_get_obj",
+          "fdb_kv_set_blob",
+          "fdb_kv_to_blob",
+          "test_assert_buf_equal",
+          "test_assert_int_equal",
+          "test_assert_true",
+          "test_tick_get"
+        ],
+        "control_usage": [],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 1,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_tick_get"
+        ],
+        "local_function_calls": [],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_get_blob",
+          "fdb_kv_get_obj",
+          "fdb_kv_set_blob",
+          "fdb_kv_to_blob"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_get_blob",
+          "fdb_kv_get_obj",
+          "fdb_kv_set_blob",
+          "fdb_kv_to_blob"
+        ],
+        "scenario_features": [],
+        "semantic_markers": []
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_blob_read",
+        "calls:fdb_kv_get_blob",
+        "calls:fdb_kv_get_obj",
+        "calls:fdb_kv_set_blob",
+        "calls:fdb_kv_to_blob",
+        "create",
+        "helper:test_tick_get"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "create",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_blob_read",
+        "calls:fdb_kv_get_blob",
+        "calls:fdb_kv_get_obj",
+        "calls:fdb_kv_set_blob",
+        "calls:fdb_kv_to_blob",
+        "create",
+        "helper:test_tick_get"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_change_kv_blob",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_change_kv_blob",
+      "parent_test": "test_fdb_change_kv_blob",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_change_kv_blob"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_change_kv_blob"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_change_kv_blob",
+      "scorer_case_id": "4",
+      "scorer_case_name": "change_kv_blob",
+      "semantic_facts": {
+        "assertion_count": 7,
+        "assertion_details": [
+          {
+            "expression": "blob->saved.len, sizeof(read_tick)",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "blob",
+              "len",
+              "read_tick",
+              "saved"
+            ]
+          },
+          {
+            "expression": "blob->saved.len, read_len",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "blob",
+              "len",
+              "read_len",
+              "saved"
+            ]
+          },
+          {
+            "expression": "tick, read_tick",
+            "macro": "test_assert_int_not_equal",
+            "targets": [
+              "read_tick",
+              "tick"
+            ]
+          },
+          {
+            "expression": "result == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "result"
+            ]
+          },
+          {
+            "expression": "blob->saved.len, sizeof(read_tick)",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "blob",
+              "len",
+              "read_tick",
+              "saved"
+            ]
+          },
+          {
+            "expression": "blob->saved.len, read_len",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "blob",
+              "len",
+              "read_len",
+              "saved"
+            ]
+          },
+          {
+            "expression": "tick, read_tick",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "read_tick",
+              "tick"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "blob",
+          "len",
+          "read_len",
+          "read_tick",
+          "result",
+          "saved",
+          "tick"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "fdb_blob_make",
+          "fdb_kv_get_blob",
+          "fdb_kv_set_blob",
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_true",
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "control_usage": [],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 1,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "local_function_calls": [],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_kv_get_blob",
+          "fdb_kv_set_blob"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_blob_make",
+          "fdb_kv_get_blob",
+          "fdb_kv_set_blob"
+        ],
+        "scenario_features": [],
+        "semantic_markers": []
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_kv_get_blob",
+        "calls:fdb_kv_set_blob",
+        "change",
+        "helper:test_msleep",
+        "helper:test_tick_get"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "change",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_kv_get_blob",
+        "calls:fdb_kv_set_blob",
+        "change",
+        "helper:test_msleep",
+        "helper:test_tick_get"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_del_kv_blob",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_del_kv_blob",
+      "parent_test": "test_fdb_del_kv_blob",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_del_kv_blob"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_del_kv_blob"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_del_kv_blob",
+      "scorer_case_id": "5",
+      "scorer_case_name": "del_kv_blob",
+      "semantic_facts": {
+        "assertion_count": 6,
+        "assertion_details": [
+          {
+            "expression": "blob.saved.len, sizeof(read_tick)",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "blob",
+              "len",
+              "read_tick",
+              "saved"
+            ]
+          },
+          {
+            "expression": "blob.saved.len, read_len",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "blob",
+              "len",
+              "read_len",
+              "saved"
+            ]
+          },
+          {
+            "expression": "tick, read_tick",
+            "macro": "test_assert_int_not_equal",
+            "targets": [
+              "read_tick",
+              "tick"
+            ]
+          },
+          {
+            "expression": "result == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "result"
+            ]
+          },
+          {
+            "expression": "blob.saved.len, 0",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "blob",
+              "len",
+              "saved"
+            ]
+          },
+          {
+            "expression": "read_len, 0",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "read_len"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "blob",
+          "len",
+          "read_len",
+          "read_tick",
+          "result",
+          "saved",
+          "tick"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "fdb_blob_make",
+          "fdb_kv_get_blob",
+          "fdb_kv_set_blob",
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_true",
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "control_usage": [],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 1,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "local_function_calls": [],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_kv_get_blob",
+          "fdb_kv_set_blob"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_blob_make",
+          "fdb_kv_get_blob",
+          "fdb_kv_set_blob"
+        ],
+        "scenario_features": [],
+        "semantic_markers": []
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_kv_get_blob",
+        "calls:fdb_kv_set_blob",
+        "del",
+        "helper:test_msleep",
+        "helper:test_tick_get"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "del",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_kv_get_blob",
+        "calls:fdb_kv_set_blob",
+        "del",
+        "helper:test_msleep",
+        "helper:test_tick_get"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_create_kv",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_create_kv",
+      "parent_test": "test_fdb_create_kv",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_create_kv"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_create_kv"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_create_kv",
+      "scorer_case_id": "6",
+      "scorer_case_name": "create_kv",
+      "semantic_facts": {
+        "assertion_count": 3,
+        "assertion_details": [
+          {
+            "expression": "result == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "result"
+            ]
+          },
+          {
+            "expression": "read_value",
+            "macro": "test_assert_not_null",
+            "targets": [
+              "read_value"
+            ]
+          },
+          {
+            "expression": "tick, read_tick",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "read_tick",
+              "tick"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_int_equal",
+          "test_assert_not_null",
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "read_tick",
+          "read_value",
+          "result",
+          "tick"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "atoi",
+          "fdb_kv_get",
+          "fdb_kv_set",
+          "snprintf",
+          "test_assert_int_equal",
+          "test_assert_not_null",
+          "test_assert_true",
+          "test_tick_get"
+        ],
+        "control_usage": [],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 1,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_tick_get"
+        ],
+        "local_function_calls": [],
+        "observed_c_symbols": [
+          "fdb_kv_get",
+          "fdb_kv_set"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_kv_get",
+          "fdb_kv_set"
+        ],
+        "scenario_features": [],
+        "semantic_markers": []
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kv_get",
+        "calls:fdb_kv_set",
+        "create",
+        "helper:test_tick_get"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "create",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kv_get",
+        "calls:fdb_kv_set",
+        "create",
+        "helper:test_tick_get"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_change_kv",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_change_kv",
+      "parent_test": "test_fdb_change_kv",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_change_kv"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_change_kv"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_change_kv",
+      "scorer_case_id": "7",
+      "scorer_case_name": "change_kv",
+      "semantic_facts": {
+        "assertion_count": 5,
+        "assertion_details": [
+          {
+            "expression": "read_value",
+            "macro": "test_assert_not_null",
+            "targets": [
+              "read_value"
+            ]
+          },
+          {
+            "expression": "tick, read_tick",
+            "macro": "test_assert_int_not_equal",
+            "targets": [
+              "read_tick",
+              "tick"
+            ]
+          },
+          {
+            "expression": "result == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "result"
+            ]
+          },
+          {
+            "expression": "read_value",
+            "macro": "test_assert_not_null",
+            "targets": [
+              "read_value"
+            ]
+          },
+          {
+            "expression": "tick, read_tick",
+            "macro": "test_assert_int_equal",
+            "targets": [
+              "read_tick",
+              "tick"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_not_null",
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "read_tick",
+          "read_value",
+          "result",
+          "tick"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "atoi",
+          "fdb_kv_get",
+          "fdb_kv_set",
+          "snprintf",
+          "test_assert_int_equal",
+          "test_assert_int_not_equal",
+          "test_assert_not_null",
+          "test_assert_true",
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "control_usage": [],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 1,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "local_function_calls": [],
+        "observed_c_symbols": [
+          "fdb_kv_get",
+          "fdb_kv_set"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_kv_get",
+          "fdb_kv_set"
+        ],
+        "scenario_features": [],
+        "semantic_markers": []
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kv_get",
+        "calls:fdb_kv_set",
+        "change",
+        "helper:test_msleep",
+        "helper:test_tick_get"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "change",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kv_get",
+        "calls:fdb_kv_set",
+        "change",
+        "helper:test_msleep",
+        "helper:test_tick_get"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_del_kv",
+          "validated_obligation": "verify_addr_alignment"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_del_kv",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_del_kv",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_del_kv",
+      "parent_test": "test_fdb_del_kv",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_del_kv"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_del_kv"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_del_kv",
+      "scorer_case_id": "8",
+      "scorer_case_name": "del_kv",
+      "semantic_facts": {
+        "assertion_count": 8,
+        "assertion_details": [
+          {
+            "expression": "read_value",
+            "macro": "test_assert_not_null",
+            "targets": [
+              "read_value"
+            ]
+          },
+          {
+            "expression": "tick, read_tick",
+            "macro": "test_assert_int_not_equal",
+            "targets": [
+              "read_tick",
+              "tick"
+            ]
+          },
+          {
+            "expression": "result == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "result"
+            ]
+          },
+          {
+            "expression": "read_value",
+            "macro": "test_assert_null",
+            "targets": [
+              "read_value"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_int_not_equal",
+          "test_assert_not_null",
+          "test_assert_null",
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_ALIGN_DOWN",
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_KVDB_SECTOR_SIZE",
+          "TEST_TS_PART_NAME",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "get_time",
+          "oldest_addr",
+          "parent",
+          "read_tick",
+          "read_value",
+          "result",
+          "test_kvdb",
+          "test_ts",
+          "test_tsdb",
+          "tick"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "FDB_ALIGN_DOWN",
+          "access",
+          "atoi",
+          "fdb_kv_del",
+          "fdb_kv_get",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "memset",
+          "mkdir",
+          "test_assert_int_not_equal",
+          "test_assert_not_null",
+          "test_assert_null",
+          "test_assert_true",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_msleep",
+          "test_tick_get"
+        ],
+        "local_function_calls": [
+          "fdb_reboot",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "observed_c_symbols": [
+          "fdb_kv_del",
+          "fdb_kv_get",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_kv_del",
+          "fdb_kv_get",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init"
+        ],
+        "scenario_features": [],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_addr_alignment",
+          "verify_persistence_after_reboot"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kv_del",
+        "calls:fdb_kv_get",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "del",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "helper:test_msleep",
+        "helper:test_tick_get",
+        "use_control_interface",
+        "verify_addr_alignment",
+        "verify_persistence_after_reboot"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "del",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kv_del",
+        "calls:fdb_kv_get",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "del",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "helper:test_msleep",
+        "helper:test_tick_get",
+        "use_control_interface",
+        "verify_addr_alignment",
+        "verify_persistence_after_reboot"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc",
+          "validated_obligation": "data_shape:multi_kv_count:4"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc",
+          "validated_obligation": "scenario:multi_kv_gc_pressure"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc",
+          "validated_obligation": "verify_addr_alignment"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_gc",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_gc",
+      "parent_test": "test_fdb_gc",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_gc"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_gc"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_gc",
+      "scorer_case_id": "9",
+      "scorer_case_name": "gc",
+      "semantic_facts": {
+        "assertion_count": 17,
+        "assertion_details": [
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 1",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 1",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 2",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 2",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "saved_kv_tbl[j].name, kv_tbl[i].name",
+            "macro": "test_assert_str_equal",
+            "targets": [
+              "i",
+              "j",
+              "kv_tbl",
+              "name",
+              "saved_kv_tbl"
+            ]
+          },
+          {
+            "expression": "saved_kv_tbl[j].value, kv_tbl[i].value",
+            "macro": "test_assert_str_equal",
+            "targets": [
+              "i",
+              "j",
+              "kv_tbl",
+              "saved_kv_tbl",
+              "value"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(saved_kv_tbl[j].addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * kv_tbl[i].addr",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "addr",
+              "i",
+              "j",
+              "kv_tbl",
+              "saved_kv_tbl"
+            ]
+          },
+          {
+            "expression": "0",
+            "macro": "test_assert_true",
+            "targets": []
+          },
+          {
+            "expression": "result == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "result"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "assert",
+          "test_assert_str_equal",
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_ALIGN_DOWN",
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_KVDB_SECTOR_SIZE",
+          "TEST_TS_PART_NAME",
+          "addr",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "get_time",
+          "i",
+          "j",
+          "kv_tbl",
+          "name",
+          "oldest_addr",
+          "parent",
+          "result",
+          "saved_kv_tbl",
+          "test_kvdb",
+          "test_ts",
+          "test_tsdb",
+          "value"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "FDB_ALIGN_DOWN",
+          "FDB_ARRAY_SIZE",
+          "access",
+          "assert",
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_iterate",
+          "fdb_kv_iterator_init",
+          "fdb_kv_set_blob",
+          "fdb_kv_set_default",
+          "fdb_kv_to_blob",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "iter_all_kv",
+          "malloc",
+          "memset",
+          "mkdir",
+          "strcmp",
+          "strncpy",
+          "test_assert_str_equal",
+          "test_assert_true",
+          "test_check_fdb_by_kvs",
+          "test_fdb_by_kvs",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_save_fdb_by_kvs"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 4,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_check_fdb_by_kvs",
+          "test_fdb_by_kvs",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_save_fdb_by_kvs"
+        ],
+        "local_function_calls": [
+          "fdb_reboot",
+          "iter_all_kv",
+          "test_check_fdb_by_kvs",
+          "test_fdb_by_kvs",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_save_fdb_by_kvs"
+        ],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_iterate",
+          "fdb_kv_iterator_init",
+          "fdb_kv_set_blob",
+          "fdb_kv_set_default",
+          "fdb_kv_to_blob",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_iterate",
+          "fdb_kv_iterator_init",
+          "fdb_kv_set_blob",
+          "fdb_kv_set_default",
+          "fdb_kv_to_blob",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init"
+        ],
+        "scenario_features": [
+          "multi_kv_gc_pressure"
+        ],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_addr_alignment",
+          "verify_persistence_after_reboot"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_blob_read",
+        "calls:fdb_kv_iterate",
+        "calls:fdb_kv_iterator_init",
+        "calls:fdb_kv_set_blob",
+        "calls:fdb_kv_set_default",
+        "calls:fdb_kv_to_blob",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "data_shape:multi_kv_count:4",
+        "gc",
+        "helper:test_check_fdb_by_kvs",
+        "helper:test_fdb_by_kvs",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "helper:test_save_fdb_by_kvs",
+        "scenario:multi_kv_gc_pressure",
+        "use_control_interface",
+        "verify_addr_alignment",
+        "verify_persistence_after_reboot"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "gc",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_blob_read",
+        "calls:fdb_kv_iterate",
+        "calls:fdb_kv_iterator_init",
+        "calls:fdb_kv_set_blob",
+        "calls:fdb_kv_set_default",
+        "calls:fdb_kv_to_blob",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "data_shape:multi_kv_count:4",
+        "gc",
+        "helper:test_check_fdb_by_kvs",
+        "helper:test_fdb_by_kvs",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "helper:test_save_fdb_by_kvs",
+        "scenario:multi_kv_gc_pressure",
+        "use_control_interface",
+        "verify_addr_alignment",
+        "verify_persistence_after_reboot"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "data_shape:cross_sector_blob"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "data_shape:multi_kv_count:6"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "scenario:large_blob_persistence"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "scenario:multi_kv_gc_pressure"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "verify_addr_alignment"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_gc2",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_gc2",
+      "parent_test": "test_fdb_gc2",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_gc2"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_gc2"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_gc2",
+      "scorer_case_id": "10",
+      "scorer_case_name": "gc2",
+      "semantic_facts": {
+        "assertion_count": 17,
+        "assertion_details": [
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 2",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(test_kvdb.parent.oldest_addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * 2",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "oldest_addr",
+              "parent",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "saved_kv_tbl[j].name, kv_tbl[i].name",
+            "macro": "test_assert_str_equal",
+            "targets": [
+              "i",
+              "j",
+              "kv_tbl",
+              "name",
+              "saved_kv_tbl"
+            ]
+          },
+          {
+            "expression": "saved_kv_tbl[j].value, kv_tbl[i].value",
+            "macro": "test_assert_str_equal",
+            "targets": [
+              "i",
+              "j",
+              "kv_tbl",
+              "saved_kv_tbl",
+              "value"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(saved_kv_tbl[j].addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * kv_tbl[i].addr",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "addr",
+              "i",
+              "j",
+              "kv_tbl",
+              "saved_kv_tbl"
+            ]
+          },
+          {
+            "expression": "0",
+            "macro": "test_assert_true",
+            "targets": []
+          },
+          {
+            "expression": "result == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "result"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "assert",
+          "test_assert_str_equal",
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_ALIGN_DOWN",
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_KVDB_SECTOR_SIZE",
+          "TEST_TS_PART_NAME",
+          "addr",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "get_time",
+          "i",
+          "j",
+          "kv_tbl",
+          "name",
+          "oldest_addr",
+          "parent",
+          "result",
+          "saved_kv_tbl",
+          "test_kvdb",
+          "test_ts",
+          "test_tsdb",
+          "value"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "FDB_ALIGN_DOWN",
+          "FDB_ARRAY_SIZE",
+          "access",
+          "assert",
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_iterate",
+          "fdb_kv_iterator_init",
+          "fdb_kv_set_blob",
+          "fdb_kv_set_default",
+          "fdb_kv_to_blob",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "iter_all_kv",
+          "malloc",
+          "memset",
+          "mkdir",
+          "strcmp",
+          "strncpy",
+          "test_assert_str_equal",
+          "test_assert_true",
+          "test_check_fdb_by_kvs",
+          "test_fdb_by_kvs",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_save_fdb_by_kvs"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 3,
+          "blob_write_count": 0,
+          "kv_set_count": 6,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_check_fdb_by_kvs",
+          "test_fdb_by_kvs",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_save_fdb_by_kvs"
+        ],
+        "local_function_calls": [
+          "fdb_reboot",
+          "iter_all_kv",
+          "test_check_fdb_by_kvs",
+          "test_fdb_by_kvs",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_save_fdb_by_kvs"
+        ],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_iterate",
+          "fdb_kv_iterator_init",
+          "fdb_kv_set_blob",
+          "fdb_kv_set_default",
+          "fdb_kv_to_blob",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_iterate",
+          "fdb_kv_iterator_init",
+          "fdb_kv_set_blob",
+          "fdb_kv_set_default",
+          "fdb_kv_to_blob",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init"
+        ],
+        "scenario_features": [
+          "large_blob_persistence",
+          "multi_kv_gc_pressure"
+        ],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_addr_alignment",
+          "verify_persistence_after_reboot"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_blob_read",
+        "calls:fdb_kv_iterate",
+        "calls:fdb_kv_iterator_init",
+        "calls:fdb_kv_set_blob",
+        "calls:fdb_kv_set_default",
+        "calls:fdb_kv_to_blob",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "data_shape:cross_sector_blob",
+        "data_shape:multi_kv_count:6",
+        "gc",
+        "helper:test_check_fdb_by_kvs",
+        "helper:test_fdb_by_kvs",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "helper:test_save_fdb_by_kvs",
+        "scenario:large_blob_persistence",
+        "scenario:multi_kv_gc_pressure",
+        "use_control_interface",
+        "verify_addr_alignment",
+        "verify_persistence_after_reboot"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "gc",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_blob_read",
+        "calls:fdb_kv_iterate",
+        "calls:fdb_kv_iterator_init",
+        "calls:fdb_kv_set_blob",
+        "calls:fdb_kv_set_default",
+        "calls:fdb_kv_to_blob",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "data_shape:cross_sector_blob",
+        "data_shape:multi_kv_count:6",
+        "gc",
+        "helper:test_check_fdb_by_kvs",
+        "helper:test_fdb_by_kvs",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "helper:test_save_fdb_by_kvs",
+        "scenario:large_blob_persistence",
+        "scenario:multi_kv_gc_pressure",
+        "use_control_interface",
+        "verify_addr_alignment",
+        "verify_persistence_after_reboot"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_scale_up",
+          "validated_obligation": "data_shape:multi_kv_count:4"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_scale_up",
+          "validated_obligation": "scenario:multi_kv_gc_pressure"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_scale_up",
+          "validated_obligation": "verify_addr_alignment"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_scale_up",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_scale_up",
+      "parent_test": "test_fdb_scale_up",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_scale_up"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_scale_up"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_scale_up",
+      "scorer_case_id": "11",
+      "scorer_case_name": "scale_up",
+      "semantic_facts": {
+        "assertion_count": 9,
+        "assertion_details": [
+          {
+            "expression": "saved_kv_tbl[j].name, kv_tbl[i].name",
+            "macro": "test_assert_str_equal",
+            "targets": [
+              "i",
+              "j",
+              "kv_tbl",
+              "name",
+              "saved_kv_tbl"
+            ]
+          },
+          {
+            "expression": "saved_kv_tbl[j].value, kv_tbl[i].value",
+            "macro": "test_assert_str_equal",
+            "targets": [
+              "i",
+              "j",
+              "kv_tbl",
+              "saved_kv_tbl",
+              "value"
+            ]
+          },
+          {
+            "expression": "FDB_ALIGN_DOWN(saved_kv_tbl[j].addr, TEST_KVDB_SECTOR_SIZE) == TEST_KVDB_SECTOR_SIZE * kv_tbl[i].addr",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_KVDB_SECTOR_SIZE",
+              "addr",
+              "i",
+              "j",
+              "kv_tbl",
+              "saved_kv_tbl"
+            ]
+          },
+          {
+            "expression": "0",
+            "macro": "test_assert_true",
+            "targets": []
+          },
+          {
+            "expression": "fdb_kvdb_deinit(&test_kvdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_kvdb_deinit",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "fdb_kvdb_init(&test_kvdb, \"test_kv\", TEST_TS_PART_NAME, NULL, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_kvdb_init",
+              "test_kv",
+              "test_kvdb"
+            ]
+          },
+          {
+            "expression": "result == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "result"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "assert",
+          "test_assert_str_equal",
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_ALIGN_DOWN",
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_KVDB_SECTOR_SIZE",
+          "TEST_TS_PART_NAME",
+          "addr",
+          "fdb_kvdb_deinit",
+          "fdb_kvdb_init",
+          "i",
+          "j",
+          "kv_tbl",
+          "name",
+          "result",
+          "saved_kv_tbl",
+          "test_kv",
+          "test_kvdb",
+          "value"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "FDB_ALIGN_DOWN",
+          "FDB_ARRAY_SIZE",
+          "access",
+          "assert",
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_iterate",
+          "fdb_kv_iterator_init",
+          "fdb_kv_set_blob",
+          "fdb_kv_set_default",
+          "fdb_kv_to_blob",
+          "fdb_kvdb_control",
+          "fdb_kvdb_deinit",
+          "fdb_kvdb_init",
+          "iter_all_kv",
+          "malloc",
+          "mkdir",
+          "strcmp",
+          "strncpy",
+          "test_assert_str_equal",
+          "test_assert_true",
+          "test_check_fdb_by_kvs",
+          "test_fdb_kvdb_deinit",
+          "test_fdb_kvdb_init_by_8_sectors",
+          "test_fdb_kvdb_init_by_sector_num",
+          "test_save_fdb_by_kvs"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_KVDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_kvdb_control"
+          },
+          {
+            "command": "FDB_KVDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_kvdb_control"
+          },
+          {
+            "command": "FDB_KVDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_kvdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 4,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_check_fdb_by_kvs",
+          "test_fdb_kvdb_deinit",
+          "test_fdb_kvdb_init_by_8_sectors",
+          "test_fdb_kvdb_init_by_sector_num",
+          "test_save_fdb_by_kvs"
+        ],
+        "local_function_calls": [
+          "iter_all_kv",
+          "test_check_fdb_by_kvs",
+          "test_fdb_kvdb_deinit",
+          "test_fdb_kvdb_init_by_8_sectors",
+          "test_fdb_kvdb_init_by_sector_num",
+          "test_save_fdb_by_kvs"
+        ],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_iterate",
+          "fdb_kv_iterator_init",
+          "fdb_kv_set_blob",
+          "fdb_kv_set_default",
+          "fdb_kv_to_blob",
+          "fdb_kvdb_control",
+          "fdb_kvdb_deinit",
+          "fdb_kvdb_init"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_blob_make",
+          "fdb_blob_read",
+          "fdb_kv_iterate",
+          "fdb_kv_iterator_init",
+          "fdb_kv_set_blob",
+          "fdb_kv_set_default",
+          "fdb_kv_to_blob",
+          "fdb_kvdb_control",
+          "fdb_kvdb_deinit",
+          "fdb_kvdb_init"
+        ],
+        "scenario_features": [
+          "multi_kv_gc_pressure"
+        ],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_addr_alignment"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_blob_read",
+        "calls:fdb_kv_iterate",
+        "calls:fdb_kv_iterator_init",
+        "calls:fdb_kv_set_blob",
+        "calls:fdb_kv_set_default",
+        "calls:fdb_kv_to_blob",
+        "calls:fdb_kvdb_control",
+        "calls:fdb_kvdb_deinit",
+        "calls:fdb_kvdb_init",
+        "data_shape:multi_kv_count:4",
+        "helper:test_check_fdb_by_kvs",
+        "helper:test_fdb_kvdb_deinit",
+        "helper:test_fdb_kvdb_init_by_8_sectors",
+        "helper:test_fdb_kvdb_init_by_sector_num",
+        "helper:test_save_fdb_by_kvs",
+        "scenario:multi_kv_gc_pressure",
+        "use_control_interface",
+        "verify_addr_alignment"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_blob_read",
+        "calls:fdb_kv_iterate",
+        "calls:fdb_kv_iterator_init",
+        "calls:fdb_kv_set_blob",
+        "calls:fdb_kv_set_default",
+        "calls:fdb_kv_to_blob",
+        "calls:fdb_kvdb_control",
+        "calls:fdb_kvdb_deinit",
+        "calls:fdb_kvdb_init",
+        "data_shape:multi_kv_count:4",
+        "helper:test_check_fdb_by_kvs",
+        "helper:test_fdb_kvdb_deinit",
+        "helper:test_fdb_kvdb_init_by_8_sectors",
+        "helper:test_fdb_kvdb_init_by_sector_num",
+        "helper:test_save_fdb_by_kvs",
+        "scenario:multi_kv_gc_pressure",
+        "use_control_interface",
+        "verify_addr_alignment"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_kvdb_set_default",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_kvdb_set_default",
+      "parent_test": "test_fdb_kvdb_set_default",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_kvdb_set_default"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_kvdb_set_default"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_kvdb_set_default",
+      "scorer_case_id": "12",
+      "scorer_case_name": "kvdb_set_default",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_details": [
+          {
+            "expression": "fdb_kv_set_default(&test_kvdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_kv_set_default",
+              "test_kvdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "fdb_kv_set_default",
+          "test_kvdb"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "fdb_kv_set_default",
+          "test_assert_true"
+        ],
+        "control_usage": [],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [],
+        "local_function_calls": [],
+        "observed_c_symbols": [
+          "fdb_kv_set_default"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_kv_set_default"
+        ],
+        "scenario_features": [],
+        "semantic_markers": []
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kv_set_default",
+        "set"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "kvdb",
+        "set"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kv_set_default",
+        "set"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_kvdb_deinit",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_kvdb_deinit",
+      "parent_test": "test_fdb_kvdb_deinit",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_kvdb_deinit"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_kvdb_deinit"
+      ],
+      "rust_file": "flashDB_rust/tests/kvdb_tests.rs",
+      "rust_test": "kvdb_test_fdb_kvdb_deinit",
+      "scorer_case_id": "13",
+      "scorer_case_name": "kvdb_deinit",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_details": [
+          {
+            "expression": "fdb_kvdb_deinit(&test_kvdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_kvdb_deinit",
+              "test_kvdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "fdb_kvdb_deinit",
+          "test_kvdb"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "fdb_kvdb_deinit",
+          "test_assert_true"
+        ],
+        "control_usage": [],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [],
+        "local_function_calls": [],
+        "observed_c_symbols": [
+          "fdb_kvdb_deinit"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_kvdb_deinit"
+        ],
+        "scenario_features": [],
+        "semantic_markers": []
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kvdb_deinit",
+        "deinit",
+        "init"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_kvdb_tc.c",
+      "suite": "kvdb",
+      "tags": [
+        "deinit",
+        "init",
+        "kvdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_kvdb_deinit",
+        "deinit",
+        "init"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_tsdb_init_ex",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_tsdb_init_ex",
+      "parent_test": "test_fdb_tsdb_init_ex",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_tsdb_init_ex"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_tsdb_init_ex"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsdb_init_ex",
+      "scorer_case_id": "14",
+      "scorer_case_name": "tsdb_init_ex",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_details": [
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_TS_PART_NAME",
+          "fdb_tsdb_init",
+          "get_time",
+          "test_ts",
+          "test_tsdb"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "access",
+          "fdb_tsdb_control",
+          "fdb_tsdb_init",
+          "memset",
+          "mkdir",
+          "test_assert_true"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [],
+        "local_function_calls": [],
+        "observed_c_symbols": [
+          "fdb_tsdb_control",
+          "fdb_tsdb_init"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_tsdb_control",
+          "fdb_tsdb_init"
+        ],
+        "scenario_features": [],
+        "semantic_markers": [
+          "use_control_interface"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_init",
+        "init",
+        "use_control_interface"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "init",
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_init",
+        "init",
+        "use_control_interface"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_clean",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_tsl_clean",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_tsl_clean",
+      "parent_test": "test_fdb_tsl_clean",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_tsl_clean"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_tsl_clean"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_clean",
+      "scorer_case_id": "15",
+      "scorer_case_name": "tsl_clean",
+      "semantic_facts": {
+        "assertion_count": 4,
+        "assertion_details": [
+          {
+            "expression": "count == 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "count"
+            ]
+          },
+          {
+            "expression": "count == 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "count"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_TS_PART_NAME",
+          "count",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "get_time",
+          "test_ts",
+          "test_tsdb"
+        ],
+        "callback_bindings": [
+          {
+            "callback": "test_fdb_tsl_clean_cb",
+            "iterator_api": "fdb_tsl_iter"
+          },
+          {
+            "callback": "test_fdb_tsl_clean_cb",
+            "iterator_api": "fdb_tsl_iter"
+          }
+        ],
+        "callback_paths": [
+          {
+            "assertion_details": [],
+            "call_chain": [
+              "test_fdb_tsl_clean_cb"
+            ],
+            "callback": "test_fdb_tsl_clean_cb",
+            "iterator_api": "fdb_tsl_iter",
+            "private_function_calls": [],
+            "public_api_calls": [],
+            "resolved": true
+          },
+          {
+            "assertion_details": [],
+            "call_chain": [
+              "test_fdb_tsl_clean_cb"
+            ],
+            "callback": "test_fdb_tsl_clean_cb",
+            "iterator_api": "fdb_tsl_iter",
+            "private_function_calls": [],
+            "public_api_calls": [],
+            "resolved": true
+          }
+        ],
+        "called_functions": [
+          "access",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter",
+          "memset",
+          "mkdir",
+          "test_assert_true",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "local_function_calls": [
+          "fdb_reboot",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter"
+        ],
+        "scenario_features": [],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_persistence_after_reboot"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_clean",
+        "calls:fdb_tsl_iter",
+        "clean",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "clean",
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_clean",
+        "calls:fdb_tsl_iter",
+        "clean",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_tsl_append",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_tsl_append",
+      "parent_test": "test_fdb_tsl_append",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_tsl_append"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_tsl_append"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_append",
+      "scorer_case_id": "16",
+      "scorer_case_name": "tsl_append",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_details": [
+          {
+            "expression": "fdb_tsl_append(&test_tsdb, fdb_blob_make(&blob, logbuf, strnlen(logbuf, sizeof(logbuf)))) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "blob",
+              "fdb_blob_make",
+              "fdb_tsl_append",
+              "logbuf",
+              "strnlen",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "blob",
+          "fdb_blob_make",
+          "fdb_tsl_append",
+          "logbuf",
+          "strnlen",
+          "test_tsdb"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "fdb_blob_make",
+          "fdb_tsl_append",
+          "snprintf",
+          "strnlen",
+          "test_assert_true"
+        ],
+        "control_usage": [],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [],
+        "local_function_calls": [],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_tsl_append"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_blob_make",
+          "fdb_tsl_append"
+        ],
+        "scenario_features": [],
+        "semantic_markers": []
+      },
+      "semantic_obligations": [
+        "append",
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_tsl_append"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "append",
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "append",
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_tsl_append"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_tsl_iter",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_tsl_iter",
+      "parent_test": "test_fdb_tsl_iter",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_tsl_iter"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_tsl_iter"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_iter",
+      "scorer_case_id": "17",
+      "scorer_case_name": "tsl_iter",
+      "semantic_facts": {
+        "assertion_count": 2,
+        "assertion_details": [
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_TS_PART_NAME",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "get_time",
+          "test_ts",
+          "test_tsdb"
+        ],
+        "callback_bindings": [
+          {
+            "callback": "test_fdb_tsl_iter_cb",
+            "iterator_api": "fdb_tsl_iter"
+          }
+        ],
+        "callback_paths": [
+          {
+            "assertion_details": [
+              {
+                "expression": "tsl->time == atoi(data)",
+                "macro": "test_assert_true",
+                "targets": [
+                  "atoi",
+                  "data",
+                  "time",
+                  "tsl"
+                ]
+              },
+              {
+                "expression": "tsl->time == *((fdb_time_t *)arg)",
+                "macro": "test_assert_true",
+                "targets": [
+                  "arg",
+                  "fdb_time_t",
+                  "time",
+                  "tsl"
+                ]
+              }
+            ],
+            "call_chain": [
+              "test_fdb_tsl_iter_cb"
+            ],
+            "callback": "test_fdb_tsl_iter_cb",
+            "iterator_api": "fdb_tsl_iter",
+            "private_function_calls": [],
+            "public_api_calls": [
+              "fdb_blob_make",
+              "fdb_blob_read",
+              "fdb_tsl_to_blob"
+            ],
+            "resolved": true
+          }
+        ],
+        "called_functions": [
+          "access",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_iter",
+          "memset",
+          "mkdir",
+          "test_assert_true",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "local_function_calls": [
+          "fdb_reboot",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_iter"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_iter"
+        ],
+        "scenario_features": [],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_persistence_after_reboot"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_iter",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "iter",
+        "iterator_time_payload_consistency",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "iter",
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_iter",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "iter",
+        "iterator_time_payload_consistency",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time",
+          "validated_obligation": "scenario:iter_by_time"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_tsl_iter_by_time",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_tsl_iter_by_time",
+      "parent_test": "test_fdb_tsl_iter_by_time",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_tsl_iter_by_time"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_tsl_iter_by_time"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_iter_by_time",
+      "scorer_case_id": "18",
+      "scorer_case_name": "tsl_iter_by_time",
+      "semantic_facts": {
+        "assertion_count": 2,
+        "assertion_details": [
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_TS_PART_NAME",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "get_time",
+          "test_ts",
+          "test_tsdb"
+        ],
+        "callback_bindings": [
+          {
+            "callback": "test_fdb_tsl_iter_cb",
+            "iterator_api": "fdb_tsl_iter_by_time"
+          },
+          {
+            "callback": "test_fdb_tsl_iter_cb",
+            "iterator_api": "fdb_tsl_iter_by_time"
+          }
+        ],
+        "callback_paths": [
+          {
+            "assertion_details": [
+              {
+                "expression": "tsl->time == atoi(data)",
+                "macro": "test_assert_true",
+                "targets": [
+                  "atoi",
+                  "data",
+                  "time",
+                  "tsl"
+                ]
+              },
+              {
+                "expression": "tsl->time == *((fdb_time_t *)arg)",
+                "macro": "test_assert_true",
+                "targets": [
+                  "arg",
+                  "fdb_time_t",
+                  "time",
+                  "tsl"
+                ]
+              }
+            ],
+            "call_chain": [
+              "test_fdb_tsl_iter_cb"
+            ],
+            "callback": "test_fdb_tsl_iter_cb",
+            "iterator_api": "fdb_tsl_iter_by_time",
+            "private_function_calls": [],
+            "public_api_calls": [
+              "fdb_blob_make",
+              "fdb_blob_read",
+              "fdb_tsl_to_blob"
+            ],
+            "resolved": true
+          },
+          {
+            "assertion_details": [
+              {
+                "expression": "tsl->time == atoi(data)",
+                "macro": "test_assert_true",
+                "targets": [
+                  "atoi",
+                  "data",
+                  "time",
+                  "tsl"
+                ]
+              },
+              {
+                "expression": "tsl->time == *((fdb_time_t *)arg)",
+                "macro": "test_assert_true",
+                "targets": [
+                  "arg",
+                  "fdb_time_t",
+                  "time",
+                  "tsl"
+                ]
+              }
+            ],
+            "call_chain": [
+              "test_fdb_tsl_iter_cb"
+            ],
+            "callback": "test_fdb_tsl_iter_cb",
+            "iterator_api": "fdb_tsl_iter_by_time",
+            "private_function_calls": [],
+            "public_api_calls": [
+              "fdb_blob_make",
+              "fdb_blob_read",
+              "fdb_tsl_to_blob"
+            ],
+            "resolved": true
+          }
+        ],
+        "called_functions": [
+          "access",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_iter_by_time",
+          "memset",
+          "mkdir",
+          "test_assert_true",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "local_function_calls": [
+          "fdb_reboot",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_iter_by_time"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_iter_by_time"
+        ],
+        "scenario_features": [
+          "iter_by_time"
+        ],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_persistence_after_reboot"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_iter_by_time",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "iter",
+        "iterator_time_payload_consistency",
+        "scenario:iter_by_time",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "iter",
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_iter_by_time",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "iter",
+        "iterator_time_payload_consistency",
+        "scenario:iter_by_time",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_query_count",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_tsl_query_count",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_tsl_query_count",
+      "parent_test": "test_fdb_tsl_query_count",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_tsl_query_count"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_tsl_query_count"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_query_count",
+      "scorer_case_id": "19",
+      "scorer_case_name": "tsl_query_count",
+      "semantic_facts": {
+        "assertion_count": 3,
+        "assertion_details": [
+          {
+            "expression": "count == TEST_TS_COUNT",
+            "macro": "test_assert_true",
+            "targets": [
+              "TEST_TS_COUNT",
+              "count"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_TS_COUNT",
+          "TEST_TS_PART_NAME",
+          "count",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "get_time",
+          "test_ts",
+          "test_tsdb"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "access",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_query_count",
+          "memset",
+          "mkdir",
+          "printf",
+          "test_assert_true",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "local_function_calls": [
+          "fdb_reboot",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_query_count"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_query_count"
+        ],
+        "scenario_features": [],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_persistence_after_reboot"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_query_count",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "query",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "query",
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_query_count",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "query",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_set_status",
+          "validated_obligation": "scenario:iter_by_time"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_set_status",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_tsl_set_status",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_tsl_set_status",
+      "parent_test": "test_fdb_tsl_set_status",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_tsl_set_status"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_tsl_set_status"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_set_status",
+      "scorer_case_id": "20",
+      "scorer_case_name": "tsl_set_status",
+      "semantic_facts": {
+        "assertion_count": 4,
+        "assertion_details": [
+          {
+            "expression": "fdb_tsl_query_count(&test_tsdb, from, to, FDB_TSL_USER_STATUS1) == TEST_TS_USER_STATUS1_COUNT",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_TSL_USER_STATUS1",
+              "TEST_TS_USER_STATUS1_COUNT",
+              "fdb_tsl_query_count",
+              "from",
+              "test_tsdb",
+              "to"
+            ]
+          },
+          {
+            "expression": "fdb_tsl_query_count(&test_tsdb, from, to, FDB_TSL_DELETED) == TEST_TS_DELETED_COUNT",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_TSL_DELETED",
+              "TEST_TS_DELETED_COUNT",
+              "fdb_tsl_query_count",
+              "from",
+              "test_tsdb",
+              "to"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "FDB_TSL_DELETED",
+          "FDB_TSL_USER_STATUS1",
+          "NULL",
+          "TEST_TS_DELETED_COUNT",
+          "TEST_TS_PART_NAME",
+          "TEST_TS_USER_STATUS1_COUNT",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_query_count",
+          "from",
+          "get_time",
+          "test_ts",
+          "test_tsdb",
+          "to"
+        ],
+        "callback_bindings": [
+          {
+            "callback": "est_fdb_tsl_set_status_cb",
+            "iterator_api": "fdb_tsl_iter_by_time"
+          }
+        ],
+        "callback_paths": [
+          {
+            "assertion_details": [
+              {
+                "expression": "fdb_tsl_set_status(db, tsl, FDB_TSL_USER_STATUS1) == FDB_NO_ERR",
+                "macro": "test_assert_true",
+                "targets": [
+                  "FDB_NO_ERR",
+                  "FDB_TSL_USER_STATUS1",
+                  "db",
+                  "fdb_tsl_set_status",
+                  "tsl"
+                ]
+              },
+              {
+                "expression": "fdb_tsl_set_status(db, tsl, FDB_TSL_DELETED) == FDB_NO_ERR",
+                "macro": "test_assert_true",
+                "targets": [
+                  "FDB_NO_ERR",
+                  "FDB_TSL_DELETED",
+                  "db",
+                  "fdb_tsl_set_status",
+                  "tsl"
+                ]
+              }
+            ],
+            "call_chain": [
+              "est_fdb_tsl_set_status_cb"
+            ],
+            "callback": "est_fdb_tsl_set_status_cb",
+            "iterator_api": "fdb_tsl_iter_by_time",
+            "private_function_calls": [],
+            "public_api_calls": [
+              "fdb_tsl_set_status"
+            ],
+            "resolved": true
+          }
+        ],
+        "called_functions": [
+          "access",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_iter_by_time",
+          "fdb_tsl_query_count",
+          "memset",
+          "mkdir",
+          "test_assert_true",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "local_function_calls": [
+          "fdb_reboot",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_iter_by_time",
+          "fdb_tsl_query_count"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_iter_by_time",
+          "fdb_tsl_query_count"
+        ],
+        "scenario_features": [
+          "iter_by_time"
+        ],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_persistence_after_reboot"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "callback_reentrant_state_mutation",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_iter_by_time",
+        "calls:fdb_tsl_query_count",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "scenario:iter_by_time",
+        "set",
+        "status",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "set",
+        "status",
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "callback_reentrant_state_mutation",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_iter_by_time",
+        "calls:fdb_tsl_query_count",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "scenario:iter_by_time",
+        "set",
+        "status",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_clean__2",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_tsl_clean__2",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_tsl_clean__2",
+      "parent_test": "test_fdb_tsl_clean__2",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_tsl_clean"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_tsl_clean"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_clean__2",
+      "scorer_case_id": "21",
+      "scorer_case_name": "tsl_clean_2",
+      "semantic_facts": {
+        "assertion_count": 4,
+        "assertion_details": [
+          {
+            "expression": "count == 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "count"
+            ]
+          },
+          {
+            "expression": "count == 0",
+            "macro": "test_assert_true",
+            "targets": [
+              "count"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_TS_PART_NAME",
+          "count",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "get_time",
+          "test_ts",
+          "test_tsdb"
+        ],
+        "callback_bindings": [
+          {
+            "callback": "test_fdb_tsl_clean_cb",
+            "iterator_api": "fdb_tsl_iter"
+          },
+          {
+            "callback": "test_fdb_tsl_clean_cb",
+            "iterator_api": "fdb_tsl_iter"
+          }
+        ],
+        "callback_paths": [
+          {
+            "assertion_details": [],
+            "call_chain": [
+              "test_fdb_tsl_clean_cb"
+            ],
+            "callback": "test_fdb_tsl_clean_cb",
+            "iterator_api": "fdb_tsl_iter",
+            "private_function_calls": [],
+            "public_api_calls": [],
+            "resolved": true
+          },
+          {
+            "assertion_details": [],
+            "call_chain": [
+              "test_fdb_tsl_clean_cb"
+            ],
+            "callback": "test_fdb_tsl_clean_cb",
+            "iterator_api": "fdb_tsl_iter",
+            "private_function_calls": [],
+            "public_api_calls": [],
+            "resolved": true
+          }
+        ],
+        "called_functions": [
+          "access",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter",
+          "memset",
+          "mkdir",
+          "test_assert_true",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "local_function_calls": [
+          "fdb_reboot",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex"
+        ],
+        "observed_c_symbols": [
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter"
+        ],
+        "scenario_features": [],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_persistence_after_reboot"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_clean",
+        "calls:fdb_tsl_iter",
+        "clean",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "clean",
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_clean",
+        "calls:fdb_tsl_iter",
+        "clean",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ]
+    },
+    {
+      "assertion_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time_1",
+          "validated_obligation": "data_shape:sector_bound_queries:7"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time_1",
+          "validated_obligation": "scenario:cross_sector_tsl"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time_1",
+          "validated_obligation": "scenario:iter_by_time"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time_1",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_tsl_iter_by_time_1",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_tsl_iter_by_time_1",
+      "parent_test": "test_fdb_tsl_iter_by_time_1",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_tsl_iter_by_time_1"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_tsl_iter_by_time_1"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsl_iter_by_time_1",
+      "scorer_case_id": "22",
+      "scorer_case_name": "tsl_iter_by_time_1",
+      "semantic_facts": {
+        "assertion_count": 12,
+        "assertion_details": [
+          {
+            "expression": "test_secs_info[2].start_time != 0x7FFFFFFF",
+            "macro": "test_assert_true",
+            "targets": [
+              "start_time",
+              "test_secs_info",
+              "x7FFFFFFF"
+            ]
+          },
+          {
+            "expression": "i >= 3",
+            "macro": "test_assert_true",
+            "targets": [
+              "i"
+            ]
+          },
+          {
+            "expression": "last_secs != NULL",
+            "macro": "test_assert_true",
+            "targets": [
+              "NULL",
+              "last_secs"
+            ]
+          },
+          {
+            "expression": "tsl_num == j",
+            "macro": "test_assert_true",
+            "targets": [
+              "j",
+              "tsl_num"
+            ]
+          },
+          {
+            "expression": "tls->time == FDB_ALIGN(cur_time, TEST_TIME_STEP)",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN",
+              "TEST_TIME_STEP",
+              "cur_time",
+              "time",
+              "tls"
+            ]
+          },
+          {
+            "expression": "tls->time == FDB_ALIGN_DOWN(cur_time, TEST_TIME_STEP)",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_TIME_STEP",
+              "cur_time",
+              "time",
+              "tls"
+            ]
+          },
+          {
+            "expression": "last_tsl_time == FDB_ALIGN_DOWN(valid_to, TEST_TIME_STEP)",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_TIME_STEP",
+              "last_tsl_time",
+              "valid_to"
+            ]
+          },
+          {
+            "expression": "last_tsl_time == FDB_ALIGN(valid_to, TEST_TIME_STEP)",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN",
+              "TEST_TIME_STEP",
+              "last_tsl_time",
+              "valid_to"
+            ]
+          },
+          {
+            "expression": "tls->time == FDB_ALIGN(cur_time, TEST_TIME_STEP)",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN",
+              "TEST_TIME_STEP",
+              "cur_time",
+              "time",
+              "tls"
+            ]
+          },
+          {
+            "expression": "tls->time == FDB_ALIGN_DOWN(cur_time, TEST_TIME_STEP)",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_TIME_STEP",
+              "cur_time",
+              "time",
+              "tls"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"test_ts\", TEST_TS_PART_NAME, get_time, 128, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "TEST_TS_PART_NAME",
+              "fdb_tsdb_init",
+              "get_time",
+              "test_ts",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_ALIGN",
+          "FDB_ALIGN_DOWN",
+          "FDB_NO_ERR",
+          "NULL",
+          "TEST_TIME_STEP",
+          "TEST_TS_PART_NAME",
+          "cur_time",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "get_time",
+          "i",
+          "j",
+          "last_secs",
+          "last_tsl_time",
+          "start_time",
+          "test_secs_info",
+          "test_ts",
+          "test_tsdb",
+          "time",
+          "tls",
+          "tsl_num",
+          "valid_to",
+          "x7FFFFFFF"
+        ],
+        "callback_bindings": [
+          {
+            "callback": "get_sector_info_cb",
+            "iterator_api": "fdb_tsl_iter_by_time"
+          },
+          {
+            "callback": "query_cb",
+            "iterator_api": "fdb_tsl_iter_by_time"
+          }
+        ],
+        "callback_paths": [
+          {
+            "assertion_details": [],
+            "call_chain": [
+              "get_sector_info_cb"
+            ],
+            "callback": "get_sector_info_cb",
+            "iterator_api": "fdb_tsl_iter_by_time",
+            "private_function_calls": [],
+            "public_api_calls": [],
+            "resolved": true
+          },
+          {
+            "assertion_details": [],
+            "call_chain": [
+              "query_cb"
+            ],
+            "callback": "query_cb",
+            "iterator_api": "fdb_tsl_iter_by_time",
+            "private_function_calls": [],
+            "public_api_calls": [
+              "fdb_blob_make",
+              "fdb_blob_read",
+              "fdb_tsl_to_blob"
+            ],
+            "resolved": true
+          }
+        ],
+        "called_functions": [
+          "FDB_ALIGN",
+          "FDB_ALIGN_DOWN",
+          "access",
+          "fdb_blob_make",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_append",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter_by_time",
+          "free",
+          "memset",
+          "mkdir",
+          "slist_entry",
+          "slist_init",
+          "slist_len",
+          "test_assert_true",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_fdb_tsl_sector_bound_test",
+          "test_tsdb_data_by_time"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 7,
+          "tsl_append_count": 1
+        },
+        "helper_calls": [
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_fdb_tsl_sector_bound_test",
+          "test_tsdb_data_by_time"
+        ],
+        "local_function_calls": [
+          "fdb_reboot",
+          "free",
+          "test_fdb_tsdb_deinit",
+          "test_fdb_tsdb_init_ex",
+          "test_fdb_tsl_sector_bound_test",
+          "test_tsdb_data_by_time"
+        ],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_reboot",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_append",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter_by_time"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_blob_make",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_append",
+          "fdb_tsl_clean",
+          "fdb_tsl_iter_by_time"
+        ],
+        "scenario_features": [
+          "cross_sector_tsl",
+          "iter_by_time"
+        ],
+        "semantic_markers": [
+          "use_control_interface",
+          "verify_persistence_after_reboot"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_append",
+        "calls:fdb_tsl_clean",
+        "calls:fdb_tsl_iter_by_time",
+        "data_shape:sector_bound_queries:7",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "helper:test_fdb_tsl_sector_bound_test",
+        "helper:test_tsdb_data_by_time",
+        "iter",
+        "scenario:cross_sector_tsl",
+        "scenario:iter_by_time",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "iter",
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_reboot",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_append",
+        "calls:fdb_tsl_clean",
+        "calls:fdb_tsl_iter_by_time",
+        "data_shape:sector_bound_queries:7",
+        "helper:test_fdb_tsdb_deinit",
+        "helper:test_fdb_tsdb_init_ex",
+        "helper:test_fdb_tsl_sector_bound_test",
+        "helper:test_tsdb_data_by_time",
+        "iter",
+        "scenario:cross_sector_tsl",
+        "scenario:iter_by_time",
+        "use_control_interface",
+        "verify_persistence_after_reboot"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_tsdb_deinit",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_tsdb_deinit",
+      "parent_test": "test_fdb_tsdb_deinit",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_tsdb_deinit"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_tsdb_deinit"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_tsdb_deinit",
+      "scorer_case_id": "23",
+      "scorer_case_name": "tsdb_deinit",
+      "semantic_facts": {
+        "assertion_count": 1,
+        "assertion_details": [
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_NO_ERR",
+          "fdb_tsdb_deinit",
+          "test_tsdb"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "fdb_tsdb_deinit",
+          "test_assert_true"
+        ],
+        "control_usage": [],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [],
+        "local_function_calls": [],
+        "observed_c_symbols": [
+          "fdb_tsdb_deinit"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_tsdb_deinit"
+        ],
+        "scenario_features": [],
+        "semantic_markers": []
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_tsdb_deinit",
+        "deinit",
+        "init"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "deinit",
+        "init",
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_tsdb_deinit",
+        "deinit",
+        "init"
+      ]
+    },
+    {
+      "assertion_evidence": [],
+      "compile_status": "pass",
+      "consistency_status": "pass",
+      "coverage": "semantic",
+      "execution_status": "pass",
+      "id": "test_fdb_github_issue_249",
+      "implementation_status": "implemented",
+      "missing_c_tests": [],
+      "name": "test_fdb_github_issue_249",
+      "parent_test": "test_fdb_github_issue_249",
+      "placeholder_status": "pass",
+      "present_c_tests": [
+        "test_fdb_github_issue_249"
+      ],
+      "repair_attempts": 0,
+      "required_c_tests": [
+        "test_fdb_github_issue_249"
+      ],
+      "rust_file": "flashDB_rust/tests/tsdb_tests.rs",
+      "rust_test": "tsdb_test_fdb_github_issue_249",
+      "scorer_case_id": "24",
+      "scorer_case_name": "github_issue_249",
+      "semantic_facts": {
+        "assertion_count": 13,
+        "assertion_details": [
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"storage_tsdb\", \"storage_tsdb\", get_time, 10*1024, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "fdb_tsdb_init",
+              "get_time",
+              "storage_tsdb",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "data != NULL",
+            "macro": "test_assert_true",
+            "targets": [
+              "NULL",
+              "data"
+            ]
+          },
+          {
+            "expression": "fdb_tsl_append(&test_tsdb, fdb_blob_make(&blob, data, test_data_size)) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "blob",
+              "data",
+              "fdb_blob_make",
+              "fdb_tsl_append",
+              "test_data_size",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "data != NULL",
+            "macro": "test_assert_true",
+            "targets": [
+              "NULL",
+              "data"
+            ]
+          },
+          {
+            "expression": "fdb_tsl_append(&test_tsdb, fdb_blob_make(&blob, data, test_data_size)) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "blob",
+              "data",
+              "fdb_blob_make",
+              "fdb_tsl_append",
+              "test_data_size",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "data != NULL",
+            "macro": "test_assert_true",
+            "targets": [
+              "NULL",
+              "data"
+            ]
+          },
+          {
+            "expression": "fdb_tsl_append(&test_tsdb, fdb_blob_make(&blob, data, test_data_size)) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "blob",
+              "data",
+              "fdb_blob_make",
+              "fdb_tsl_append",
+              "test_data_size",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_deinit(&test_tsdb) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "fdb_tsdb_deinit",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsdb_init(&test_tsdb, \"storage_tsdb\", \"storage_tsdb\", get_time, 10 * 1024, NULL) == FDB_NO_ERR",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_NO_ERR",
+              "NULL",
+              "fdb_tsdb_init",
+              "get_time",
+              "storage_tsdb",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsl_query_count(&test_tsdb, 2, 6, FDB_TSL_WRITE) == 3",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_TSL_WRITE",
+              "fdb_tsl_query_count",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "fdb_tsl_query_count(&test_tsdb, 0, INT32_MAX, FDB_TSL_WRITE) == 3",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_TSL_WRITE",
+              "INT32_MAX",
+              "fdb_tsl_query_count",
+              "test_tsdb"
+            ]
+          },
+          {
+            "expression": "tls->time == FDB_ALIGN(cur_time, TEST_TIME_STEP)",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN",
+              "TEST_TIME_STEP",
+              "cur_time",
+              "time",
+              "tls"
+            ]
+          },
+          {
+            "expression": "tls->time == FDB_ALIGN_DOWN(cur_time, TEST_TIME_STEP)",
+            "macro": "test_assert_true",
+            "targets": [
+              "FDB_ALIGN_DOWN",
+              "TEST_TIME_STEP",
+              "cur_time",
+              "time",
+              "tls"
+            ]
+          }
+        ],
+        "assertion_macros": [
+          "test_assert_true"
+        ],
+        "assertion_targets": [
+          "FDB_ALIGN",
+          "FDB_ALIGN_DOWN",
+          "FDB_NO_ERR",
+          "FDB_TSL_WRITE",
+          "INT32_MAX",
+          "NULL",
+          "TEST_TIME_STEP",
+          "blob",
+          "cur_time",
+          "data",
+          "fdb_blob_make",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_append",
+          "fdb_tsl_query_count",
+          "get_time",
+          "storage_tsdb",
+          "test_data_size",
+          "test_tsdb",
+          "time",
+          "tls"
+        ],
+        "callback_bindings": [],
+        "callback_paths": [],
+        "called_functions": [
+          "FDB_ALIGN",
+          "FDB_ALIGN_DOWN",
+          "access",
+          "fdb_blob_make",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_append",
+          "fdb_tsl_clean",
+          "fdb_tsl_query_count",
+          "free",
+          "malloc",
+          "memset",
+          "mkdir",
+          "slist_entry",
+          "test_assert_true"
+        ],
+        "control_usage": [
+          {
+            "command": "FDB_TSDB_CTRL_SET_SEC_SIZE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_FILE_MODE",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_NOT_FORMAT",
+            "function": "fdb_tsdb_control"
+          },
+          {
+            "command": "FDB_TSDB_CTRL_SET_MAX_SIZE",
+            "function": "fdb_tsdb_control"
+          }
+        ],
+        "data_shape": {
+          "blob_multiplier": 0,
+          "blob_write_count": 0,
+          "kv_set_count": 0,
+          "sector_bound_query_count": 0,
+          "tsl_append_count": 0
+        },
+        "helper_calls": [],
+        "local_function_calls": [
+          "free"
+        ],
+        "observed_c_symbols": [
+          "fdb_blob_make",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_append",
+          "fdb_tsl_clean",
+          "fdb_tsl_query_count"
+        ],
+        "private_function_calls": [],
+        "public_api_calls": [
+          "fdb_blob_make",
+          "fdb_tsdb_control",
+          "fdb_tsdb_deinit",
+          "fdb_tsdb_init",
+          "fdb_tsl_append",
+          "fdb_tsl_clean",
+          "fdb_tsl_query_count"
+        ],
+        "scenario_features": [],
+        "semantic_markers": [
+          "use_control_interface"
+        ]
+      },
+      "semantic_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_append",
+        "calls:fdb_tsl_clean",
+        "calls:fdb_tsl_query_count",
+        "use_control_interface"
+      ],
+      "source": "scorer_cases",
+      "source_file": "tests/fdb_tsdb_tc.c",
+      "suite": "tsdb",
+      "tags": [
+        "tsdb"
+      ],
+      "unresolved_issues": [],
+      "validated_obligations": [
+        "assertion_count",
+        "assertion_intent",
+        "calls:fdb_blob_make",
+        "calls:fdb_tsdb_control",
+        "calls:fdb_tsdb_deinit",
+        "calls:fdb_tsdb_init",
+        "calls:fdb_tsl_append",
+        "calls:fdb_tsl_clean",
+        "calls:fdb_tsl_query_count",
+        "use_control_interface"
+      ]
+    }
+  ],
+  "source_to_rust": {
+    "kvdb": "flashDB_rust/tests/kvdb_tests.rs",
+    "tsdb": "flashDB_rust/tests/tsdb_tests.rs"
+  },
+  "total_scenarios": 24,
+  "total_scorer_cases": 24,
+  "tsdb": [
+    "test_fdb_tsdb_init_ex",
+    "test_fdb_tsl_clean",
+    "test_fdb_tsl_append",
+    "test_fdb_tsl_iter",
+    "test_fdb_tsl_iter_by_time",
+    "test_fdb_tsl_query_count",
+    "test_fdb_tsl_set_status",
+    "test_fdb_tsl_clean__2",
+    "test_fdb_tsl_iter_by_time_1",
+    "test_fdb_tsdb_deinit",
+    "test_fdb_github_issue_249"
+  ],
+  "unmapped": []
+}

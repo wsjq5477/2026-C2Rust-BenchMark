@@ -1,0 +1,1467 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import time
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return data
+
+
+def _relative_log_path(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    _write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    _write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+
+
+def _command_text(command: list[str], cwd: Path | None = None) -> str:
+    prefix = f"(cd {cwd} && )" if cwd else ""
+    return prefix + " ".join(command)
+
+
+def _safe_c_suffix(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
+
+
+def _run(command: list[str], *, cwd: Path | None = None, timeout: float = 60) -> tuple[int, str]:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = (exc.stdout or b"").decode("utf-8", errors="replace")
+        stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
+        return -124, f"{stdout}{stderr}\nTIMEOUT: killed after {timeout}s\n"
+    stdout = completed.stdout.decode("utf-8", errors="replace") if isinstance(completed.stdout, bytes) else (completed.stdout or "")
+    stderr = completed.stderr.decode("utf-8", errors="replace") if isinstance(completed.stderr, bytes) else (completed.stderr or "")
+    return completed.returncode, f"{stdout}{stderr}"
+
+
+def parse_runner_test_results(output: str, expected_tests: list[str], exit_code: int) -> dict[str, Any]:
+    start_pattern = re.compile(r"^\s*Running:\s*([A-Za-z_][A-Za-z0-9_]*)\b", re.MULTILINE)
+    failure_pattern = re.compile(r"^\s*FAIL\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+?)\s*$", re.MULTILINE)
+    started = start_pattern.findall(output)
+    failure_matches = failure_pattern.findall(output)
+
+    # Build disambiguated started list: when same C function appears multiple times,
+    # map the N-th occurrence to the N-th expected entry with that source_test.
+    # Expected entries may include scenario_ids like test_xxx__2 that map to source_test test_xxx.
+    # We use invocation_index from registered_test_invocations to disambiguate.
+    source_test_by_scenario: dict[str, str] = {}
+    invocation_order: dict[str, list[str]] = {}
+    for entry in expected_tests:
+        parts = entry.rsplit("__", 1)
+        source = parts[0]
+        source_test_by_scenario[entry] = source
+        invocation_order.setdefault(source, []).append(entry)
+
+    # Map each "Running: <name>" to a specific scenario_id using invocation order
+    started_scenarios: list[str] = []
+    invocation_counter: dict[str, int] = {}
+    unexpected_repeated_starts: list[str] = []
+    for name in started:
+        scenarios_for_name = invocation_order.get(name, [name])
+        idx = invocation_counter.get(name, 0)
+        if idx < len(scenarios_for_name):
+            started_scenarios.append(scenarios_for_name[idx])
+        else:
+            started_scenarios.append(name)
+            unexpected_repeated_starts.append(name)
+        invocation_counter[name] = idx + 1
+
+    # Map FAIL lines similarly
+    failures: dict[str, str] = {}
+    fail_counter: dict[str, int] = {}
+    for test_name, detail in failure_matches:
+        normalized = " ".join(detail.split())
+        scenarios_for_name = invocation_order.get(test_name, [test_name])
+        idx = fail_counter.get(test_name, 0)
+        scenario = scenarios_for_name[idx] if idx < len(scenarios_for_name) else test_name
+        fail_counter[test_name] = idx + 1
+        if scenario in failures:
+            failures[scenario] = f"{failures[scenario]} | {normalized}"
+        else:
+            failures[scenario] = normalized
+
+    expected_set = set(expected_tests)
+    started_set = set(started_scenarios)
+    unknown_started = sorted(set(started) - set(source_test_by_scenario.values()))
+    unknown_failed = sorted(set(failures) - expected_set)
+    failed_without_start = sorted(set(failures) - started_set)
+    reasons: list[str] = []
+    if unknown_started:
+        reasons.append("unknown started tests: " + ", ".join(unknown_started))
+    if unexpected_repeated_starts:
+        reasons.append("unexpected repeated start: " + ", ".join(sorted(unexpected_repeated_starts)))
+    if unknown_failed:
+        reasons.append("unknown failed tests: " + ", ".join(unknown_failed))
+    # A timeout can lose buffered C stdout while still preserving stderr FAIL
+    # lines.  Such a FAIL is still attributable and must not turn every other
+    # scenario in the suite into a synthetic parse failure.
+    warnings: list[str] = []
+    if failed_without_start:
+        message = "failed tests missing start records: " + ", ".join(failed_without_start)
+        if exit_code == 0:
+            reasons.append(message)
+        else:
+            warnings.append(message)
+    if exit_code == 0 and failures:
+        reasons.append("successful runner reported test failures")
+    if exit_code == 0 and started_set != expected_set:
+        reasons.append("successful runner did not start all expected tests")
+    if exit_code not in {0, -124} and not failures:
+        reasons.append("nonzero runner exit has no attributed test failure")
+    if exit_code == -124 and not failures and not started_set:
+        reasons.append("timed out runner has no started or failed test evidence")
+
+    failed = [name for name in expected_tests if name in failures]
+    timed_out: list[str] = []
+    if exit_code == -124 and started_scenarios:
+        last_started = started_scenarios[-1]
+        if last_started not in failures:
+            timed_out.append(last_started)
+    passed = [name for name in expected_tests if name in started_set and name not in failures and name not in timed_out]
+    not_run = [
+        name for name in expected_tests
+        if name not in started_set and name not in failures and name not in timed_out
+    ]
+    status = "parse_failed" if reasons else ("partial" if exit_code == -124 or warnings else "parsed")
+    return {
+        "status": status,
+        "started": [name for name in expected_tests if name in started_set],
+        "passed": passed,
+        "failed": failed,
+        "timed_out": timed_out,
+        "not_run": not_run,
+        "failures": failures,
+        "warnings": warnings,
+        "exit_code": exit_code,
+        "reason": "; ".join(reasons) if reasons else "runner output mapped to expected tests",
+    }
+
+
+def _normalized_failure_reason(reason: Any) -> str:
+    text = " ".join(str(reason or "unknown failure").split())
+    text = re.sub(r"0x[0-9A-Fa-f]+", "<addr>", text)
+    return text
+
+
+def failure_fingerprint(row: dict[str, Any]) -> str:
+    return "|".join(
+        [
+            str(row.get("failure_layer") or row.get("phase") or "unknown"),
+            str(row.get("suite") or "unknown"),
+            str(row.get("source_test") or row.get("scenario_id") or "unknown"),
+            _normalized_failure_reason(row.get("reason")),
+        ]
+    )
+
+
+def _matrix_outcomes(matrix: dict[str, Any] | None) -> dict[str, Any]:
+    scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else []
+    rows = [row for row in scenarios if isinstance(row, dict)] if isinstance(scenarios, list) else []
+    passed: set[str] = set()
+    failed: set[str] = set()
+    not_run: set[str] = set()
+    failures: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        source_test = str(row.get("source_test") or row.get("scenario_id") or "unknown")
+        status = row.get("rust_impl_c_test")
+        if status == "pass":
+            passed.add(source_test)
+        elif status == "not_run":
+            not_run.add(source_test)
+            failures[source_test] = row
+        else:
+            failed.add(source_test)
+            failures[source_test] = row
+    return {
+        "passed": passed,
+        "failed": failed,
+        "not_run": not_run,
+        "failures": failures,
+        "fingerprints": {failure_fingerprint(row) for row in failures.values()},
+    }
+
+
+def compare_attempt(previous: dict[str, Any] | None, current: dict[str, Any]) -> dict[str, Any]:
+    before = _matrix_outcomes(previous)
+    after = _matrix_outcomes(current)
+    previous_scope = before["passed"] | before["failed"] | before["not_run"]
+    current_scope = after["passed"] | after["failed"] | after["not_run"]
+    regression = bool((before["passed"] & current_scope) - after["passed"])
+    progress_reasons: list[str] = []
+    if after["passed"] - before["passed"]:
+        progress_reasons.append("passed set increased")
+
+    layer_order = {"model": 0, "scaffold": 1, "build": 2, "layout": 3, "link": 4, "full": 5}
+    for source_test in sorted(set(before["failures"]) & set(after["failures"])):
+        before_row = before["failures"][source_test]
+        after_row = after["failures"][source_test]
+        before_layer = str(before_row.get("failure_layer") or before_row.get("phase") or "unknown")
+        after_layer = str(after_row.get("failure_layer") or after_row.get("phase") or "unknown")
+        if layer_order.get(after_layer, -1) > layer_order.get(before_layer, -1):
+            progress_reasons.append(f"{source_test} advanced from {before_layer} to {after_layer}")
+        elif failure_fingerprint(before_row) != failure_fingerprint(after_row):
+            progress_reasons.append(f"{source_test} advanced to a different assertion or error")
+
+    progress = bool(progress_reasons) and not regression
+    return {
+        "progress": progress,
+        "regression": regression,
+        "progress_reasons": progress_reasons,
+        "before": {
+            "passed": sorted(before["passed"]),
+            "failed": sorted(before["failed"]),
+            "not_run": sorted(before["not_run"]),
+        },
+        "after": {
+            "passed": sorted(after["passed"]),
+            "failed": sorted(after["failed"]),
+            "not_run": sorted(after["not_run"]),
+        },
+        "fingerprints_before": sorted(before["fingerprints"]),
+        "fingerprints_after": sorted(after["fingerprints"]),
+        "comparable_fingerprints": sorted(
+            failure_fingerprint(row)
+            for source_test, row in after["failures"].items()
+            if source_test in previous_scope
+        ),
+    }
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        value = json.loads(line)
+        if isinstance(value, dict):
+            rows.append(value)
+    return rows
+
+
+def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def record_attempt(
+    c_cross: Path,
+    previous: dict[str, Any] | None,
+    current: dict[str, Any],
+    *,
+    attempt_kind: str,
+    trigger: str,
+    changed_files: list[str],
+) -> dict[str, Any]:
+    if attempt_kind == "repair":
+        invalid_changes = [
+            path
+            for path in changed_files
+            if not Path(path).as_posix().startswith("flashDB_rust/") or ".." in Path(path).parts
+        ]
+        if invalid_changes:
+            raise ValueError(
+                "repair changed_files must stay under flashDB_rust/: " + ", ".join(sorted(invalid_changes))
+            )
+
+    attempts_path = c_cross / "attempts.jsonl"
+    prior_attempts = _read_jsonl(attempts_path)
+    attempt_id = str(current.get("execution_id") or f"attempt-{time.time_ns()}")
+    outcomes = Counter(
+        str(row.get("rust_impl_c_test") or "unresolved")
+        for row in current.get("scenarios", [])
+        if isinstance(row, dict)
+    )
+    record = {
+        "attempt_id": attempt_id,
+        "attempt": len(prior_attempts) + 1,
+        "stage": "VERIFY_RUST_WITH_C_TESTS",
+        "kind": attempt_kind,
+        "trigger": trigger,
+        "suite": sorted({
+            str(row.get("suite"))
+            for row in current.get("scenarios", [])
+            if isinstance(row, dict) and row.get("suite")
+        }),
+        "changed_files": list(changed_files),
+        "result": "pass" if outcomes and set(outcomes) == {"pass"} else "continue_with_failures",
+        "summary": dict(sorted(outcomes.items())),
+        "matrix_snapshot": f"logs/trace/c-cross/checkpoints/{attempt_id}.json",
+    }
+    _append_jsonl(attempts_path, record)
+
+    return record
+
+
+def _suite_for_case(case: dict[str, Any]) -> str:
+    suite = case.get("suite")
+    if isinstance(suite, str) and suite:
+        return suite
+    return "unknown"
+
+
+def _find_c_project_root(root: Path, trace: Path) -> Path | None:
+    state_path = trace / "workflow_state.json"
+    if state_path.exists():
+        state = load_json(state_path)
+        input_path = state.get("input_path")
+        if isinstance(input_path, str) and Path(input_path).exists():
+            return Path(input_path).resolve()
+    candidates = [
+        root / "judge-assets" / "code" / "FlashDB",
+        root.parent / "judge-assets" / "code" / "FlashDB",
+        root.parent.parent / "judge-assets" / "code" / "FlashDB",
+    ]
+    for candidate in candidates:
+        if (candidate / "tests").is_dir() and any((candidate / "inc").glob("*.h")):
+            return candidate.resolve()
+    return None
+
+
+def _rust_staticlib(project: Path) -> Path:
+    if os.name == "nt":
+        return project / "target" / "release" / "flashdb_rust.lib"
+    return project / "target" / "release" / "libflashdb_rust.a"
+
+
+def _c_include_args(c_root: Path, c_cross: Path) -> list[str]:
+    generated_include = c_cross / "include"
+    generated_include.mkdir(parents=True, exist_ok=True)
+    inc = c_root / "inc"
+    if inc.is_dir():
+        for template in sorted(inc.glob("*_template.h")):
+            target_name = template.name.replace("_template.h", ".h")
+            if not (inc / target_name).exists():
+                content = template.read_text(encoding="utf-8", errors="ignore")
+                if target_name == "fdb_cfg.h":
+                    content = content.replace(
+                        "#define _FDB_CFG_H_",
+                        "#define _FDB_CFG_H_\n\n#include <stdbool.h>\n#include <time.h>",
+                    )
+                (generated_include / target_name).write_text(
+                    content,
+                    encoding="utf-8",
+                )
+    args = ["-I", str(generated_include), "-I", str(c_root / "tests"), "-I", str(c_root / "inc")]
+    return args
+
+
+def _build_rust_staticlib(project: Path) -> tuple[bool, str]:
+    command = ["cargo", "build", "--release"]
+    code, output = _run(command, cwd=project)
+    text = f"$ {_command_text(command, project)}\n{output}\n"
+    lib = _rust_staticlib(project)
+    if code != 0:
+        text += f"cargo exited with {code}\n"
+        return False, text
+    if not lib.exists():
+        text += f"missing Rust staticlib: {lib}\n"
+        return False, text
+    text += f"staticlib={lib}\n"
+    return True, text
+
+
+def _discover_suite_runner(suite: str, c_root: Path) -> Path | None:
+    tests_dir = c_root / "tests"
+    if not tests_dir.is_dir():
+        return None
+    candidates = []
+    for source in sorted(tests_dir.glob("*.c")):
+        text = source.read_text(encoding="utf-8", errors="ignore")
+        if not re.search(r"\bmain\s*\(", text):
+            continue
+        score = 0
+        lower_name = source.name.lower()
+        if suite.lower() in lower_name:
+            score += 10
+        if re.search(r"\bTEST_RUN\s*\(", text):
+            score += 3
+        candidates.append((score, source))
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda item: (-item[0], item[1].as_posix()))[0][1]
+
+
+def _included_c_sources(source: Path, tests_dir: Path, seen: set[Path] | None = None) -> set[Path]:
+    seen = seen or set()
+    source = source.resolve()
+    if source in seen or not source.is_file():
+        return seen
+    seen.add(source)
+    text = source.read_text(encoding="utf-8", errors="ignore")
+    for included in re.findall(r'^\s*#\s*include\s+"([^"/]+\.c)"', text, flags=re.MULTILINE):
+        _included_c_sources(tests_dir / included, tests_dir, seen)
+    return seen
+
+
+def _test_side_sources(c_root: Path, runner: Path, cases: list[dict[str, Any]]) -> list[Path]:
+    tests_dir = c_root / "tests"
+    included = _included_c_sources(runner, tests_dir)
+    sources = set(included)
+    for case in cases:
+        source_file = case.get("source_file")
+        if not isinstance(source_file, str):
+            continue
+        source = c_root / source_file
+        if source.is_file() and source.resolve() not in included:
+            sources.add(source.resolve())
+    return sorted(sources)
+
+
+def _write_ffi_manifest(
+    suite: str,
+    c_root: Path,
+    c_cross: Path,
+    trace: Path,
+    objects: list[Path],
+    root: Path,
+) -> str:
+    manifest_path = trace / "ffi_manifest.json"
+    public_api: set[str] = set()
+    api_path = trace / "c_api_model.json"
+    if api_path.exists():
+        api = load_json(api_path)
+        public_api = {item for item in api.get("public_functions", []) if isinstance(item, str)}
+    linker = shutil.which("ld")
+    symbol_tool = shutil.which("nm") or shutil.which("llvm-nm")
+    if not objects or linker is None or symbol_tool is None:
+        _write_json(manifest_path, {
+            "required_ffi_apis": [],
+            "suite_requirements": {},
+            "reason": "partial-link tools or test objects unavailable",
+        })
+        return "ffi manifest skipped: partial-link tools or test objects unavailable\n"
+    combined = c_cross / f"test-side-{_safe_c_suffix(suite)}.o"
+    code, output = _run([linker, "-r", *[str(path) for path in objects], "-o", str(combined)])
+    log = f"$ {_command_text([linker, '-r', *[str(path) for path in objects], '-o', str(combined)])}\n{output}\n"
+    if code != 0:
+        _write_json(manifest_path, {
+            "required_ffi_apis": [],
+            "suite_requirements": {},
+            "reason": "test-side partial link failed",
+        })
+        return log
+    code, output = _run([symbol_tool, "-u", str(combined)])
+    log += f"$ {_command_text([symbol_tool, '-u', str(combined)])}\n{output}\n"
+    symbols = set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)$", output, flags=re.MULTILINE))
+    required = sorted(symbols & public_api)
+    existing = load_json(manifest_path) if manifest_path.exists() else {}
+    suite_requirements = existing.get("suite_requirements") if isinstance(existing, dict) else None
+    suite_requirements = dict(suite_requirements) if isinstance(suite_requirements, dict) else {}
+    suite_requirements[suite] = {
+        "required_ffi_apis": required,
+        "object": _relative_log_path(combined, root),
+    }
+    aggregate = sorted({
+        symbol
+        for item in suite_requirements.values()
+        if isinstance(item, dict)
+        for symbol in item.get("required_ffi_apis", [])
+        if isinstance(symbol, str)
+    })
+    _write_json(manifest_path, {
+        "required_ffi_apis": aggregate,
+        "suite_requirements": suite_requirements,
+        "source": "test_side_undefined_symbols",
+    })
+    return log
+
+
+def _compile_suite_runner(
+    suite: str,
+    c_root: Path,
+    c_cross: Path,
+    rust_lib: Path,
+    cases: list[dict[str, Any]] | None = None,
+) -> tuple[bool, Path | None, str]:
+    source = None
+    if cases:
+        runner_names = {str(case.get("runner")) for case in cases if isinstance(case.get("runner"), str)}
+        if len(runner_names) == 1:
+            candidate = c_root / next(iter(runner_names))
+            if candidate.is_file():
+                source = candidate
+    source = source or _discover_suite_runner(suite, c_root)
+    if source is None:
+        return False, None, f"missing discovered C test runner for suite: {suite}\n"
+    binary = c_cross / f"{suite}_runner"
+    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    if cc is None:
+        return False, None, "missing C compiler: cc/gcc/clang not found\n"
+    sources = _test_side_sources(c_root, source, cases or [])
+    runner_dir = c_cross / "runners" / _safe_c_suffix(source.stem)
+    runner_dir.mkdir(parents=True, exist_ok=True)
+    objects: list[Path] = []
+    output_parts: list[str] = []
+    for index, test_source in enumerate(sources):
+        obj = runner_dir / f"{index}-{_safe_c_suffix(test_source.stem)}.o"
+        compile_command = [
+            cc,
+            "-O0",
+            "-g3",
+            "-Wall",
+            "-Wno-format",
+            *_c_include_args(c_root, c_cross),
+            "-c",
+            str(test_source),
+            "-o",
+            str(obj),
+        ]
+        code, output = _run(compile_command)
+        output_parts.append(f"$ {_command_text(compile_command)}\n{output}\n")
+        if code != 0:
+            return False, binary, "".join(output_parts) + f"cc exited with {code}\n"
+        objects.append(obj)
+    trace = c_cross.parent
+    workbench_root = trace.parent.parent
+    output_parts.append(_write_ffi_manifest(suite, c_root, c_cross, trace, objects, workbench_root))
+    command = [
+        cc,
+        "-O0",
+        "-g3",
+        "-Wall",
+        "-Wno-format",
+        *[str(obj) for obj in objects],
+        str(rust_lib),
+        "-o",
+        str(binary),
+        "-lpthread",
+        "-ldl",
+        "-lm",
+    ]
+    code, output = _run(command)
+    text = "".join(output_parts) + f"$ {_command_text(command)}\n{output}\n"
+    if code != 0:
+        text += f"cc exited with {code}\n"
+        return False, binary, text
+    return True, binary, text
+
+
+def _run_suite_runner(suite: str, binary: Path, c_cross: Path) -> tuple[bool | str, str, str]:
+    run_dir = c_cross / f"{suite}_run"
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    log_path = c_cross / f"{suite}_runner.log"
+    if shutil.which("stdbuf"):
+        command = ["stdbuf", "-oL", "-eL", str(binary.resolve())]
+        capture_mode = "stdbuf_line_buffered"
+    else:
+        command = [str(binary.resolve())]
+        capture_mode = "pipe_buffering_fallback"
+    code, output = _run(command, cwd=run_dir, timeout=60)
+    text = f"capture_mode={capture_mode}\n$ {_command_text(command, run_dir)}\n{output}\n"
+    _write(log_path, text)
+    if code == -124:
+        return "timeout", text, f"{suite} runner timeout after 60s, see {log_path}"
+    if code != 0:
+        text += f"runner exited with {code}\n"
+        _write(log_path, text)
+        return False, text, f"{suite} runner failed, see {log_path}"
+    return True, text, f"{suite} original C runner passed"
+
+
+def _layout_structs(trace: Path) -> list[dict[str, Any]]:
+    design_path = trace / "rust_api_design.json"
+    if design_path.exists():
+        design = load_json(design_path)
+        facade = design.get("c_abi_facade")
+        structs = facade.get("structs") if isinstance(facade, dict) else []
+        if isinstance(structs, list):
+            result = [item for item in structs if isinstance(item, dict) and isinstance(item.get("c_name"), str)]
+            if result:
+                return result
+    api_path = trace / "c_api_model.json"
+    if not api_path.exists():
+        return []
+    api_model = load_json(api_path)
+    layouts = api_model.get("abi_layouts")
+    if not isinstance(layouts, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for layout in layouts:
+        if not isinstance(layout, dict) or not isinstance(layout.get("name"), str):
+            continue
+        result.append(
+            {
+                "c_name": layout["name"],
+                "sizeof": layout.get("sizeof"),
+                "alignof": layout.get("alignof"),
+                "fields": layout.get("fields", []),
+                "notes": [],
+            }
+        )
+    return result
+
+
+def _layout_headers(c_root: Path, structs: list[dict[str, Any]]) -> list[str]:
+    headers = [
+        str(item.get("header"))
+        for item in structs
+        if isinstance(item.get("header"), str) and item.get("header")
+    ]
+    headers = [header.removeprefix("inc/") for header in headers]
+    if not headers:
+        inc = c_root / "inc"
+        if inc.is_dir():
+            headers = [path.relative_to(inc).as_posix() for path in sorted(inc.glob("*.h"))]
+    return sorted(dict.fromkeys(headers))
+
+
+def _layout_checker_source(structs: list[dict[str, Any]], headers: list[str]) -> str:
+    lines = [
+        "#include <stddef.h>",
+        "#include <stdint.h>",
+        "#include <stdio.h>",
+        "#include <stdbool.h>",
+        "#include <time.h>",
+    ]
+    lines.extend(f'#include "{header}"' for header in headers)
+    lines.append("")
+    for struct in structs:
+        c_name = struct["c_name"]
+        suffix = _safe_c_suffix(c_name)
+        lines.append(f"extern size_t rust_sizeof_{suffix}(void);")
+        lines.append(f"extern size_t rust_alignof_{suffix}(void);")
+        fields = struct.get("fields", [])
+        if isinstance(fields, list):
+            for field in fields:
+                if isinstance(field, dict) and isinstance(field.get("name"), str):
+                    lines.append(f"extern size_t rust_offsetof_{suffix}_{_safe_c_suffix(field['name'])}(void);")
+    lines.extend(
+        [
+            "",
+            "int main(void) {",
+            "  int failures = 0;",
+            '  printf("[LAYOUT CHECK] start\\n");',
+        ]
+    )
+    for struct in structs:
+        c_name = struct["c_name"]
+        suffix = _safe_c_suffix(c_name)
+        lines.extend(
+            [
+                f"  if (sizeof(struct {c_name}) != rust_sizeof_{suffix}()) {{",
+                f'    printf("[LAYOUT MISMATCH] struct={c_name} sizeof c=%zu rust=%zu\\n", sizeof(struct {c_name}), rust_sizeof_{suffix}());',
+                "    failures++;",
+                "  }",
+                f"  if (_Alignof(struct {c_name}) != rust_alignof_{suffix}()) {{",
+                f'    printf("[LAYOUT MISMATCH] struct={c_name} alignof c=%zu rust=%zu\\n", (size_t)_Alignof(struct {c_name}), rust_alignof_{suffix}());',
+                "    failures++;",
+                "  }",
+                f"  if (sizeof(struct {c_name}) == rust_sizeof_{suffix}() && _Alignof(struct {c_name}) == rust_alignof_{suffix}()) {{",
+                f'    printf("[LAYOUT OK] struct={c_name} sizeof=%zu alignof=%zu\\n", sizeof(struct {c_name}), (size_t)_Alignof(struct {c_name}));',
+                "  }",
+            ]
+        )
+        fields = struct.get("fields", [])
+        if not isinstance(fields, list):
+            fields = []
+        for field in fields:
+            if not isinstance(field, dict) or not isinstance(field.get("name"), str):
+                continue
+            field_name = field["name"]
+            field_suffix = _safe_c_suffix(field_name)
+            lines.extend(
+                [
+                    f"  if (rust_offsetof_{suffix}_{field_suffix}() == (size_t)-1) {{",
+                    f'    printf("[LAYOUT MISMATCH] field={c_name}.{field_name} offset c=%zu rust=missing\\n", offsetof(struct {c_name}, {field_name}));',
+                    f'    printf("possible_reason=active macro added field {field_name} that Rust omitted\\n");',
+                    "    failures++;",
+                    f"  }} else if (offsetof(struct {c_name}, {field_name}) != rust_offsetof_{suffix}_{field_suffix}()) {{",
+                    f'    printf("[LAYOUT MISMATCH] field={c_name}.{field_name} offset c=%zu rust=%zu\\n", offsetof(struct {c_name}, {field_name}), rust_offsetof_{suffix}_{field_suffix}());',
+                    "    failures++;",
+                    "  } else {",
+                    f'    printf("[LAYOUT OK] struct={c_name} field={field_name} offset=%zu\\n", offsetof(struct {c_name}, {field_name}));',
+                    "  }",
+                ]
+            )
+    lines.extend(
+        [
+            "  if (failures) {",
+            '    printf("[LAYOUT CHECK] fail\\n");',
+            "    return 1;",
+            "  }",
+            '  printf("[LAYOUT CHECK] pass\\n");',
+            "  return 0;",
+            "}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _run_layout_checker(c_root: Path, c_cross: Path, rust_lib: Path, trace: Path) -> tuple[bool, str]:
+    structs = _layout_structs(trace)
+    headers = _layout_headers(c_root, structs)
+    source = c_cross / "layout_checker.c"
+    binary = c_cross / "layout_checker"
+    log_path = c_cross / "layout-check.log"
+    source.write_text(_layout_checker_source(structs, headers), encoding="utf-8")
+    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    if cc is None:
+        text = "missing C compiler: cc/gcc/clang not found\n"
+        _write(log_path, text)
+        return False, text
+    command = [
+        cc,
+        "-std=c11",
+        "-O0",
+        "-g3",
+        "-Wall",
+        "-Wno-format",
+        *_c_include_args(c_root, c_cross),
+        str(source),
+        str(rust_lib),
+        "-o",
+        str(binary),
+        "-lpthread",
+        "-ldl",
+        "-lm",
+    ]
+    code, output = _run(command)
+    text = f"$ {_command_text(command)}\n{output}\n"
+    if code != 0:
+        text += f"layout checker compile exited with {code}\n"
+        _write(log_path, text)
+        return False, text
+    code, output = _run([str(binary.resolve())], cwd=c_cross)
+    text += f"$ {_command_text([str(binary.resolve())], c_cross)}\n{output}\n"
+    if code != 0:
+        text += f"layout checker exited with {code}\n"
+        _write(log_path, text)
+        return False, text
+    _write(log_path, text)
+    return True, text
+
+
+def _malformed_row(index: int, case: Any, c_cross: Path, root: Path) -> dict[str, Any]:
+    scenario_id = f"malformed_case_{index}"
+    log = c_cross / f"{scenario_id}.log"
+    if isinstance(case, dict):
+        missing_fields = []
+        if not isinstance(case.get("scenario_id"), str):
+            missing_fields.append("scenario_id")
+        if not isinstance(case.get("case_id"), str):
+            missing_fields.append("case_id")
+        if not isinstance(case.get("suite"), str) or not case.get("suite"):
+            missing_fields.append("suite")
+        reason = f"malformed scorer_standard_cases entry at index {index}: missing or non-string {', '.join(missing_fields)}"
+    else:
+        reason = f"malformed scorer_standard_cases entry at index {index}: expected object, got {type(case).__name__}"
+    _write(log, reason + "\n")
+    return {
+        "scenario_id": scenario_id,
+        "scorer_case_id": scenario_id,
+        "suite": "unknown",
+        "phase": "build",
+        "failure_layer": "build",
+        "source_runner": "unknown",
+        "source_test": scenario_id,
+        "c_impl_c_test": "baseline",
+        "rust_impl_c_test": "not_supported",
+        "c_impl_rust_test": "not_run",
+        "rust_impl_rust_test": "pending",
+        "diagnosis": "c_cross_harness_not_supported",
+        "reason": reason,
+        "log": _relative_log_path(log, root),
+        "handoff": "c-analyzer",
+    }
+
+
+def _malformed_invocation_row(index: int, invocation: Any, c_cross: Path, root: Path) -> dict[str, Any]:
+    scenario_id = f"malformed_invocation_{index}"
+    log = c_cross / f"{scenario_id}.log"
+    required = ["suite", "runner", "test_function", "scenario_id", "source_file"]
+    missing = [key for key in required if not isinstance(invocation, dict) or not isinstance(invocation.get(key), str) or not invocation.get(key)]
+    reason = (
+        f"malformed registered_test_invocations entry at index {index}: missing or non-string {', '.join(missing)}"
+        if isinstance(invocation, dict)
+        else f"malformed registered_test_invocations entry at index {index}: expected object, got {type(invocation).__name__}"
+    )
+    _write(log, reason + "\n")
+    return {
+        "scenario_id": scenario_id,
+        "suite": "unknown",
+        "phase": "model",
+        "failure_layer": "model",
+        "source_runner": "unknown",
+        "source_test": scenario_id,
+        "c_impl_c_test": "baseline",
+        "rust_impl_c_test": "unresolved",
+        "c_impl_rust_test": "not_run",
+        "rust_impl_rust_test": "pending",
+        "diagnosis": "c_model_signature_gap",
+        "reason": reason,
+        "log": _relative_log_path(log, root),
+        "handoff": "controller",
+    }
+
+
+def _repair_context_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    contexts: dict[str, dict[str, Any]] = {}
+    for collection in ["scorer_standard_cases", "standard_scenarios"]:
+        cases = test_model.get(collection)
+        if not isinstance(cases, list):
+            continue
+        for case in cases:
+            if not isinstance(case, dict) or not isinstance(case.get("scenario_id") or case.get("id"), str):
+                continue
+            scenario_id = str(case.get("scenario_id") or case.get("id"))
+            facts = case.get("semantic_facts") if isinstance(case.get("semantic_facts"), dict) else {}
+            context = {
+                "semantic_obligations": case.get("semantic_obligations", []),
+                "public_api_calls": facts.get("public_api_calls", []),
+                "data_shape": facts.get("data_shape", {}),
+                "scenario_features": facts.get("scenario_features", []),
+                "semantic_markers": facts.get("semantic_markers", []),
+                "callback_paths": facts.get("callback_paths", []),
+                "assertion_details": facts.get("assertion_details", []),
+            }
+            # scorer_standard_cases carry expanded helper evidence and take
+            # precedence over the shallower registered-scenario snapshot.
+            if scenario_id not in contexts or collection == "scorer_standard_cases":
+                contexts[scenario_id] = context
+    return contexts
+
+
+def _source_evidence_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = test_model.get("registered_test_invocations")
+    if not isinstance(raw, list):
+        return {}
+    evidence: dict[str, dict[str, Any]] = {}
+    repair_contexts = _repair_context_by_scenario(test_model)
+    invocation_counter: dict[str, int] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        runner = item.get("runner")
+        test_function = item.get("test_function") or item.get("name")
+        scenario_id = item.get("scenario_id")
+        scenarios = [scenario_id] if isinstance(scenario_id, str) and scenario_id else item.get("scenarios")
+        invocation_index = item.get("invocation_index")
+        if not isinstance(scenarios, list) and isinstance(test_function, str):
+            # Derive scenario from invocation_index if not provided
+            idx = invocation_counter.get(test_function, 0) + 1
+            invocation_counter[test_function] = idx
+            if invocation_index is not None and invocation_index > 1:
+                scenarios = [f"{test_function}__{invocation_index}"]
+            else:
+                scenarios = [test_function]
+        if not isinstance(test_function, str) or not isinstance(scenarios, list):
+            continue
+        for scenario in scenarios:
+            item_evidence: dict[str, Any] = {"source_test": test_function}
+            invocation_idx = invocation_index if isinstance(invocation_index, int) else None
+            if invocation_idx is not None:
+                item_evidence["invocation_index"] = invocation_idx
+            if isinstance(runner, str) and runner:
+                item_evidence["source_runner"] = runner
+            runner_order = item.get("runner_order")
+            if isinstance(runner_order, int):
+                item_evidence["runner_order"] = runner_order
+            source_file = item.get("source_file")
+            if isinstance(source_file, str) and source_file:
+                item_evidence["source_file"] = source_file
+            if isinstance(scenario, str) and scenario in repair_contexts:
+                item_evidence["repair_context"] = repair_contexts[scenario]
+            evidence[scenario] = item_evidence
+    return evidence
+
+
+def _expected_tests_by_suite(
+    cases: list[dict[str, Any]],
+    source_evidence: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for case in cases:
+        scenario_id = str(case["scenario_id"])
+        suite = _suite_for_case(case)
+        source_test = source_evidence.get(scenario_id, {}).get("source_test", scenario_id)
+        tests = result.setdefault(suite, [])
+        # When same source_test maps to multiple scenarios (e.g. test_fdb_tsl_clean and test_fdb_tsl_clean__2),
+        # include each scenario_id in expected_tests list instead of deduplicating by source_test.
+        # This allows parse_runner_test_results to match multiple Running: lines to different scenario_ids.
+        tests.append(scenario_id)
+    return result
+
+
+def _handoff_for_diagnosis(diagnosis: str) -> str:
+    if diagnosis in {"c_model_signature_gap", "c_cross_harness_not_supported", "c_cross_result_parse_failed"}:
+        return "c-analyzer"
+    if diagnosis in {
+        "rust_staticlib_build_failed",
+        "c_abi_layout_mismatch",
+        "c_runner_link_failed",
+        "c_runner_runtime_failed",
+        "c_runner_timeout",
+        "c_test_case_failed",
+        "rust_implementation_failed_c_baseline",
+    }:
+        return "rust-implementer"
+    return "none"
+
+
+def _suite_result_rows(
+    cases: list[dict[str, Any]],
+    suite_results: dict[str, tuple[str, str]],
+    suite_test_results: dict[str, dict[str, Any]],
+    suite_phases: dict[str, str],
+    suite_diagnoses: dict[str, str],
+    source_evidence: dict[str, dict[str, Any]],
+    c_cross: Path,
+    root: Path,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for case in cases:
+        scenario_id = str(case["scenario_id"])
+        suite = _suite_for_case(case)
+        status, reason = suite_results.get(
+            suite,
+            ("not_supported", f"no original C runner is available for suite {suite}"),
+        )
+        log = c_cross / f"{scenario_id}.log"
+        phase = suite_phases.get(suite, "full")
+        diagnosis = suite_diagnoses.get(suite)
+        evidence = source_evidence.get(scenario_id, {})
+        source_test = evidence.get("source_test", scenario_id)
+        source_runner = evidence.get("source_runner", f"{suite}_runner")
+        parsed = suite_test_results.get(suite)
+        if phase == "full" and parsed is not None:
+            if scenario_id in parsed.get("passed", []):
+                status = "pass"
+                diagnosis = "rust_implementation_matches_c_baseline_for_scenario"
+                reason = f"{source_test} passed in original C runner"
+            elif scenario_id in parsed.get("failed", []):
+                status = "fail"
+                diagnosis = "c_test_case_failed"
+                reason = str(parsed.get("failures", {}).get(scenario_id) or f"{source_test} failed")
+            elif scenario_id in parsed.get("timed_out", []):
+                status = "not_run"
+                diagnosis = "c_runner_timeout"
+                reason = f"{source_test} was running when {suite} runner timed out"
+            elif scenario_id in parsed.get("not_run", []):
+                status = "not_run"
+                if parsed.get("exit_code") == -124:
+                    diagnosis = "c_runner_timeout"
+                    reason = f"{source_test} was not run because {suite} runner timed out"
+                else:
+                    diagnosis = "c_runner_runtime_failed"
+                    reason = f"{source_test} was not run before the runner exited"
+            else:
+                status = "unresolved"
+                diagnosis = "c_cross_result_parse_failed"
+                reason = f"no parsed result for expected scenario {scenario_id}"
+        if not diagnosis:
+            if status == "pass":
+                diagnosis = "rust_implementation_matches_c_baseline_for_scenario"
+            elif status == "fail":
+                diagnosis = "rust_implementation_failed_c_baseline"
+            else:
+                diagnosis = "c_cross_harness_not_supported"
+        repair_context = evidence.get("repair_context")
+        log_text = f"suite={suite}\nsource_test={source_test}\nstatus={status}\nreason={reason}\n"
+        if isinstance(repair_context, dict):
+            log_text += "repair_context=" + json.dumps(repair_context, ensure_ascii=False, sort_keys=True) + "\n"
+        _write(log, log_text)
+        row = {
+                "scenario_id": scenario_id,
+                "suite": suite,
+                "phase": phase,
+                "failure_layer": (
+                    "assertion" if diagnosis == "c_test_case_failed"
+                    else "timeout" if diagnosis == "c_runner_timeout"
+                    else "protocol" if diagnosis == "c_cross_result_parse_failed"
+                    else phase
+                ),
+                "source_runner": source_runner,
+                "source_test": source_test,
+                "c_impl_c_test": "baseline",
+                "rust_impl_c_test": status,
+                "c_impl_rust_test": "not_run",
+                "rust_impl_rust_test": "pending",
+                "diagnosis": diagnosis,
+                "reason": reason,
+                "log": _relative_log_path(log, root),
+                "handoff": _handoff_for_diagnosis(diagnosis),
+            }
+        if isinstance(repair_context, dict):
+            row["repair_context"] = repair_context
+        rows.append(row)
+        if isinstance(case.get("case_id"), str) and case["case_id"]:
+            rows[-1]["scorer_case_id"] = case["case_id"]
+    return rows
+
+
+def _verification_results(scenarios: list[dict[str, Any]]) -> tuple[str, str]:
+    outcomes = [str(item.get("rust_impl_c_test") or "unresolved") for item in scenarios]
+    if outcomes and all(value == "pass" for value in outcomes):
+        return "PASS", "pass"
+    if any(value in {"unresolved", "parse_failed"} for value in outcomes):
+        return "CONTINUE_WITH_FAILURES", "unresolved"
+    if any(value == "pass" for value in outcomes):
+        return "CONTINUE_WITH_FAILURES", "partial"
+    return "CONTINUE_WITH_FAILURES", "failed"
+
+
+def build_matrix(
+    root: Path,
+    out: Path,
+    project_name: str = "flashDB_rust",
+    mode: str = "full",
+    selected_suites: set[str] | None = None,
+    attempt_kind: str = "checkpoint",
+    trigger: str = "manual",
+    changed_files: list[str] | None = None,
+) -> dict[str, Any]:
+    if mode not in {"build", "layout", "link", "full"}:
+        raise ValueError(f"unsupported c-cross mode: {mode}")
+    trace = out
+    c_cross = trace / "c-cross"
+    c_cross.mkdir(parents=True, exist_ok=True)
+    # Deferred convergence is no longer part of the C-CROSS contract. Remove a
+    # stale artifact from older workbench runs so it cannot be mistaken for
+    # current evidence.
+    (c_cross / "deferred.jsonl").unlink(missing_ok=True)
+    (trace / "ffi_manifest.json").unlink(missing_ok=True)
+
+    test_model = load_json(trace / "c_test_model.json")
+    malformed = []
+    valid_cases: list[dict[str, Any]] = []
+    raw_invocations = test_model.get("registered_test_invocations")
+    scorer_cases = test_model.get("scorer_standard_cases")
+    scorer_case_by_scenario = {
+        item.get("scenario_id"): item.get("case_id")
+        for item in scorer_cases
+        if isinstance(item, dict)
+        and isinstance(item.get("scenario_id"), str)
+        and isinstance(item.get("case_id"), str)
+    } if isinstance(scorer_cases, list) else {}
+    if isinstance(raw_invocations, list) and raw_invocations:
+        legacy_occurrences: dict[tuple[str, str], int] = {}
+        for index, invocation in enumerate(raw_invocations):
+            case = dict(invocation) if isinstance(invocation, dict) else invocation
+            if isinstance(case, dict):
+                scenarios = case.get("scenarios")
+                if not isinstance(case.get("scenario_id"), str) and isinstance(scenarios, list) and len(scenarios) == 1 and isinstance(scenarios[0], str):
+                    case["scenario_id"] = scenarios[0]
+                if not isinstance(case.get("source_file"), str) and isinstance(case.get("runner"), str):
+                    case["source_file"] = case["runner"]
+                if not isinstance(case.get("runner_order"), int):
+                    case["runner_order"] = case.get("order", index + 1)
+                key = (str(case.get("runner") or ""), str(case.get("test_function") or ""))
+                legacy_occurrences[key] = legacy_occurrences.get(key, 0) + 1
+                if not isinstance(case.get("invocation_index"), int):
+                    case["invocation_index"] = legacy_occurrences[key]
+                if not isinstance(case.get("source_line"), int):
+                    case["source_line"] = case["runner_order"]
+            if (
+                not isinstance(case, dict)
+                or not isinstance(case.get("suite"), str)
+                or not case.get("suite")
+                or not isinstance(case.get("runner"), str)
+                or not case.get("runner")
+                or not isinstance(case.get("test_function"), str)
+                or not case.get("test_function")
+                or not isinstance(case.get("scenario_id"), str)
+                or not case.get("scenario_id")
+                or not isinstance(case.get("source_file"), str)
+                or not case.get("source_file")
+            ):
+                malformed.append(_malformed_invocation_row(index, invocation, c_cross, root))
+                continue
+            scorer_case_id = scorer_case_by_scenario.get(case["scenario_id"])
+            if isinstance(scorer_case_id, str):
+                case["case_id"] = scorer_case_id
+            valid_cases.append(case)
+    else:
+        raw_cases = scorer_cases
+        if not isinstance(raw_cases, list):
+            raise ValueError("c_test_model.json registered_test_invocations must be a non-empty list")
+        for index, case in enumerate(raw_cases):
+            if (
+                not isinstance(case, dict)
+                or not isinstance(case.get("scenario_id"), str)
+                or not isinstance(case.get("case_id"), str)
+                or not isinstance(case.get("suite"), str)
+                or not case.get("suite")
+            ):
+                malformed.append(_malformed_row(index, case, c_cross, root))
+            else:
+                valid_cases.append(case)
+
+    available_suites = {_suite_for_case(case) for case in valid_cases}
+    if selected_suites is not None:
+        unknown_suites = sorted(selected_suites - available_suites)
+        if unknown_suites:
+            raise ValueError("unknown requested C-cross suites: " + ", ".join(unknown_suites))
+        valid_cases = [case for case in valid_cases if _suite_for_case(case) in selected_suites]
+
+    enabled_cases = [case for case in valid_cases if case.get("c_cross", {}).get("enabled", True)]
+    not_enabled_cases = [case for case in valid_cases if not case.get("c_cross", {}).get("enabled", True)]
+    not_enabled_rows: list[dict[str, Any]] = []
+    for case in not_enabled_cases:
+        c_cross_info = case.get("c_cross", {})
+        scenario_id = str(case["scenario_id"])
+        log = c_cross / f"{scenario_id}.log"
+        reason = c_cross_info.get("reason", "c_cross_disabled_by_design")
+        _write(log, f"scenario_id={scenario_id}\nstatus=not_supported\nreason={reason}\nc_cross.enabled=False\n")
+        not_enabled_rows.append({
+            "scenario_id": scenario_id,
+            "scorer_case_id": str(case["case_id"]),
+            "suite": _suite_for_case(case),
+            "phase": "full",
+            "failure_layer": "full",
+            "source_runner": f"{_suite_for_case(case)}_runner",
+            "source_test": scenario_id,
+            "c_impl_c_test": "baseline",
+            "rust_impl_c_test": "not_supported",
+            "c_impl_rust_test": "not_run",
+            "rust_impl_rust_test": "pending",
+            "diagnosis": "c_cross_harness_not_supported",
+            "reason": reason,
+            "log": _relative_log_path(log, root),
+            "handoff": "c-analyzer",
+        })
+
+    compile_log: list[str] = []
+    test_log: list[str] = []
+    suite_results: dict[str, tuple[str, str]] = {}
+    suite_test_results: dict[str, dict[str, Any]] = {}
+    suite_phases: dict[str, str] = {}
+    suite_diagnoses: dict[str, str] = {}
+    diagnostics: list[dict[str, Any]] = []
+    source_evidence = _source_evidence_by_scenario(test_model)
+    expected_tests_by_suite = _expected_tests_by_suite(enabled_cases, source_evidence)
+    c_root = _find_c_project_root(root, trace)
+    project = (root / project_name).resolve()
+    suites = sorted({_suite_for_case(case) for case in enabled_cases})
+
+    if c_root is None:
+        reason = "FlashDB C project root not found"
+        compile_log.append(reason + "\n")
+        _write_json(c_cross / "build-check.json", {"phase": "build", "status": "not_supported", "reason": reason})
+        _write_json(c_cross / "layout-check.json", {"phase": "layout", "status": "not_run", "reason": reason})
+        _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+        for suite in suites:
+            suite_results[suite] = ("not_supported", reason)
+            suite_phases[suite] = "build"
+            suite_diagnoses[suite] = "c_cross_harness_not_supported"
+    elif not project.exists():
+        reason = f"Rust project not found: {project}"
+        compile_log.append(reason + "\n")
+        _write_json(c_cross / "build-check.json", {"phase": "build", "status": "fail", "reason": reason})
+        _write_json(c_cross / "layout-check.json", {"phase": "layout", "status": "not_run", "reason": reason})
+        _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+        for suite in suites:
+            suite_results[suite] = ("fail", reason)
+            suite_phases[suite] = "build"
+            suite_diagnoses[suite] = "rust_staticlib_build_failed"
+    else:
+        rust_ok, rust_output = _build_rust_staticlib(project)
+        compile_log.append(rust_output)
+        _write_json(
+            c_cross / "build-check.json",
+            {
+                "phase": "build",
+                "status": "pass" if rust_ok else "fail",
+                "command": "cargo build --release",
+                "log": _relative_log_path(c_cross / "cross-compile.log", root),
+                "staticlib": _relative_log_path(_rust_staticlib(project), root) if rust_ok else None,
+            },
+        )
+        if not rust_ok:
+            reason = "Rust staticlib build failed"
+            _write_json(c_cross / "layout-check.json", {"phase": "layout", "status": "not_run", "reason": reason})
+            _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+            for suite in suites:
+                suite_results[suite] = ("fail", reason)
+                suite_phases[suite] = "build"
+                suite_diagnoses[suite] = "rust_staticlib_build_failed"
+        elif mode == "build":
+            reason = "stopped after build mode"
+            _write_json(c_cross / "layout-check.json", {"phase": "layout", "status": "not_run", "reason": reason})
+            _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+            for suite in suites:
+                suite_results[suite] = ("pending", reason)
+                suite_phases[suite] = "build"
+                suite_diagnoses[suite] = "blocked_before_rust_test_migration"
+        else:
+            rust_lib = _rust_staticlib(project)
+            layout_ok, layout_output = _run_layout_checker(c_root, c_cross, rust_lib, trace)
+            compile_log.append(layout_output)
+            _write_json(
+                c_cross / "layout-check.json",
+                {
+                    "phase": "layout",
+                    "status": "pass" if layout_ok else "fail",
+                    "diagnosis": "pass" if layout_ok else "c_abi_layout_mismatch",
+                    "log": _relative_log_path(c_cross / "layout-check.log", root),
+                },
+            )
+            if not layout_ok:
+                reason = "layout mismatch or layout checker failure; see logs/trace/c-cross/layout-check.log"
+                _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+                for suite in suites:
+                    suite_results[suite] = ("fail", reason)
+                    suite_phases[suite] = "layout"
+                    suite_diagnoses[suite] = "c_abi_layout_mismatch"
+                for case in valid_cases:
+                    diagnostics.append(
+                        {
+                            "phase": "layout",
+                            "diagnosis": "c_abi_layout_mismatch",
+                            "scenario_id": str(case["scenario_id"]),
+                            "scorer_case_id": str(case["case_id"]),
+                            "suite": _suite_for_case(case),
+                            "handoff": "rust-implementer",
+                            "reason": reason,
+                            "log": _relative_log_path(c_cross / "layout-check.log", root),
+                        }
+                    )
+            elif mode == "layout":
+                reason = "stopped after layout mode"
+                _write_json(c_cross / "link-check.json", {"phase": "link", "status": "not_run", "suites": {suite: "not_run" for suite in suites}, "reason": reason})
+                for suite in suites:
+                    suite_results[suite] = ("pending", reason)
+                    suite_phases[suite] = "layout"
+                    suite_diagnoses[suite] = "blocked_before_rust_test_migration"
+            else:
+                link_suites: dict[str, str] = {}
+                link_reasons: dict[str, str] = {}
+                compiled_binaries: dict[str, Path] = {}
+                for suite in suites:
+                    suite_cases = [case for case in enabled_cases if _suite_for_case(case) == suite]
+                    ok, binary, output = _compile_suite_runner(suite, c_root, c_cross, rust_lib, suite_cases)
+                    compile_log.append(output)
+                    if not ok or binary is None:
+                        reason = f"{suite} original C runner failed to compile"
+                        suite_results[suite] = ("fail", reason)
+                        suite_phases[suite] = "link"
+                        suite_diagnoses[suite] = "c_runner_link_failed"
+                        link_suites[suite] = "fail"
+                        link_reasons[suite] = reason
+                        diagnostics.append(
+                            {
+                                "phase": "link",
+                                "diagnosis": "c_runner_link_failed",
+                                "suite": suite,
+                                "handoff": "rust-implementer",
+                                "reason": reason,
+                                "log": _relative_log_path(c_cross / "cross-compile.log", root),
+                            }
+                        )
+                        continue
+                    compiled_binaries[suite] = binary
+                    link_suites[suite] = "pass"
+                _write_json(
+                    c_cross / "link-check.json",
+                    {
+                        "phase": "link",
+                        "status": "pass" if link_suites and all(value == "pass" for value in link_suites.values()) else "fail",
+                        "suites": link_suites,
+                        "reasons": link_reasons,
+                        "log": _relative_log_path(c_cross / "cross-compile.log", root),
+                    },
+                )
+                if mode == "link":
+                    test_log.append("No C runner executed in link mode.\n")
+                    for suite in suites:
+                        if suite not in suite_results:
+                            suite_results[suite] = ("pending", "stopped after link mode")
+                            suite_phases[suite] = "link"
+                            suite_diagnoses[suite] = "blocked_before_rust_test_migration"
+                else:
+                    for suite, binary in compiled_binaries.items():
+                        run_status, run_output, run_reason = _run_suite_runner(suite, binary, c_cross)
+                        normalized_status = "timeout" if run_status == "timeout" else "pass" if run_status is True else "fail"
+                        test_log.append(run_output)
+                        suite_results[suite] = (
+                            normalized_status,
+                            run_reason,
+                        )
+                        suite_test_results[suite] = parse_runner_test_results(
+                            run_output,
+                            expected_tests_by_suite.get(suite, []),
+                            0 if normalized_status == "pass" else -124 if normalized_status == "timeout" else 1,
+                        )
+                        suite_phases[suite] = "full"
+                        suite_diagnoses[suite] = (
+                            "rust_implementation_matches_c_baseline_for_scenario"
+                            if normalized_status == "pass"
+                            else "c_runner_timeout" if normalized_status == "timeout" else "c_runner_runtime_failed"
+                        )
+                        if normalized_status != "pass":
+                            diagnostics.append(
+                                {
+                                    "phase": "full",
+                                    "diagnosis": suite_diagnoses[suite],
+                                    "suite": suite,
+                                    "handoff": "rust-implementer",
+                                    "reason": run_reason,
+                                    "log": _relative_log_path(c_cross / f"{suite}_runner.log", root),
+                                }
+                            )
+                    for suite in suites:
+                        suite_phases.setdefault(suite, "link")
+
+    _write(c_cross / "cross-compile.log", "\n".join(compile_log))
+    _write(c_cross / "cross-test.log", "\n".join(test_log) if test_log else "No C runner executed.\n")
+
+    scenarios = malformed + not_enabled_rows + _suite_result_rows(
+        enabled_cases,
+        suite_results,
+        suite_test_results,
+        suite_phases,
+        suite_diagnoses,
+        source_evidence,
+        c_cross,
+        root,
+    )
+    _write_jsonl(c_cross / "case-results.jsonl", scenarios)
+    # Add per-scenario diagnostics with the semantic context needed by a
+    # targeted repair.  Suite-level diagnostics alone cannot distinguish an
+    # assertion from a timeout or an unstarted scenario.
+    for scenario_row in scenarios:
+        if scenario_row.get("rust_impl_c_test") in {"fail", "not_run", "unresolved"}:
+            diagnostic = {
+                "phase": scenario_row.get("phase", "full"),
+                "diagnosis": scenario_row.get("diagnosis"),
+                "scenario_id": scenario_row.get("scenario_id"),
+                "scorer_case_id": scenario_row.get("scorer_case_id"),
+                "suite": scenario_row.get("suite"),
+                "handoff": scenario_row.get("handoff"),
+                "reason": scenario_row.get("reason"),
+                "log": scenario_row.get("log"),
+                "failure_layer": scenario_row.get("failure_layer"),
+            }
+            if isinstance(scenario_row.get("repair_context"), dict):
+                diagnostic["repair_context"] = scenario_row["repair_context"]
+            diagnostics.append(diagnostic)
+    _write_jsonl(c_cross / "diagnostics.jsonl", diagnostics)
+    workbench_issues = [
+        {
+            "stage": "VERIFY_RUST_WITH_C_TESTS",
+            "type": "toolchain_defect",
+            "owner": "controller",
+            "tool": "c_cross_validate.py",
+            "reason": row.get("reason"),
+            "evidence": row.get("log"),
+            "affected_scenarios": [row.get("scenario_id")],
+            "status": "unresolved",
+        }
+        for row in scenarios
+        if row.get("rust_impl_c_test") == "unresolved"
+    ]
+    _write_jsonl(c_cross / "workbench-issues.jsonl", workbench_issues)
+    summary = Counter(item["rust_impl_c_test"] for item in scenarios)
+    stage_result, verification_result = _verification_results(scenarios)
+    return {
+        "stage": "VERIFY_RUST_WITH_C_TESTS",
+        "policy": "strict",
+        "mode": mode,
+        "scope": "selected" if selected_suites is not None else "all",
+        "selected_suites": sorted(selected_suites if selected_suites is not None else available_suites),
+        "attempt_kind": attempt_kind,
+        "trigger": trigger,
+        "changed_files": list(changed_files or []),
+        "total_scenarios": len(scenarios),
+        "summary": {"rust_impl_c_test": dict(sorted(summary.items()))},
+        "stage_result": stage_result,
+        "verification_result": verification_result,
+        "scenarios": scenarios,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run FlashDB original C tests against the Rust C ABI staticlib.")
+    parser.add_argument("--root", default=".", help="Workbench root directory.")
+    parser.add_argument("--project", default="flashDB_rust", help="Rust project path, relative to root.")
+    parser.add_argument("--out", default="logs/trace", help="Trace output directory, relative to root.")
+    parser.add_argument("--mode", choices=["build", "layout", "link", "full"], default="full", help="C-cross checkpoint depth.")
+    parser.add_argument("--suite", action="append", dest="suites", help="Run only a suite discovered from the current C test model. Repeatable.")
+    parser.add_argument(
+        "--attempt-kind",
+        choices=["checkpoint", "repair", "confirmation", "final"],
+        default="checkpoint",
+        help="Classify this execution for convergence and final-gate policy.",
+    )
+    parser.add_argument("--trigger", default="manual", help="Machine-stable reason for this execution.")
+    parser.add_argument("--changed-file", action="append", default=[], help="File changed before a repair execution. Repeatable.")
+    args = parser.parse_args(argv)
+
+    root = Path(args.root).resolve()
+    out = (root / args.out).resolve()
+    matrix_path = out / "validation-matrix.json"
+    previous_matrix = load_json(matrix_path) if matrix_path.exists() else None
+    matrix = build_matrix(
+        root,
+        out,
+        project_name=args.project,
+        mode=args.mode,
+        selected_suites=set(args.suites) if args.suites else None,
+        attempt_kind=args.attempt_kind,
+        trigger=args.trigger,
+        changed_files=args.changed_file,
+    )
+    execution_id = f"{time.time_ns()}-{_safe_c_suffix(args.attempt_kind)}-{_safe_c_suffix(args.trigger)}"
+    matrix["execution_id"] = execution_id
+    attempt = record_attempt(
+        out / "c-cross",
+        previous_matrix,
+        matrix,
+        attempt_kind=args.attempt_kind,
+        trigger=args.trigger,
+        changed_files=args.changed_file,
+    )
+    matrix["attempt"] = {
+        "attempt_id": attempt["attempt_id"],
+        "number": attempt["attempt"],
+        "result": attempt["result"],
+    }
+    _write_json(out / "c-cross" / "checkpoints" / f"{execution_id}.json", matrix)
+    _write_json(matrix_path, matrix)
+    counts = matrix["summary"]["rust_impl_c_test"]
+    print("VERIFY_RUST_WITH_C_TESTS: MATRIX_WRITTEN")
+    print(f"mapped_scenarios={matrix['total_scenarios']}")
+    print(f"policy={matrix['policy']}")
+    print("rust_impl_c_test=" + ",".join(f"{key}:{value}" for key, value in sorted(counts.items())))
+    return 1 if counts.get("fail") or counts.get("not_supported") else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

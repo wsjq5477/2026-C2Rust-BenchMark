@@ -1,0 +1,7 @@
+{
+  "rust_files": 14,
+  "total_lines": 2109,
+  "unsafe_lines": 65,
+  "unsafe_occurrences": 65,
+  "unsafe_ratio": 0.030820293978188716
+}

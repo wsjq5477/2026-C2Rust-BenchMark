@@ -1,0 +1,72 @@
+{
+  "skill": "c-to-rust-scoring",
+  "project": "FlashDB GPT conversion reference",
+  "rust_project_path": "/home/nv_test/777/flashdb2rust/02_02 gpt/flashDB_rust",
+  "c_project_path": "/home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB",
+  "c_tests_path": "/home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests",
+  "project_type": "manual_rust",
+  "test_strategy": "A",
+  "build": {
+    "success": true,
+    "warnings_count": 1,
+    "artifact_type": "staticlib",
+    "artifact_path": "/home/nv_test/777/flashdb2rust/02_02 gpt/flashDB_rust/target/release/libflashdb_rust.a"
+  },
+  "case_source": "logs/trace/validation-matrix.json final full C-cross",
+  "results": [
+    {"case_id": "1", "name": "test_fdb_kvdb_init", "passed": true},
+    {"case_id": "2", "name": "test_fdb_kvdb_init_check", "passed": true},
+    {"case_id": "3", "name": "test_fdb_create_kv_blob", "passed": true},
+    {"case_id": "4", "name": "test_fdb_change_kv_blob", "passed": true},
+    {"case_id": "5", "name": "test_fdb_del_kv_blob", "passed": true},
+    {"case_id": "6", "name": "test_fdb_create_kv", "passed": true},
+    {"case_id": "7", "name": "test_fdb_change_kv", "passed": true},
+    {"case_id": "8", "name": "test_fdb_del_kv", "passed": true},
+    {"case_id": "9", "name": "test_fdb_gc", "passed": true},
+    {"case_id": "10", "name": "test_fdb_gc2", "passed": true},
+    {"case_id": "11", "name": "test_fdb_scale_up", "passed": true},
+    {"case_id": "12", "name": "test_fdb_kvdb_set_default", "passed": true},
+    {"case_id": "13", "name": "test_fdb_kvdb_deinit", "passed": true},
+    {"case_id": "14", "name": "test_fdb_tsdb_init_ex", "passed": true},
+    {"case_id": "15", "name": "test_fdb_tsl_clean", "passed": true},
+    {"case_id": "16", "name": "test_fdb_tsl_append", "passed": true},
+    {"case_id": "17", "name": "test_fdb_tsl_iter", "passed": true},
+    {"case_id": "18", "name": "test_fdb_tsl_iter_by_time", "passed": true},
+    {"case_id": "19", "name": "test_fdb_tsl_query_count", "passed": true},
+    {"case_id": "20", "name": "test_fdb_tsl_set_status", "passed": true},
+    {"case_id": "21", "name": "test_fdb_tsl_clean__2", "passed": true},
+    {"case_id": "22", "name": "test_fdb_tsl_iter_by_time_1", "passed": true},
+    {"case_id": "23", "name": "test_fdb_tsdb_deinit", "passed": true},
+    {"case_id": "24", "name": "test_fdb_github_issue_249", "passed": true}
+  ],
+  "test_case_consistency": {
+    "consistent": true,
+    "total_c_dynamic": 24,
+    "rust_matched_count": 24,
+    "rust_file_count": 3,
+    "logic_mismatch": [],
+    "evidence": "logs/trace/test-consistency.json"
+  },
+  "rust_test": {
+    "success": true,
+    "passed": 26,
+    "failed": 0,
+    "warnings_count": 1
+  },
+  "benchmark": {
+    "status": "not_measured",
+    "reason": "C benchmark requires writing generated data under the platform C input tree; this scoring run preserves the no-modification boundary and no isolated Rust-equivalent benchmark is supplied.",
+    "perf_score": null
+  },
+  "summary": {
+    "total": 24,
+    "passed": 24,
+    "failed": 0,
+    "pass_rate": 1.0,
+    "baseline_score": 60.0,
+    "baseline_score_max": 60.0,
+    "unsafe_ratio": 0.030820293978188716,
+    "final_c_cross": "24/24 pass",
+    "benchmark": "性能基线未测：为避免向平台 C 输入目录写入基准数据，且项目未提供隔离的 Rust 等价 benchmark。"
+  }
+}

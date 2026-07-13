@@ -1,0 +1,307 @@
+{
+  "failed_scenarios": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed_scenarios": 24,
+  "scenarios": [
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_kvdb_init",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_kvdb_init_check",
+          "validated_obligation": "verify_addr_alignment"
+        }
+      ],
+      "scenario_id": "test_fdb_kvdb_init_check",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_create_kv_blob",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_change_kv_blob",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_del_kv_blob",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_create_kv",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_change_kv",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_del_kv",
+          "validated_obligation": "verify_addr_alignment"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_del_kv",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "scenario_id": "test_fdb_del_kv",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc",
+          "validated_obligation": "data_shape:multi_kv_count:4"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc",
+          "validated_obligation": "scenario:multi_kv_gc_pressure"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc",
+          "validated_obligation": "verify_addr_alignment"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "scenario_id": "test_fdb_gc",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "data_shape:cross_sector_blob"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "data_shape:multi_kv_count:6"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "scenario:large_blob_persistence"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "scenario:multi_kv_gc_pressure"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "verify_addr_alignment"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_gc2",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "scenario_id": "test_fdb_gc2",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_scale_up",
+          "validated_obligation": "data_shape:multi_kv_count:4"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_scale_up",
+          "validated_obligation": "scenario:multi_kv_gc_pressure"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "kvdb_test_fdb_scale_up",
+          "validated_obligation": "verify_addr_alignment"
+        }
+      ],
+      "scenario_id": "test_fdb_scale_up",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_kvdb_set_default",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_kvdb_deinit",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_tsdb_init_ex",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_clean",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "scenario_id": "test_fdb_tsl_clean",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_tsl_append",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "scenario_id": "test_fdb_tsl_iter",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time",
+          "validated_obligation": "scenario:iter_by_time"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "scenario_id": "test_fdb_tsl_iter_by_time",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_query_count",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "scenario_id": "test_fdb_tsl_query_count",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_set_status",
+          "validated_obligation": "scenario:iter_by_time"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_set_status",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "scenario_id": "test_fdb_tsl_set_status",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_clean__2",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "scenario_id": "test_fdb_tsl_clean__2",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time_1",
+          "validated_obligation": "data_shape:sector_bound_queries:7"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time_1",
+          "validated_obligation": "scenario:cross_sector_tsl"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time_1",
+          "validated_obligation": "scenario:iter_by_time"
+        },
+        {
+          "evidence": "direct integration assertion",
+          "rust_test": "tsdb_test_fdb_tsl_iter_by_time_1",
+          "validated_obligation": "verify_persistence_after_reboot"
+        }
+      ],
+      "scenario_id": "test_fdb_tsl_iter_by_time_1",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_tsdb_deinit",
+      "status": "pass"
+    },
+    {
+      "issue_codes": [],
+      "obligation_evidence": [],
+      "scenario_id": "test_fdb_github_issue_249",
+      "status": "pass"
+    }
+  ],
+  "stage": "TEST_CONSISTENCY_CHECK",
+  "status": "pass",
+  "total_scenarios": 24
+}

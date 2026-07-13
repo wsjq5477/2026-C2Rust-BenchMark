@@ -1,0 +1,212 @@
+$ (cd /home/nv_test/777/flashdb2rust/02_02 gpt/flashDB_rust && )cargo build --release
+    Finished `release` profile [optimized] target(s) in 0.00s
+
+staticlib=/home/nv_test/777/flashdb2rust/02_02 gpt/flashDB_rust/target/release/libflashdb_rust.a
+
+$ /usr/bin/cc -std=c11 -O0 -g3 -Wall -Wno-format -I /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/include -I /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests -I /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/inc /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/layout_checker.c /home/nv_test/777/flashdb2rust/02_02 gpt/flashDB_rust/target/release/libflashdb_rust.a -o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/layout_checker -lpthread -ldl -lm
+
+$ (cd /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross && )/home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/layout_checker
+[LAYOUT CHECK] start
+[LAYOUT OK] struct=fdb_blob sizeof=32 alignof=8
+[LAYOUT OK] struct=fdb_blob field=buf offset=0
+[LAYOUT OK] struct=fdb_blob field=size offset=8
+[LAYOUT OK] struct=fdb_blob field=saved offset=16
+[LAYOUT OK] struct=fdb_db sizeof=88 alignof=8
+[LAYOUT OK] struct=fdb_db field=name offset=0
+[LAYOUT OK] struct=fdb_db field=type offset=8
+[LAYOUT OK] struct=fdb_db field=storage offset=16
+[LAYOUT OK] struct=fdb_db field=sec_size offset=24
+[LAYOUT OK] struct=fdb_db field=max_size offset=28
+[LAYOUT OK] struct=fdb_db field=oldest_addr offset=32
+[LAYOUT OK] struct=fdb_db field=init_ok offset=36
+[LAYOUT OK] struct=fdb_db field=file_mode offset=37
+[LAYOUT OK] struct=fdb_db field=not_formatable offset=38
+[LAYOUT OK] struct=fdb_db field=cur_file_sec offset=40
+[LAYOUT OK] struct=fdb_db field=cur_file offset=48
+[LAYOUT OK] struct=fdb_db field=cur_sec offset=56
+[LAYOUT OK] struct=fdb_db field=lock offset=64
+[LAYOUT OK] struct=fdb_db field=unlock offset=72
+[LAYOUT OK] struct=fdb_db field=user_data offset=80
+[LAYOUT OK] struct=fdb_default_kv sizeof=16 alignof=8
+[LAYOUT OK] struct=fdb_default_kv field=kvs offset=0
+[LAYOUT OK] struct=fdb_default_kv field=num offset=8
+[LAYOUT OK] struct=fdb_default_kv_node sizeof=24 alignof=8
+[LAYOUT OK] struct=fdb_default_kv_node field=key offset=0
+[LAYOUT OK] struct=fdb_default_kv_node field=value offset=8
+[LAYOUT OK] struct=fdb_default_kv_node field=value_len offset=16
+[LAYOUT OK] struct=fdb_kv sizeof=92 alignof=4
+[LAYOUT OK] struct=fdb_kv field=status offset=0
+[LAYOUT OK] struct=fdb_kv field=crc_is_ok offset=4
+[LAYOUT OK] struct=fdb_kv field=name_len offset=5
+[LAYOUT OK] struct=fdb_kv field=magic offset=8
+[LAYOUT OK] struct=fdb_kv field=len offset=12
+[LAYOUT OK] struct=fdb_kv field=value_len offset=16
+[LAYOUT OK] struct=fdb_kv field=name offset=20
+[LAYOUT OK] struct=fdb_kv field=addr offset=84
+[LAYOUT OK] struct=fdb_kv_iterator sizeof=120 alignof=8
+[LAYOUT OK] struct=fdb_kv_iterator field=curr_kv offset=0
+[LAYOUT OK] struct=fdb_kv_iterator field=iterated_cnt offset=92
+[LAYOUT OK] struct=fdb_kv_iterator field=iterated_obj_bytes offset=96
+[LAYOUT OK] struct=fdb_kv_iterator field=iterated_value_bytes offset=104
+[LAYOUT OK] struct=fdb_kv_iterator field=sector_addr offset=112
+[LAYOUT OK] struct=fdb_kv_iterator field=traversed_len offset=116
+[LAYOUT OK] struct=fdb_kvdb sizeof=1088 alignof=8
+[LAYOUT OK] struct=fdb_kvdb field=parent offset=0
+[LAYOUT OK] struct=fdb_kvdb field=default_kvs offset=88
+[LAYOUT OK] struct=fdb_kvdb field=gc_request offset=104
+[LAYOUT OK] struct=fdb_kvdb field=in_recovery_check offset=105
+[LAYOUT OK] struct=fdb_kvdb field=cur_kv offset=108
+[LAYOUT OK] struct=fdb_kvdb field=cur_sector offset=200
+[LAYOUT OK] struct=fdb_kvdb field=last_is_complete_del offset=240
+[LAYOUT OK] struct=fdb_kvdb field=kv_cache_table offset=244
+[LAYOUT OK] struct=fdb_kvdb field=sector_cache_table offset=760
+[LAYOUT OK] struct=fdb_kvdb field=user_data offset=1080
+[LAYOUT OK] struct=fdb_tsdb sizeof=184 alignof=8
+[LAYOUT OK] struct=fdb_tsdb field=parent offset=0
+[LAYOUT OK] struct=fdb_tsdb field=cur_sec offset=88
+[LAYOUT OK] struct=fdb_tsdb field=last_time offset=144
+[LAYOUT OK] struct=fdb_tsdb field=get_time offset=152
+[LAYOUT OK] struct=fdb_tsdb field=max_len offset=160
+[LAYOUT OK] struct=fdb_tsdb field=rollover offset=168
+[LAYOUT OK] struct=fdb_tsdb field=user_data offset=176
+[LAYOUT OK] struct=fdb_tsl sizeof=20 alignof=4
+[LAYOUT OK] struct=fdb_tsl field=status offset=0
+[LAYOUT OK] struct=fdb_tsl field=time offset=4
+[LAYOUT OK] struct=fdb_tsl field=log_len offset=8
+[LAYOUT OK] struct=fdb_tsl field=addr offset=12
+[LAYOUT OK] struct=kv_cache_node sizeof=8 alignof=4
+[LAYOUT OK] struct=kv_cache_node field=name_crc offset=0
+[LAYOUT OK] struct=kv_cache_node field=active offset=2
+[LAYOUT OK] struct=kv_cache_node field=addr offset=4
+[LAYOUT OK] struct=kvdb_sec_info sizeof=40 alignof=8
+[LAYOUT OK] struct=kvdb_sec_info field=check_ok offset=0
+[LAYOUT OK] struct=kvdb_sec_info field=status offset=4
+[LAYOUT OK] struct=kvdb_sec_info field=addr offset=12
+[LAYOUT OK] struct=kvdb_sec_info field=magic offset=16
+[LAYOUT OK] struct=kvdb_sec_info field=combined offset=20
+[LAYOUT OK] struct=kvdb_sec_info field=remain offset=24
+[LAYOUT OK] struct=kvdb_sec_info field=empty_kv offset=32
+[LAYOUT OK] struct=tsdb_sec_info sizeof=56 alignof=8
+[LAYOUT OK] struct=tsdb_sec_info field=check_ok offset=0
+[LAYOUT OK] struct=tsdb_sec_info field=status offset=4
+[LAYOUT OK] struct=tsdb_sec_info field=addr offset=8
+[LAYOUT OK] struct=tsdb_sec_info field=magic offset=12
+[LAYOUT OK] struct=tsdb_sec_info field=start_time offset=16
+[LAYOUT OK] struct=tsdb_sec_info field=end_time offset=20
+[LAYOUT OK] struct=tsdb_sec_info field=end_idx offset=24
+[LAYOUT OK] struct=tsdb_sec_info field=end_info_stat offset=28
+[LAYOUT OK] struct=tsdb_sec_info field=remain offset=40
+[LAYOUT OK] struct=tsdb_sec_info field=empty_idx offset=48
+[LAYOUT OK] struct=tsdb_sec_info field=empty_data offset=52
+[LAYOUT CHECK] pass
+
+
+$ /usr/bin/cc -O0 -g3 -Wall -Wno-format -I /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/include -I /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests -I /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/inc -c /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests/fdb_kvdb_tc.c -o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/kvdb_main/0-fdb_kvdb_tc.o
+/home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests/fdb_kvdb_tc.c:951:13: warning: ‘testcase’ defined but not used [-Wunused-function]
+  951 | static void testcase(void)
+      |             ^~~~~~~~
+/home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests/fdb_kvdb_tc.c:940:12: warning: ‘utest_tc_cleanup’ defined but not used [-Wunused-function]
+  940 | static int utest_tc_cleanup(void)
+      |            ^~~~~~~~~~~~~~~~
+/home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests/fdb_kvdb_tc.c:934:12: warning: ‘utest_tc_init’ defined but not used [-Wunused-function]
+  934 | static int utest_tc_init(void)
+      |            ^~~~~~~~~~~~~
+
+$ /usr/bin/cc -O0 -g3 -Wall -Wno-format -I /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/include -I /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests -I /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/inc -c /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests/kvdb_main.c -o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/kvdb_main/1-kvdb_main.o
+
+$ /usr/bin/ld -r /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/kvdb_main/0-fdb_kvdb_tc.o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/kvdb_main/1-kvdb_main.o -o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/test-side-kvdb.o
+
+$ /usr/bin/nm -u /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/test-side-kvdb.o
+                 U __assert_fail
+                 U __stack_chk_fail
+                 U access
+                 U atoi
+                 U clock_gettime
+                 U closedir
+                 U fdb_blob_make
+                 U fdb_blob_read
+                 U fdb_kv_del
+                 U fdb_kv_get
+                 U fdb_kv_get_blob
+                 U fdb_kv_get_obj
+                 U fdb_kv_iterate
+                 U fdb_kv_iterator_init
+                 U fdb_kv_set
+                 U fdb_kv_set_blob
+                 U fdb_kv_set_default
+                 U fdb_kv_to_blob
+                 U fdb_kvdb_control
+                 U fdb_kvdb_deinit
+                 U fdb_kvdb_init
+                 U fprintf
+                 U free
+                 U malloc
+                 U memcmp
+                 U mkdir
+                 U opendir
+                 U printf
+                 U puts
+                 U readdir
+                 U rmdir
+                 U snprintf
+                 U stderr
+                 U strcmp
+                 U strlen
+                 U strncpy
+                 U unlink
+                 U usleep
+
+$ /usr/bin/cc -O0 -g3 -Wall -Wno-format /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/kvdb_main/0-fdb_kvdb_tc.o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/kvdb_main/1-kvdb_main.o /home/nv_test/777/flashdb2rust/02_02 gpt/flashDB_rust/target/release/libflashdb_rust.a -o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/kvdb_runner -lpthread -ldl -lm
+
+
+$ /usr/bin/cc -O0 -g3 -Wall -Wno-format -I /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/include -I /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests -I /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/inc -c /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests/fdb_tsdb_tc.c -o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/tsdb_main/0-fdb_tsdb_tc.o
+/home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests/fdb_tsdb_tc.c:498:13: warning: ‘testcase’ defined but not used [-Wunused-function]
+  498 | static void testcase(void)
+      |             ^~~~~~~~
+/home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests/fdb_tsdb_tc.c:233:12: warning: ‘utest_tc_cleanup’ defined but not used [-Wunused-function]
+  233 | static int utest_tc_cleanup(void)
+      |            ^~~~~~~~~~~~~~~~
+/home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests/fdb_tsdb_tc.c:225:12: warning: ‘utest_tc_init’ defined but not used [-Wunused-function]
+  225 | static int utest_tc_init(void)
+      |            ^~~~~~~~~~~~~
+
+$ /usr/bin/cc -O0 -g3 -Wall -Wno-format -I /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/include -I /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests -I /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/inc -c /home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB/tests/tsdb_main.c -o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/tsdb_main/1-tsdb_main.o
+
+$ /usr/bin/ld -r /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/tsdb_main/0-fdb_tsdb_tc.o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/tsdb_main/1-tsdb_main.o -o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/test-side-tsdb.o
+
+$ /usr/bin/nm -u /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/test-side-tsdb.o
+                 U __assert_fail
+                 U __stack_chk_fail
+                 U access
+                 U atoi
+                 U closedir
+                 U fdb_blob_make
+                 U fdb_blob_read
+                 U fdb_tsdb_control
+                 U fdb_tsdb_deinit
+                 U fdb_tsdb_init
+                 U fdb_tsl_append
+                 U fdb_tsl_clean
+                 U fdb_tsl_iter
+                 U fdb_tsl_iter_by_time
+                 U fdb_tsl_query_count
+                 U fdb_tsl_set_status
+                 U fdb_tsl_to_blob
+                 U fprintf
+                 U free
+                 U malloc
+                 U memset
+                 U mkdir
+                 U opendir
+                 U printf
+                 U puts
+                 U readdir
+                 U rmdir
+                 U snprintf
+                 U stderr
+                 U strcmp
+                 U strnlen
+                 U unlink
+
+$ /usr/bin/cc -O0 -g3 -Wall -Wno-format /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/tsdb_main/0-fdb_tsdb_tc.o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/runners/tsdb_main/1-tsdb_main.o /home/nv_test/777/flashdb2rust/02_02 gpt/flashDB_rust/target/release/libflashdb_rust.a -o /home/nv_test/777/flashdb2rust/02_02 gpt/logs/trace/c-cross/tsdb_runner -lpthread -ldl -lm
+

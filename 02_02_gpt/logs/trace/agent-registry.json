@@ -1,0 +1,8 @@
+{
+  "subagents": {
+    "c-analyzer": {"path": "work/skills/c-analyzer.md", "mode": "subagent", "stages": ["READ_C_PROJECT", "BUILD_C_MODEL", "DESIGN_RUST_API"]},
+    "rust-implementer": {"path": "work/skills/rust-implementer.md", "mode": "subagent", "stages": ["GENERATE_RUST_SCAFFOLD", "REWRITE_CORE_MODULES", "VERIFY_RUST_WITH_C_TESTS"]},
+    "test-migrator": {"path": "work/skills/test-migrator.md", "mode": "subagent", "stages": ["MIGRATE_TESTS"]},
+    "repairer": {"path": "work/skills/repairer.md", "mode": "subagent", "stages": ["BUILD_TEST_REPAIR"]}
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "log": "logs/trace/c-cross/cross-compile.log",
+  "phase": "link",
+  "reasons": {},
+  "status": "pass",
+  "suites": {
+    "kvdb": "pass",
+    "tsdb": "pass"
+  }
+}

@@ -1,0 +1,5 @@
+suite=tsdb
+source_test=test_fdb_tsl_append
+status=pass
+reason=test_fdb_tsl_append passed in original C runner
+repair_context={"assertion_details": [{"expression": "fdb_tsl_append(&test_tsdb, fdb_blob_make(&blob, logbuf, strnlen(logbuf, sizeof(logbuf)))) == FDB_NO_ERR", "macro": "test_assert_true", "targets": ["FDB_NO_ERR", "blob", "fdb_blob_make", "fdb_tsl_append", "logbuf", "strnlen", "test_tsdb"]}], "callback_paths": [], "data_shape": {"blob_multiplier": 0, "blob_write_count": 0, "kv_set_count": 0, "sector_bound_query_count": 0, "tsl_append_count": 0}, "public_api_calls": ["fdb_blob_make", "fdb_tsl_append"], "scenario_features": [], "semantic_markers": [], "semantic_obligations": ["append", "assertion_count", "assertion_intent", "calls:fdb_blob_make", "calls:fdb_tsl_append"]}

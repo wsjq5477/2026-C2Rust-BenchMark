@@ -1,0 +1,6 @@
+{
+  "diagnosis": "pass",
+  "log": "logs/trace/c-cross/layout-check.log",
+  "phase": "layout",
+  "status": "pass"
+}

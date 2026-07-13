@@ -1,0 +1,447 @@
+{
+  "subjective_score": {
+    "generality": {
+      "score": 14,
+      "max_score": 20,
+      "items": [
+        {
+          "name": "任务理解与 INSTRUCTION 解析",
+          "score": 3,
+          "max_score": 3,
+          "evidence": [
+            "INSTRUCTION.md 被完整读取并解析",
+            "orchestrator Agent 按 INSTRUCTION 中 10 阶段流程执行",
+            "workflow_state.json 记录完整阶段完成列表",
+            "01-09 阶段日志全部存在"
+          ],
+          "deductions": [],
+          "suggestions": []
+        },
+        {
+          "name": "C 工程结构发现能力",
+          "score": 3,
+          "max_score": 4,
+          "evidence": [
+            "scan_c_project.py 使用 rglob 动态扫描源文件/头文件/测试文件/构建文件",
+            "build_c_model.py 基于 manifest 解析 #include 关系、宏定义、struct/typedef/enum、函数签名",
+            "input_manifest.json 记录 5 核心源文件、7 头文件、6 测试文件、3 构建文件",
+            "c_api_model.json 含 51 公共符号"
+          ],
+          "deductions": [
+            "scan_c_project.py 硬编码预期子目录名 src 和 tests",
+            "build_c_model.py 模块分类使用关键词启发式而非通用依赖图分析",
+            "未生成可视化依赖图或模块依赖关系报告"
+          ],
+          "suggestions": [
+            "扫描脚本支持自定义子目录名或基于文件扩展名自动发现",
+            "模块分类基于 #include 依赖图自动聚类而非关键词匹配",
+            "生成可视化依赖关系图"
+          ]
+        },
+        {
+          "name": "跨文件语义迁移能力",
+          "score": 2,
+          "max_score": 4,
+          "evidence": [
+            "Rust 模块（error/flash/kvdb/tsdb）与 FlashDB C 模块有映射关系",
+            "rust_api_design.json 中有 21 个 C→Rust 符号映射",
+            "核心数据结构 KvStatus/TslStatus/SectorStoreStatus 与 C 原版对齐",
+            "FlashStorage trait 提供存储抽象层（MemFlash + FileFlash）",
+            "kvdb.rs 实现了 tombstone delete、CRC32、索引重建和 GC",
+            "tsdb.rs 实现了双栈扇区、时间查询和状态管理"
+          ],
+          "deductions": [
+            "客观评分显示 6-10 个 case 测试逻辑与 C 原版不一致：case 7 缺少 reboot/reload 验证，case 10/11 GC 简化缺少多阶段验证，case 12 缺少扩容迁移验证，case 19 缺少 sector 边界测试，case 22 缺少 Deleted 状态验证",
+            "宏和条件编译未在 Rust 侧有对应处理策略",
+            "deinit 语义仅为初始化成功检查而非完整资源释放验证"
+          ],
+          "suggestions": [
+            "测试迁移严格对齐 C 测试的 semantic_obligations",
+            "增加 #[cfg] 特性门控对应 C 的条件编译",
+            "deinit 增加完整资源释放和持久化状态验证"
+          ]
+        },
+        {
+          "name": "编译/测试自愈闭环",
+          "score": 3,
+          "max_score": 4,
+          "evidence": [
+            "cargo_capture.py 捕获 cargo build/test/fmt 输出",
+            "08-build-test-repair.md 记录 2 轮修复过程",
+            "workflow_state.json 记录 repair_rounds=2",
+            "cargo-test.log 显示 25 测试全通过",
+            "cargo-results.json 记录 build pass, test pass"
+          ],
+          "deductions": [
+            "阶段日志 08-build-test-repair.md 内容简略，缺少完整错误栈",
+            "cargo-results.json 中 fmt 状态为 fail 但未记录 fmt 修复过程",
+            "缺少 repair_trace.jsonl 产物"
+          ],
+          "suggestions": [
+            "每轮修复记录完整错误栈、修复文件、修改内容",
+            "修复闭环覆盖 fmt 问题",
+            "生成 repair_trace.jsonl 以便复盘"
+          ]
+        },
+        {
+          "name": "非硬编码与可迁移性",
+          "score": 2,
+          "max_score": 3,
+          "evidence": [
+            "工具脚本通过 CLI 参数动态接收路径",
+            "Rust 工程中未发现 return true/mock/stub 伪造行为",
+            "INSTRUCTION.md 定义 3 级路径优先级回退机制",
+            "01-init-workspace.md 明确记录删除旧 flashDB_rust 目录"
+          ],
+          "deductions": [
+            "gate.py 硬编码 /app/code/judge-assets/02_02_c_to_rust/code/FlashDB 在校验逻辑中",
+            "workflow_state.json 和 test_conversion_system.py 多处写死评测路径",
+            "scan_c_project.py 硬编码子目录名 src/tests/inc",
+            "build_c_model.py 的关键词分类是 FlashDB 专用逻辑"
+          ],
+          "suggestions": [
+            "gate.py 路径校验改为检查候选列表是否包含实际路径",
+            "扫描脚本支持配置化子目录名或自动发现",
+            "模块分类基于依赖图而非关键词"
+          ]
+        },
+        {
+          "name": "产物可扩展性",
+          "score": 1,
+          "max_score": 2,
+          "evidence": [
+            "标准 Cargo 工程（Cargo.toml, src/lib.rs, 4 模块）",
+            "FlashStorage trait 提供存储接口抽象",
+            "KvDb/TsDb 泛型化（<S: FlashStorage>）",
+            "错误类型枚举化",
+            "Rust 工程可独立构建和测试"
+          ],
+          "deductions": [
+            "模块划分仅 4 个对应 FlashDB 具体功能而非通用抽象层",
+            "Cargo.toml 极简缺少依赖声明、文档配置或特性门控",
+            "bench_rust.rs 不在 tests/ 中且不可通过 cargo bench 运行",
+            "缺少 #[cfg] 特性门控适配不同平台"
+          ],
+          "suggestions": [
+            "增加 #[cfg(feature)] 特性门控",
+            "Cargo.toml 添加 dev-dependencies 和 benchmark 配置",
+            "增加配置化扇区参数便于适配不同硬件"
+          ]
+        }
+      ]
+    },
+    "standardization": {
+      "score": 7,
+      "max_score": 10,
+      "items": [
+        {
+          "name": "提交目录规范",
+          "score": 2,
+          "max_score": 2,
+          "evidence": [
+            "根目录存在 INSTRUCTION.md",
+            "Skill 目录符合 work/skills/[skillName]/SKILL.md",
+            "Agent 目录符合 work/agents/[agentName].md",
+            "脚本在 work/tools/ 下",
+            ".opencode/ 有 agents 和 skills 镜像"
+          ],
+          "deductions": [],
+          "suggestions": []
+        },
+        {
+          "name": "Skill / Agent 规范",
+          "score": 2,
+          "max_score": 3,
+          "evidence": [
+            "4 Skill 有目标、适用场景、输入输出、分阶段流程",
+            "3 Agent 有 description、mode、permission、角色/职责/禁止事项",
+            "orchestrator 是 primary，repairer/test-migrator 是 subagent"
+          ],
+          "deductions": [
+            "Skill 缺少独立禁止事项章节",
+            "Skill 缺少日志和报告要求明确说明",
+            "repairer.md 状态声明与实际行为不一致"
+          ],
+          "suggestions": [
+            "每个 Skill 添加独立禁止事项章节",
+            "Skill 明确列出必须产出的日志文件",
+            "更新 Agent 状态声明与实际执行阶段一致"
+          ]
+        },
+        {
+          "name": "执行入口与可复现性",
+          "score": 2,
+          "max_score": 2,
+          "evidence": [
+            "INSTRUCTION.md 提供完整命令总览",
+            "依赖说明为 python3/cargo/rustfmt",
+            "3 级路径优先级回退机制",
+            "从空上下文可按命令序列复现"
+          ],
+          "deductions": [],
+          "suggestions": []
+        },
+        {
+          "name": "日志与报告规范",
+          "score": 1,
+          "max_score": 2,
+          "evidence": [
+            "转换日志完整（01-09 阶段）",
+            "编译日志和测试日志完整",
+            "评分报告存在",
+            "中文报告存在",
+            "workflow 状态完整"
+          ],
+          "deductions": [
+            "缺少 artifacts_manifest.json",
+            "reports/ 目录不存在",
+            "阶段日志内容简略",
+            "缺少 repair_trace.jsonl",
+            "STATUS: SUCCESS 在 fmt fail 时写入"
+          ],
+          "suggestions": [
+            "生成 artifacts_manifest.json",
+            "创建 reports/ 目录",
+            "阶段日志增加详细操作记录",
+            "修复 fmt 问题或纳入 SUCCESS 判定",
+            "生成 repair_trace.jsonl"
+          ]
+        },
+        {
+          "name": "失败处理与边界说明",
+          "score": 0,
+          "max_score": 1,
+          "evidence": [
+            "INSTRUCTION.md 有禁止事项章节",
+            "repairer.md 和 rust-compile-repair/SKILL.md 有修复约束"
+          ],
+          "deductions": [
+            "无统一失败处理策略文档",
+            "未说明不得复用旧 Rust 工程的检测拒绝机制",
+            "未说明无法评估时如何标记",
+            "repairer.md 状态声明与实际行为矛盾",
+            "STATUS: SUCCESS 在 fmt fail 时写入"
+          ],
+          "suggestions": [
+            "增加集中化失败处理策略文档",
+            "明确列出所有禁止事项的检测和拒绝机制",
+            "无法评估时标记为证据不足",
+            "SUCCESS 要求所有检查点通过后才写入"
+          ]
+        }
+      ]
+    },
+    "performance": {
+      "score": 10,
+      "max_score": 10,
+      "note": "本次主观评分暂不分析性能，按用户要求默认记为 10 分。该分数不代表真实比赛性能排名。"
+    },
+    "total": {
+      "score": 31,
+      "max_score": 40
+    }
+  },
+  "major_strengths": [
+    "完整分阶段流水线（10 个阶段，每个有 gate 校验和中文日志）",
+    "FlashStorage trait 抽象（MemFlash + FileFlash），存储层与业务逻辑解耦",
+    "零 unsafe（1425 行代码全部 safe Rust）",
+    "工具脚本动态路径（大部分通过 CLI 参数接收路径）"
+  ],
+  "major_deductions": [
+    "测试语义不对齐（6-10 个 case 与 C 原版不一致）",
+    "gate.py 硬编码评测路径（换题目后 gate 会失败）",
+    "STATUS: SUCCESS 与 fmt fail 不一致",
+    "缺少产物索引和失败处理文档"
+  ],
+  "optimization_priorities": [
+    {
+      "priority": "P0",
+      "issue": "测试语义不对齐（6-10 个 case 缺少 C 侧完整语义验证）",
+      "action": "对齐每个 scorer case 的 semantic_obligations，补充 reboot/reload、多阶段 GC、扩容、sector 边界、Deleted 状态验证",
+      "impact": "泛用性 +2"
+    },
+    {
+      "priority": "P0",
+      "issue": "STATUS: SUCCESS 在 fmt fail 时写入",
+      "action": "修复 fmt 问题或将 fmt 状态纳入 SUCCESS 判定条件",
+      "impact": "规范性 +1"
+    },
+    {
+      "priority": "P1",
+      "issue": "gate.py 硬编码评测路径",
+      "action": "路径校验改为候选列表包含实际路径即可",
+      "impact": "泛用性 +1"
+    },
+    {
+      "priority": "P1",
+      "issue": "缺少 artifacts_manifest.json",
+      "action": "生成产物索引文件",
+      "impact": "规范性 +1"
+    },
+    {
+      "priority": "P1",
+      "issue": "缺少失败处理策略文档",
+      "action": "增加集中化失败处理章节",
+      "impact": "规范性 +1"
+    },
+    {
+      "priority": "P2",
+      "issue": "阶段日志内容简略",
+      "action": "增加详细操作记录和错误栈",
+      "impact": "规范性提升"
+    },
+    {
+      "priority": "P2",
+      "issue": "扫描脚本硬编码子目录名",
+      "action": "支持配置化或自动发现",
+      "impact": "泛用性 +0.5"
+    }
+  ],
+  "evidence_index": [
+    {
+      "type": "INSTRUCTION",
+      "path": "02_02/INSTRUCTION.md",
+      "description": "完整任务说明，174 行"
+    },
+    {
+      "type": "Skill",
+      "path": "02_02/work/skills/flashdb-migration/SKILL.md",
+      "description": "C 建模与 Rust API 迁移，132 行"
+    },
+    {
+      "type": "Skill",
+      "path": "02_02/work/skills/flashdb-test-migration/SKILL.md",
+      "description": "测试迁移，38 行"
+    },
+    {
+      "type": "Skill",
+      "path": "02_02/work/skills/rust-compile-repair/SKILL.md",
+      "description": "编译修复，26 行"
+    },
+    {
+      "type": "Skill",
+      "path": "02_02/work/skills/flashdb-report/SKILL.md",
+      "description": "报告生成，30 行"
+    },
+    {
+      "type": "Agent",
+      "path": "02_02/work/skills/flashdb-orchestrator.md",
+      "description": "主控 Agent，247 行"
+    },
+    {
+      "type": "Agent",
+      "path": "02_02/work/skills/repairer.md",
+      "description": "修复 subagent，35 行"
+    },
+    {
+      "type": "Agent",
+      "path": "02_02/work/skills/test-migrator.md",
+      "description": "测试迁移 subagent，39 行"
+    },
+    {
+      "type": "转换日志",
+      "path": "02_02/logs/trace/01-init-workspace.md 到 09-report-and-verify.md",
+      "description": "9 个阶段日志"
+    },
+    {
+      "type": "Workflow 状态",
+      "path": "02_02/logs/trace/workflow_state.json",
+      "description": "完整阶段记录，current_stage=DONE"
+    },
+    {
+      "type": "C 模型",
+      "path": "02_02/logs/trace/c_project_model.json",
+      "description": "C 工程结构和依赖"
+    },
+    {
+      "type": "C API 模型",
+      "path": "02_02/logs/trace/c_api_model.json",
+      "description": "51 个公共符号"
+    },
+    {
+      "type": "C 测试模型",
+      "path": "02_02/logs/trace/c_test_model.json",
+      "description": "23 个注册测试 + 24 scorer cases"
+    },
+    {
+      "type": "Rust API 设计",
+      "path": "02_02/logs/trace/rust_api_design.json",
+      "description": "21 个 C→Rust 映射"
+    },
+    {
+      "type": "测试映射",
+      "path": "02_02/logs/trace/rust_test_mapping.json",
+      "description": "24 个场景覆盖映射"
+    },
+    {
+      "type": "编译日志",
+      "path": "02_02/logs/trace/cargo-build.log",
+      "description": "build 成功，3 warnings"
+    },
+    {
+      "type": "测试日志",
+      "path": "02_02/logs/trace/cargo-test.log",
+      "description": "25 tests pass"
+    },
+    {
+      "type": "Cargo 结果",
+      "path": "02_02/logs/trace/cargo-results.json",
+      "description": "build pass, test pass, fmt fail"
+    },
+    {
+      "type": "Unsafe 报告",
+      "path": "02_02/logs/trace/unsafe-ratio.json",
+      "description": "0 unsafe, 0.0% ratio"
+    },
+    {
+      "type": "修复日志",
+      "path": "02_02/logs/trace/core_rewrite_batches.jsonl",
+      "description": "3 批次重写记录"
+    },
+    {
+      "type": "Rust 工程",
+      "path": "02_02/flashDB_rust/src/",
+      "description": "4 模块（error/flash/kvdb/tsdb），0 unsafe"
+    },
+    {
+      "type": "Rust 测试",
+      "path": "02_02/flashDB_rust/tests/",
+      "description": "3 个测试文件，25 测试"
+    },
+    {
+      "type": "最终报告",
+      "path": "02_02/result/output.md",
+      "description": "STATUS: SUCCESS"
+    },
+    {
+      "type": "Issue 概要",
+      "path": "02_02/result/issues/00-summary.md",
+      "description": "无已知问题"
+    },
+    {
+      "type": "评分报告",
+      "path": "02_02/result/scoring_report.json",
+      "description": "客观评分 14/24 pass"
+    },
+    {
+      "type": "评分报告",
+      "path": "02_02/result/score_report.json",
+      "description": "客观评分 19/24 pass"
+    },
+    {
+      "type": "知识文档",
+      "path": "02_02/work/knowledge/",
+      "description": "3 个架构/规则/测试映射文档"
+    },
+    {
+      "type": "硬编码路径",
+      "path": "02_02/work/tools/gate.py:98",
+      "description": "硬编码 /app/code/judge-assets/02_02_c_to_rust/code/FlashDB"
+    },
+    {
+      "type": "硬编码路径",
+      "path": "02_02/logs/trace/workflow_state.json:8",
+      "description": "硬编码 /app/code/judge-assets/02_02_c_to_rust/code/FlashDB"
+    }
+  ]
+}

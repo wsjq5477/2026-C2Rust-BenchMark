@@ -1,0 +1,69 @@
+{
+  "required_ffi_apis": [
+    "fdb_blob_make",
+    "fdb_blob_read",
+    "fdb_kv_del",
+    "fdb_kv_get",
+    "fdb_kv_get_blob",
+    "fdb_kv_get_obj",
+    "fdb_kv_iterate",
+    "fdb_kv_iterator_init",
+    "fdb_kv_set",
+    "fdb_kv_set_blob",
+    "fdb_kv_set_default",
+    "fdb_kv_to_blob",
+    "fdb_kvdb_control",
+    "fdb_kvdb_deinit",
+    "fdb_kvdb_init",
+    "fdb_tsdb_control",
+    "fdb_tsdb_deinit",
+    "fdb_tsdb_init",
+    "fdb_tsl_append",
+    "fdb_tsl_clean",
+    "fdb_tsl_iter",
+    "fdb_tsl_iter_by_time",
+    "fdb_tsl_query_count",
+    "fdb_tsl_set_status",
+    "fdb_tsl_to_blob"
+  ],
+  "source": "test_side_undefined_symbols",
+  "suite_requirements": {
+    "kvdb": {
+      "object": "logs/trace/c-cross/test-side-kvdb.o",
+      "required_ffi_apis": [
+        "fdb_blob_make",
+        "fdb_blob_read",
+        "fdb_kv_del",
+        "fdb_kv_get",
+        "fdb_kv_get_blob",
+        "fdb_kv_get_obj",
+        "fdb_kv_iterate",
+        "fdb_kv_iterator_init",
+        "fdb_kv_set",
+        "fdb_kv_set_blob",
+        "fdb_kv_set_default",
+        "fdb_kv_to_blob",
+        "fdb_kvdb_control",
+        "fdb_kvdb_deinit",
+        "fdb_kvdb_init"
+      ]
+    },
+    "tsdb": {
+      "object": "logs/trace/c-cross/test-side-tsdb.o",
+      "required_ffi_apis": [
+        "fdb_blob_make",
+        "fdb_blob_read",
+        "fdb_tsdb_control",
+        "fdb_tsdb_deinit",
+        "fdb_tsdb_init",
+        "fdb_tsl_append",
+        "fdb_tsl_clean",
+        "fdb_tsl_iter",
+        "fdb_tsl_iter_by_time",
+        "fdb_tsl_query_count",
+        "fdb_tsl_set_status",
+        "fdb_tsl_to_blob"
+      ]
+    }
+  }
+}

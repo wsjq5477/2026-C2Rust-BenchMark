@@ -1,0 +1,127 @@
+{
+  "build_files": [
+    "demos/linux/Makefile",
+    "tests/Makefile",
+    "tests/benchmark/Makefile"
+  ],
+  "core_sources": [
+    "src/fdb.c",
+    "src/fdb_file.c",
+    "src/fdb_kvdb.c",
+    "src/fdb_tsdb.c",
+    "src/fdb_utils.c"
+  ],
+  "counts": {
+    "build_files": 3,
+    "core_sources": 5,
+    "headers": 7,
+    "test_sources": 6
+  },
+  "file_evidence": {
+    "demos/linux/Makefile": {
+      "sha256": "4ff48943bd9747e09ef678d6b7521d56ebe09f5cb183868979127e27ee3e1787",
+      "size": 463
+    },
+    "inc/fdb_cfg_template.h": {
+      "sha256": "134927b7b3bd3c683baef08b080fd89ef0ca6b6d4aa2835a7f27a76fac93d90b",
+      "size": 1441
+    },
+    "inc/fdb_def.h": {
+      "sha256": "ca16ea08b94bce4854ce9d64a630cec562512578b5e6dfc1b66793fe2bc1c151",
+      "size": 13972
+    },
+    "inc/fdb_low_lvl.h": {
+      "sha256": "4bc01564c56c5ea56ec178bf2886c37df4e699f8167f60504f662c9407efafed",
+      "size": 2841
+    },
+    "inc/flashdb.h": {
+      "sha256": "75f9cbd7a6ffd50611a931b04e8e25faf63dfa9e5abb458850b7743c6bfd422b",
+      "size": 2920
+    },
+    "src/fdb.c": {
+      "sha256": "7bb0a974da55aa1cce991eec8c01f81e2845f7a2b06105d3b8f38971a6dc4dea",
+      "size": 3176
+    },
+    "src/fdb_file.c": {
+      "sha256": "aa7b51d52f0c77d47b6396462e74dedc37f5fec1a569b37471d8cf08627d425f",
+      "size": 9005
+    },
+    "src/fdb_kvdb.c": {
+      "sha256": "df8c9022ef8b4dab4bab5dbb79d3544a2943f2eefc0d5c65257ff51f494e5d7b",
+      "size": 67571
+    },
+    "src/fdb_tsdb.c": {
+      "sha256": "a125fce0efaffbba17c8f36ad1c411d01c98fe3c281677b5a2498dec10566a9a",
+      "size": 38824
+    },
+    "src/fdb_utils.c": {
+      "sha256": "bb6d6bdf60d5176be307273f61bf1040b2bad668b018af612e026a58637d49c0",
+      "size": 11432
+    },
+    "tests/Makefile": {
+      "sha256": "a05a14784635d1272f70cd9b59d1e2442c4268c12418c8bafac9121799bb6514",
+      "size": 1164
+    },
+    "tests/benchmark/Makefile": {
+      "sha256": "c01f221632d68a6e7d794099e727e8ee805d0f2a86ccd933cf262d4be72b6a40",
+      "size": 717
+    },
+    "tests/benchmark/bench_main.c": {
+      "sha256": "4a8938fbd4b4915be73a4052747085a3dc15a43706bf793e73f4e141aa61d405",
+      "size": 11129
+    },
+    "tests/benchmark/fdb_cfg.h": {
+      "sha256": "96d60c82c15c44d93435e78413b910ee17e74fc86e43084ae904a4812b1d56e2",
+      "size": 166
+    },
+    "tests/fdb_cfg.h": {
+      "sha256": "bc07438a61e8a737b160c3d354a9f43a9c1dc70d11d1bd83ea855fec01ab30d6",
+      "size": 231
+    },
+    "tests/fdb_kvdb_tc.c": {
+      "sha256": "81ef4b070c38b4d546d9b37c17f2fcb063c3e3b8a1f6a2cf5659221b19ee0ede",
+      "size": 41998
+    },
+    "tests/fdb_tsdb_tc.c": {
+      "sha256": "a5b045fca573d83ea0422c5895f39939ea389d442900fbbeb869aaac22bee52c",
+      "size": 18924
+    },
+    "tests/kvdb_main.c": {
+      "sha256": "9c73eedeed4f7437b4e48a10fbae4b7f75c4b86fbe35ea55c3b4e5c1bd3203c9",
+      "size": 964
+    },
+    "tests/main.c": {
+      "sha256": "bf6d0d8d168347a7004004eb46c59d4ed1a740784eec6eb07797059ce8263e0c",
+      "size": 1610
+    },
+    "tests/test_helpers.h": {
+      "sha256": "06af58d85a069f350a73bd6475f53119447efca5287ea98e47562ea222d17261",
+      "size": 3279
+    },
+    "tests/tsdb_main.c": {
+      "sha256": "9d0035e2c402e0f47f1de6a40dbd628b52842ab883c88f9ecf6a357e73d62169",
+      "size": 964
+    }
+  },
+  "headers": [
+    "inc/fdb_cfg_template.h",
+    "inc/fdb_def.h",
+    "inc/fdb_low_lvl.h",
+    "inc/flashdb.h",
+    "tests/benchmark/fdb_cfg.h",
+    "tests/fdb_cfg.h",
+    "tests/test_helpers.h"
+  ],
+  "input_digest": "ff175c4ec62915a60350dd5a428f4fa5d2b35639cdab8c9a18b54fd86d4707f4",
+  "source_root": "/home/nv_test/777/flashdb2rust/judge-assets/code/FlashDB",
+  "src_dir": "src",
+  "test_sources": [
+    "tests/benchmark/bench_main.c",
+    "tests/fdb_kvdb_tc.c",
+    "tests/fdb_tsdb_tc.c",
+    "tests/kvdb_main.c",
+    "tests/main.c",
+    "tests/tsdb_main.c"
+  ],
+  "tests_dir": "tests"
+}

@@ -1,0 +1,5 @@
+suite=kvdb
+source_test=test_fdb_kvdb_init
+status=pass
+reason=test_fdb_kvdb_init passed in original C runner
+repair_context={"assertion_details": [{"expression": "fdb_kvdb_init(&test_kvdb, \"test_kv\", TEST_TS_PART_NAME, NULL, NULL) == FDB_NO_ERR", "macro": "test_assert_true", "targets": ["FDB_NO_ERR", "NULL", "TEST_TS_PART_NAME", "fdb_kvdb_init", "test_kv", "test_kvdb"]}], "callback_paths": [], "data_shape": {"blob_multiplier": 0, "blob_write_count": 0, "kv_set_count": 0, "sector_bound_query_count": 0, "tsl_append_count": 0}, "public_api_calls": ["fdb_kvdb_control", "fdb_kvdb_init"], "scenario_features": [], "semantic_markers": ["use_control_interface"], "semantic_obligations": ["assertion_count", "assertion_intent", "calls:fdb_kvdb_control", "calls:fdb_kvdb_init", "helper:test_fdb_kvdb_init_by_sector_num", "init", "use_control_interface"]}

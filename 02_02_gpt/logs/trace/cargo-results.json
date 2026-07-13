@@ -1,0 +1,30 @@
+{
+  "build": {
+    "command": [
+      "cargo",
+      "build"
+    ],
+    "log": "cargo-build.log",
+    "returncode": 0
+  },
+  "build_status": "pass",
+  "fmt": {
+    "command": [
+      "cargo",
+      "fmt",
+      "--check"
+    ],
+    "log": "cargo-fmt.log",
+    "returncode": 0
+  },
+  "fmt_status": "pass",
+  "test": {
+    "command": [
+      "cargo",
+      "test"
+    ],
+    "log": "cargo-test.log",
+    "returncode": 0
+  },
+  "test_status": "pass"
+}
