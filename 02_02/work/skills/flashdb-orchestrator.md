@@ -35,6 +35,12 @@ permission:
 
 每次调度还必须直接写明编辑边界：只允许当前职责内的 `flashDB_rust/**`、`logs/trace/**` 和规定的 `result/issues/**`；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。平台问题由主控写入 `logs/trace/c-cross/workbench-issues.jsonl`，不得现场修改工作台脚本或契约。
 
+## C-cross 运行目录隔离（不可绕过）
+
+所有 C-cross runner 只能通过 `python3 work/tools/c_cross_validate.py ...` 启动；不得手工执行 `logs/trace/c-cross/*_runner`。该工具会为每个 suite 创建并清理唯一的工作目录 `logs/trace/c-cross/<suite>_run/`，runner 的 cwd 必须是该目录。
+
+禁止创建、清理或写入 `/tmp/**`、作品根目录、`flashDB_rust/**`、平台 C 输入目录或任何不在 `logs/trace/c-cross/**` 下的 runner 临时目录。尤其禁止 `rm -rf /tmp/...`、`rm -rf /tmp/.../*`，以及在项目根目录运行 runner 后清理 `fdb_kvdb1`、`fdb_tsdb1`、`storage_*`。需要局部复测时，仍调用 `c_cross_validate.py --suite <由模型发现的 suite>`；不得用 `mkdir`、`rm`、`timeout` 和二进制路径自行拼装替代命令。
+
 ### 证据格式约束
 
 主控和所有 subagent 必须遵守以下证据格式约束：

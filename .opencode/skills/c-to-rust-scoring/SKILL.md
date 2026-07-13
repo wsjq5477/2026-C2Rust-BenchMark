@@ -243,10 +243,7 @@ crate-type = ["staticlib"]  # 改为输出 C ABI
 
 **通用流程**：
 
-1. 清理旧测试产物和数据文件：
-   ```bash
-   rm -rf fdb_kvdb1/ fdb_tsdb1/ storage_*
-   ```
+1. 使用项目拥有的隔离运行目录；不得创建、清理或写入 `/tmp/**`、项目根目录、Rust 源码目录或原始 C 输入目录。若项目提供 runner 调度工具，必须使用该工具，不得直接执行 runner 二进制或自行拼接 `mkdir` / `rm -rf` / `timeout` 命令。FlashDB 工作台必须使用 `python3 work/tools/c_cross_validate.py ...`；它会在 `logs/trace/c-cross/<suite>_run/` 中管理 runner 数据和清理。
 
 2. 执行选定方案的测试命令
 
