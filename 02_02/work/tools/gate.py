@@ -1578,6 +1578,31 @@ def check_test_consistency(root: Path) -> list[str]:
     return []
 
 
+def check_test_placeholders(root: Path) -> list[str]:
+    tool_path = Path(__file__).resolve().with_name("placeholder_check.py")
+    spec = importlib.util.spec_from_file_location("placeholder_check", tool_path)
+    if spec is None or spec.loader is None:
+        return ["placeholder_check.py could not be loaded"]
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    report = module.analyze_placeholders(
+        root,
+        root / "flashDB_rust" / "tests",
+        root / "logs" / "trace" / "rust_test_mapping.json",
+    )
+    report_path = root / "logs" / "trace" / "test-placeholder-check.json"
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if report.get("status") != "pass":
+        issues = report.get("issues", [])
+        rendered = [
+            f"{item.get('test_name') or item.get('file')}: {item.get('code')}"
+            for item in issues[:10]
+            if isinstance(item, dict)
+        ] if isinstance(issues, list) else []
+        return ["test placeholder check failed: " + ("; ".join(rendered) or "unknown placeholder issue")]
+    return []
+
+
 def check_migrate_tests(root: Path) -> list[str]:
     errors = check_common_after_scaffold(root)
     required_stages = [
@@ -1597,6 +1622,7 @@ def check_migrate_tests(root: Path) -> list[str]:
         return errors
 
     errors.extend(check_dynamic_test_mapping(root))
+    errors.extend(check_test_placeholders(root))
     errors.extend(check_test_consistency(root))
 
     if not (root / "logs" / "trace" / "07-migrate-tests.md").exists():
@@ -1698,6 +1724,7 @@ def check_report_and_verify(root: Path) -> list[str]:
         errors.append("workflow_state.json build_status and test_status must be pass")
     errors.extend(check_c_cross_final_evidence(root))
     errors.extend(check_dynamic_test_mapping(root))
+    errors.extend(check_test_placeholders(root))
     errors.extend(check_test_consistency(root))
     errors.extend(check_subagent_evidence(root))
 

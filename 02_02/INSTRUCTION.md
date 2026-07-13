@@ -164,15 +164,15 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 2. 优先调用 `test-migrator` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/test-migrator.md` 后执行；连续 3 次失败后才允许主控 fallback。
 3. 读取 `work/skills/test-migrator.md` 和 `work/skills/flashdb-test-migration/SKILL.md`。
 4. 读取 `logs/trace/validation-matrix.json` 的结论或相关局部片段；不得全文读取无关 trace 大 JSON。Rust 源码已由 C 原始测试证据验证，Rust 测试失败默认先怀疑测试迁移或 harness。
-5. 运行 `python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json`。
-6. 以 `c_test_model.json.scorer_standard_cases` 为评分覆盖合同，逐项一一迁移；`standard_scenarios` 只作为动态 C 证据来源。
-7. 生成逐场景 baseline 后，根据每项 `semantic_obligations` 和 `semantic_facts` 完成 Rust 测试。
-8. 清除 `MIGRATION_PENDING` 后，只有 `validated_obligations` 覆盖全部 `semantic_obligations`，且 `assertion_evidence` 证明关键 `verify_*`、`data_shape:*`、`scenario:*` 义务，才可把对应 mapping 更新为 `coverage: semantic`。
+5. 运行 `python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json` 生成动态任务映射；该工具不得创建或覆盖 Rust 测试文件。
+6. 以 `c_test_model.json.scorer_standard_cases` 动态推导评分覆盖合同和数量，逐项一一迁移；不得硬编码 suite、case 名或总数，`standard_scenarios` 只作为动态 C 证据来源。
+7. 根据每项 `semantic_obligations` 和 `semantic_facts` 直接完成真实 Rust 测试，不生成 `todo!()`、恒真断言或其他可收集的占位测试。
+8. 只有 `validated_obligations` 覆盖全部 `semantic_obligations`，且 `assertion_evidence` 证明关键 `verify_*`、`data_shape:*`、`scenario:*` 义务，才可把对应 mapping 更新为 `implementation_status: implemented` 和 `coverage: semantic`。
 9. 生成 `flashDB_rust/tests/kvdb_tests.rs`、`flashDB_rust/tests/tsdb_tests.rs`、`flashDB_rust/tests/equivalence_tests.rs`。
 10. 写入中文 `logs/trace/07-migrate-tests.md`。
 11. 更新 `workflow_state.json`，记录 `rust_test_mapping`。
-12. 运行 `python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json`。
-13. 运行 `python3 work/tools/gate.py --stage MIGRATE_TESTS`；评分 case 集合不一致、pending、unmapped、重复、semantic 义务未验证或测试断言过浅时必须失败。
+12. 运行 `python3 work/tools/placeholder_check.py --root . --tests flashDB_rust/tests --mapping logs/trace/rust_test_mapping.json --output logs/trace/test-placeholder-check.json`，再运行 `python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json`。
+13. 运行 `python3 work/tools/gate.py --stage MIGRATE_TESTS`；gate 只校验机器事实，不负责流程路由。评分 case 集合不一致、pending、unmapped、重复、占位实现、semantic 义务未验证或测试断言过浅时必须失败并由主控回派 `test-migrator`。
 
 ### BUILD_TEST_REPAIR
 
@@ -183,8 +183,8 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 5. `repairer` 只在 triage 允许的 `allowed_edit_scope` 内按最小补丁修复，最多 8 轮；系统性问题必须回派 `c-analyzer`、`rust-implementer` 或 `test-migrator`。
 6. 若 `validation-matrix.json` 已通过而 Rust 测试失败，默认优先分类为 `test_oracle_suspect` 或 `harness_suspect`；只有完整 C evidence 支持测试预期时，才允许改 Rust 源码。
 7. 写入中文 `logs/trace/08-build-test-repair.md`，只记录命令、产物、结果和失败摘要，不写成长篇过程复盘。
-8. 更新 `workflow_state.json`，`build_status` 和 `test_status` 必须为 `pass`。
-9. 运行 `python3 work/tools/gate.py --stage BUILD_TEST_REPAIR`。
+8. 更新 `workflow_state.json`，如实记录 `build_status`、`test_status`、修复轮次和未解决问题，不得把失败改写为通过。
+9. 运行 `python3 work/tools/gate.py --stage BUILD_TEST_REPAIR`。未通过且预算未耗尽时继续修复；预算耗尽后保留失败证据并强制进入 `REPORT_AND_VERIFY`，不得阻止比赛产物生成。
 
 ### REPORT_AND_VERIFY
 
@@ -194,8 +194,8 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 4. 写入中文 `logs/trace/final-verification.md` 和 `logs/trace/09-report-and-verify.md`。
 5. 更新 `workflow_state.json`，`current_stage` 为 `DONE`，`checkpoint` 为 `REPORT_AND_VERIFY`。
 6. 运行 `python3 work/tools/report_writer.py --root . --output result/output.md --issues result/issues/00-summary.md`。最终报告和最终问题摘要只在本阶段统一生成，前置 subagent 不维护这两个文件。
-7. 运行 `python3 work/tools/gate.py --stage REPORT_AND_VERIFY`。
-8. gate 通过后，`result/output.md` 可保留 `STATUS: SUCCESS`。
+7. 无论前置检查是否全部通过，都必须先生成 `result/output.md` 和 `result/issues/00-summary.md`，再运行 `python3 work/tools/gate.py --stage REPORT_AND_VERIFY`。
+8. gate 通过后，`result/output.md` 可保留 `STATUS: SUCCESS`；gate 未通过时保留真实失败状态，但比赛产物仍必须存在。
 
 ## 完成判定
 

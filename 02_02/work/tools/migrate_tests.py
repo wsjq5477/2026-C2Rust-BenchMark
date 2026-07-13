@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Generate Rust integration tests and rust_test_mapping.json from C test facts."""
+"""Build a Rust test migration task map from C test facts.
+
+This tool deliberately does not generate Rust test bodies.  Semantic test code is
+written by the test-migrator from the task map and the referenced C/Rust evidence.
+"""
 
 from __future__ import annotations
 
@@ -15,11 +19,6 @@ def load_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return data
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text.rstrip() + "\n", encoding="utf-8")
 
 
 def as_list(data: dict[str, Any], key: str) -> list[str]:
@@ -167,41 +166,7 @@ def standard_scenarios(test_model: dict[str, Any]) -> list[dict[str, Any]]:
     return scenarios
 
 
-def render_suite_tests(suite: str, scenarios: list[dict[str, Any]]) -> str:
-    tests = [
-        f"""
-fn exercise_{safe_rust_ident(suite)}_scenario(name: &str) {{
-    assert!(!name.is_empty());
-}}
-""".rstrip()
-    ]
-    for scenario in scenarios:
-        test_name = f"{safe_rust_ident(suite)}_{safe_rust_ident(str(scenario['id']))}"
-        tests.append(
-            f"""
-#[test]
-fn {test_name}() {{
-    // MIGRATION_PENDING: replace baseline coverage with the C scenario semantics for {scenario['id']}.
-    exercise_{safe_rust_ident(suite)}_scenario("{scenario['id']}");
-}}
-""".rstrip()
-        )
-    return "\n\n".join(tests)
-
-
-def render_equivalence_tests() -> str:
-    return """
-#[test]
-fn generated_test_harness_is_available() {
-    assert!(true);
-}
-""".strip()
-
-
 def generate_tests(test_model: dict[str, Any], design: dict[str, Any], project: Path, mapping_path: Path) -> dict[str, Any]:
-    tests_dir = project / "tests"
-    tests_dir.mkdir(parents=True, exist_ok=True)
-
     scenarios = standard_scenarios(test_model)
     scenarios_by_suite: dict[str, list[dict[str, Any]]] = {}
     for scenario in scenarios:
@@ -218,15 +183,12 @@ def generate_tests(test_model: dict[str, Any], design: dict[str, Any], project: 
     source_to_rust: dict[str, str] = {}
     for suite, suite_scenarios in sorted(scenarios_by_suite.items()):
         filename = f"{safe_rust_ident(suite)}_tests.rs"
-        write(tests_dir / filename, render_suite_tests(suite, suite_scenarios))
         source_to_rust[suite] = f"flashDB_rust/tests/{filename}"
-    write(tests_dir / "generated_harness_tests.rs", render_equivalence_tests())
-    source_to_rust["harness"] = "flashDB_rust/tests/generated_harness_tests.rs"
 
     mapped_scenarios = []
     for scenario in scenarios:
         suite = str(scenario.get("suite", "extension"))
-        rust_file = source_to_rust.get(suite, source_to_rust["harness"])
+        rust_file = source_to_rust.get(suite, f"flashDB_rust/tests/{safe_rust_ident(suite)}_tests.rs")
         rust_prefix = safe_rust_ident(suite)
         mapped_scenarios.append(
             {
@@ -245,9 +207,17 @@ def generate_tests(test_model: dict[str, Any], design: dict[str, Any], project: 
                 "missing_c_tests": scenario.get("missing_c_tests", []),
                 "semantic_obligations": scenario.get("semantic_obligations", []),
                 "validated_obligations": [],
+                "assertion_evidence": [],
                 "rust_file": rust_file,
                 "rust_test": f"{rust_prefix}_{safe_rust_ident(str(scenario['id']))}",
-                "coverage": "pending" if suite in {"kvdb", "tsdb"} else "unmapped",
+                "implementation_status": "pending",
+                "compile_status": "unknown",
+                "execution_status": "unknown",
+                "placeholder_status": "unknown",
+                "consistency_status": "unknown",
+                "repair_attempts": 0,
+                "unresolved_issues": [],
+                "coverage": "pending",
             }
         )
 
@@ -263,6 +233,7 @@ def generate_tests(test_model: dict[str, Any], design: dict[str, Any], project: 
         "total_scenarios": len(mapped_scenarios),
         "total_scorer_cases": len(mapped_scenarios),
         "source_to_rust": source_to_rust,
+        "implementation_status": "pending",
     }
     mapping_path.parent.mkdir(parents=True, exist_ok=True)
     mapping_path.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -270,7 +241,7 @@ def generate_tests(test_model: dict[str, Any], design: dict[str, Any], project: 
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Generate Rust tests from FlashDB C test facts.")
+    parser = argparse.ArgumentParser(description="Generate Rust test migration tasks from FlashDB C test facts.")
     parser.add_argument("--test-model", required=True, help="Path to c_test_model.json.")
     parser.add_argument("--design", required=True, help="Path to rust_api_design.json.")
     parser.add_argument("--project", required=True, help="Path to flashDB_rust project.")
@@ -278,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     mapping = generate_tests(load_json(Path(args.test_model)), load_json(Path(args.design)), Path(args.project), Path(args.mapping))
-    print("MIGRATE_TESTS: TESTS_WRITTEN")
+    print("MIGRATE_TESTS: TASK_MAP_WRITTEN")
     print(f"mapped_scenarios={mapping['total_scenarios']}")
     return 0
 

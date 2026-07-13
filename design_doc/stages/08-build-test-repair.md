@@ -157,4 +157,4 @@ python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
 
 ## 下一阶段交接
 
-成功后进入 `REPORT_AND_VERIFY`。下一阶段只汇总和最终校验，不再做大规模实现。
+成功后进入 `REPORT_AND_VERIFY`。达到修复预算仍失败时也必须保留机器证据并进入 `REPORT_AND_VERIFY`，确保最终比赛产物生成；失败不得改写为通过。下一阶段只汇总和最终校验，不再做大规模实现。

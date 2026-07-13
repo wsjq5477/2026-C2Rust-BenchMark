@@ -83,15 +83,21 @@ def analyze_consistency(root: Path) -> dict[str, Any]:
         if isinstance(item, dict) and isinstance(item.get("case_id"), str)
     } if isinstance(cases, list) else {}
     issues: list[dict[str, Any]] = []
+    scenario_results: list[dict[str, Any]] = []
 
     if not isinstance(scenarios, list):
         add_issue(issues, "invalid_mapping", "<mapping>", "rust_test_mapping.json scenarios must be a list")
         scenarios = []
 
     for scenario in scenarios:
-        if not isinstance(scenario, dict) or scenario.get("coverage") != "semantic":
+        if not isinstance(scenario, dict):
             continue
         scenario_id = str(scenario.get("id", scenario.get("rust_test", "<unknown>")))
+        issue_start = len(issues)
+        if scenario.get("implementation_status") not in {"implemented", "validated"}:
+            add_issue(issues, "test_not_implemented", scenario_id, "mapped Rust test implementation is still pending")
+        if scenario.get("coverage") != "semantic":
+            add_issue(issues, "semantic_coverage_pending", scenario_id, "mapped Rust test is not marked semantic")
         obligations = scenario.get("semantic_obligations", [])
         obligations = [item for item in obligations if isinstance(item, str)] if isinstance(obligations, list) else []
         important = important_obligations(obligations)
@@ -120,6 +126,10 @@ def analyze_consistency(root: Path) -> dict[str, Any]:
             if path.is_file():
                 body = extract_rust_test_body(path.read_text(encoding="utf-8", errors="ignore"), rust_test)
         assertions = rust_assertions(body)
+        if not body:
+            add_issue(issues, "missing_rust_test", scenario_id, "mapped Rust #[test] function was not found")
+        elif not assertions:
+            add_issue(issues, "missing_rust_assertion", scenario_id, "mapped Rust test has no assertion")
 
         case = case_by_id.get(scenario.get("scorer_case_id"))
         semantic_facts = case.get("semantic_facts") if isinstance(case, dict) else {}
@@ -149,11 +159,32 @@ def analyze_consistency(root: Path) -> dict[str, Any]:
                     "More than 70% of Rust assertions are shallow status/presence checks",
                 )
 
+        validated = scenario.get("validated_obligations", [])
+        validated_set = {item for item in validated if isinstance(item, str)} if isinstance(validated, list) else set()
+        for obligation in obligations:
+            if obligation not in validated_set:
+                add_issue(issues, "unvalidated_obligation", scenario_id, f"{obligation} is not validated")
+        scenario_issues = issues[issue_start:]
+        scenario_results.append(
+            {
+                "scenario_id": scenario_id,
+                "status": "pass" if not scenario_issues else "fail",
+                "issue_codes": [item["code"] for item in scenario_issues],
+                "obligation_evidence": [
+                    item for item in scenario.get("assertion_evidence", []) if isinstance(item, dict)
+                ] if isinstance(scenario.get("assertion_evidence"), list) else [],
+            }
+        )
+
     return {
         "stage": "TEST_CONSISTENCY_CHECK",
         "status": "pass" if not issues else "fail",
         "issue_count": len(issues),
         "issues": issues,
+        "total_scenarios": len(scenario_results),
+        "passed_scenarios": sum(item["status"] == "pass" for item in scenario_results),
+        "failed_scenarios": sum(item["status"] == "fail" for item in scenario_results),
+        "scenarios": scenario_results,
     }
 
 

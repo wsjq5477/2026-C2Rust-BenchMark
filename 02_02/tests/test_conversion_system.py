@@ -64,6 +64,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             PROJECT / "work" / "tools" / "cargo_capture.py",
             PROJECT / "work" / "tools" / "test_failure_triage.py",
             PROJECT / "work" / "tools" / "test_consistency_check.py",
+            PROJECT / "work" / "tools" / "placeholder_check.py",
             PROJECT / "work" / "tools" / "unsafe_ratio.py",
             PROJECT / "work" / "tools" / "report_writer.py",
             PROJECT / "result" / "output.md",
@@ -2332,7 +2333,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             self.assertEqual(0, passed.returncode, passed.stdout)
             self.assertIn("DESIGN_RUST_API: PASS", passed.stdout)
 
-    def test_generate_scaffold_and_migrate_tests_create_runnable_rust_project(self):
+    def test_generate_scaffold_and_migrate_tests_create_task_map_without_overwriting_tests(self):
         scaffold = PROJECT / "work" / "tools" / "generate_rust_scaffold.py"
         migrator = PROJECT / "work" / "tools" / "migrate_tests.py"
         with tempfile.TemporaryDirectory() as td:
@@ -2468,7 +2469,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 text=True,
             )
             self.assertEqual(0, migrate_run.returncode, migrate_run.stdout)
-            self.assertIn("MIGRATE_TESTS: TESTS_WRITTEN", migrate_run.stdout)
+            self.assertIn("MIGRATE_TESTS: TASK_MAP_WRITTEN", migrate_run.stdout)
             mapping = json.loads((root / "rust_test_mapping.json").read_text(encoding="utf-8"))
             self.assertIn("kvdb", mapping)
             self.assertIn("tsdb", mapping)
@@ -2484,12 +2485,9 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             )
             self.assertTrue(all("semantic_obligations" in scenario for scenario in mapping["scenarios"]))
             self.assertTrue(all(scenario["coverage"] == "pending" for scenario in mapping["scenarios"]))
-            self.assertTrue((root / "flashDB_rust" / "tests" / "kvdb_tests.rs").is_file())
-            self.assertTrue((root / "flashDB_rust" / "tests" / "tsdb_tests.rs").is_file())
-            self.assertIn(
-                "MIGRATION_PENDING",
-                (root / "flashDB_rust" / "tests" / "kvdb_tests.rs").read_text(encoding="utf-8"),
-            )
+            self.assertTrue(all(scenario["implementation_status"] == "pending" for scenario in mapping["scenarios"]))
+            self.assertFalse((root / "flashDB_rust" / "tests" / "kvdb_tests.rs").exists())
+            self.assertFalse((root / "flashDB_rust" / "tests" / "tsdb_tests.rs").exists())
 
             cargo_test = subprocess.run(
                 ["cargo", "test", "--quiet"],
@@ -2739,6 +2737,51 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
         self.assertEqual("tsl_iter_reverse", reverse["scorer_case_name"])
         self.assertIn("reverse_iteration", reverse["semantic_obligations"])
 
+    def test_placeholder_check_rejects_trivial_and_accepts_implemented_mapped_test(self):
+        checker = PROJECT / "work" / "tools" / "placeholder_check.py"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tests = root / "flashDB_rust" / "tests"
+            trace = root / "logs" / "trace"
+            tests.mkdir(parents=True)
+            trace.mkdir(parents=True)
+            mapping = {
+                "scenarios": [
+                    {
+                        "id": "dynamic_case",
+                        "rust_file": "flashDB_rust/tests/dynamic_tests.rs",
+                        "rust_test": "dynamic_case",
+                        "implementation_status": "implemented",
+                    }
+                ]
+            }
+            mapping_path = trace / "rust_test_mapping.json"
+            mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
+            test_path = tests / "dynamic_tests.rs"
+            test_path.write_text("#[test]\nfn dynamic_case() { assert!(true); }\n", encoding="utf-8")
+
+            failed = subprocess.run(
+                [sys.executable, str(checker), "--root", str(root), "--output", str(trace / "placeholder.json")],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertNotEqual(0, failed.returncode, failed.stdout)
+            report = json.loads((trace / "placeholder.json").read_text(encoding="utf-8"))
+            self.assertIn("trivial_assertion", {item["code"] for item in report["issues"]})
+
+            test_path.write_text(
+                "#[test]\nfn dynamic_case() { let actual = 2 + 2; assert_eq!(actual, 4); }\n",
+                encoding="utf-8",
+            )
+            passed = subprocess.run(
+                [sys.executable, str(checker), "--root", str(root), "--output", str(trace / "placeholder.json")],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertEqual(0, passed.returncode, passed.stdout)
+
     def test_gate_migrate_tests_rejects_missing_dynamic_scenario_mapping(self):
         gate = PROJECT / "work" / "tools" / "gate.py"
         with tempfile.TemporaryDirectory() as td:
@@ -2939,16 +2982,19 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
             for scenario in mapping["scenarios"]:
                 scenario["coverage"] = "semantic"
+                scenario["implementation_status"] = "implemented"
                 scenario["validated_obligations"] = scenario["semantic_obligations"]
             mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
-            for test_file in [
-                root / "flashDB_rust" / "tests" / "kvdb_tests.rs",
-                root / "flashDB_rust" / "tests" / "tsdb_tests.rs",
-            ]:
-                test_file.write_text(
-                    test_file.read_text(encoding="utf-8").replace("    // MIGRATION_PENDING:", "    // Migrated:"),
-                    encoding="utf-8",
-                )
+            tests_dir = root / "flashDB_rust" / "tests"
+            tests_dir.mkdir(exist_ok=True)
+            (tests_dir / "kvdb_tests.rs").write_text(
+                "#[test]\nfn kvdb_test_fdb_gc() { let reclaimed = 2 + 2; assert_eq!(reclaimed, 4); }\n",
+                encoding="utf-8",
+            )
+            (tests_dir / "tsdb_tests.rs").write_text(
+                "#[test]\nfn tsdb_test_fdb_tsl_append() { let appended = vec![1_u8]; assert_eq!(appended.len(), 1); }\n",
+                encoding="utf-8",
+            )
             cargo_run = subprocess.run(
                 [sys.executable, str(cargo_capture), "--project", str(root / "flashDB_rust"), "--out", str(trace)],
                 stdout=subprocess.PIPE,
@@ -3130,6 +3176,29 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 ])
                 + "\n",
                 encoding="utf-8",
+            )
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(PROJECT / "work" / "tools" / "placeholder_check.py"),
+                    "--root",
+                    str(root),
+                    "--output",
+                    str(trace / "test-placeholder-check.json"),
+                ],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(PROJECT / "work" / "tools" / "test_consistency_check.py"),
+                    "--root",
+                    str(root),
+                    "--out",
+                    str(trace / "test-consistency.json"),
+                ],
+                check=True,
             )
 
             report_run = subprocess.run(

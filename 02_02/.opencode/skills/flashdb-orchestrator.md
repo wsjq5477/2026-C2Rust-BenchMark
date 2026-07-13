@@ -229,12 +229,15 @@ python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --
 - `logs/trace/rust_test_mapping.json`
 - 中文 `logs/trace/07-migrate-tests.md`
 
-`migrate_tests.py` 只按 `c_test_model.json.scorer_standard_cases` 生成评分 case baseline，并标记 `MIGRATION_PENDING` / `coverage: pending`。主控或 `test-migrator` 必须根据每个 case 的 `semantic_obligations`、`semantic_facts` 和 `standard_scenarios` 证据完成 Rust 测试，清除 pending 标记，并在 mapping 中填充覆盖全部义务的 `validated_obligations` 与关键 `assertion_evidence` 后才可更新为 `coverage: semantic`，然后运行：
+`migrate_tests.py` 只按 `c_test_model.json.scorer_standard_cases` 动态生成任务映射，不创建或覆盖 Rust 测试文件，也不得硬编码 case 总数。`test-migrator` 直接编写真实 Rust 测试；只有证据完整时才可更新为 `implementation_status: implemented` 和 `coverage: semantic`，然后运行：
 
 ```bash
+python3 work/tools/placeholder_check.py --root . --tests flashDB_rust/tests --mapping logs/trace/rust_test_mapping.json --output logs/trace/test-placeholder-check.json
 python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json
 python3 work/tools/gate.py --stage MIGRATE_TESTS
 ```
+
+`gate.py` 只校验事实，不负责路由；失败由主控回派 `test-migrator`。
 
 ## BUILD_TEST_REPAIR
 
@@ -297,7 +300,7 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 - `result/output.md`
 - `result/issues/00-summary.md`
 
-最终 `workflow_state.json.current_stage` 必须为 `DONE`，`build_status` 和 `test_status` 必须为 `pass`。
+最终 `workflow_state.json.current_stage` 必须为 `DONE`。构建或测试达到修复预算仍失败时必须如实记录并继续生成最终比赛产物，不能伪报 `STATUS: SUCCESS`。
 
 ## 完成后停止
 

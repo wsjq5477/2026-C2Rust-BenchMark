@@ -129,6 +129,8 @@ def write_report(root: Path, output: Path, issues: Path) -> None:
     attempts = load_jsonl(trace / "c-cross" / "attempts.jsonl")
     workbench_issues = load_jsonl(trace / "c-cross" / "workbench-issues.jsonl")
     mapping = load_json(trace / "rust_test_mapping.json")
+    placeholders = load_json(trace / "test-placeholder-check.json")
+    consistency = load_json(trace / "test-consistency.json")
     matrix_lines = "\n".join(validation_matrix_summary(matrix))
     diagnostics_lines = "\n".join(cross_diagnostics_summary(matrix, diagnostics))
     convergence_lines = "\n".join(cross_convergence_summary(matrix, attempts, workbench_issues))
@@ -137,6 +139,8 @@ def write_report(root: Path, output: Path, issues: Path) -> None:
         state.get("current_stage") == "DONE"
         and state.get("build_status") == "pass"
         and state.get("test_status") == "pass"
+        and placeholders.get("status") == "pass"
+        and consistency.get("status") == "pass"
         and float(ratio.get("unsafe_ratio", 1.0)) <= 0.10
         and final_c_cross_verified(matrix, attempts)
     )
@@ -177,6 +181,11 @@ STATUS: {status}
 - mapped_scenarios: `{mapping.get('total_scenarios', 'unknown')}`
 - extension_tests: `{len(mapping.get('extension', [])) if isinstance(mapping.get('extension'), list) else 'unknown'}`
 - unmapped_tests_or_symbols: `{len(mapping.get('unmapped', [])) if isinstance(mapping.get('unmapped'), list) else 'unknown'}`
+- placeholder_status: `{placeholders.get('status', 'missing')}`
+- placeholder_issue_count: `{placeholders.get('issue_count', 'unknown')}`
+- semantic_consistency_status: `{consistency.get('status', 'missing')}`
+- semantic_consistency_issue_count: `{consistency.get('issue_count', 'unknown')}`
+- semantic_scenarios: `passed={consistency.get('passed_scenarios', 'unknown')}, failed={consistency.get('failed_scenarios', 'unknown')}`
 
 ## Cross Validation Matrix
 

@@ -33,7 +33,9 @@ permission:
 - 使用 `c_test_model.json.standard_scenarios` 作为动态 C 注册场景证据，不得忽略其中的语义事实；
 - 根据每个 scorer case 的 `semantic_obligations`、`semantic_facts.assertion_details`、`semantic_facts.data_shape` 和 `semantic_facts.scenario_features` 完善 Rust 测试；
 - 对 `verify_*`、`data_shape:*`、`scenario:*` obligations，必须写入能追溯 C 证据的 `assertion_evidence`；
-- 清除对应 `MIGRATION_PENDING` 后，只有当 `validated_obligations` 覆盖全部 `semantic_obligations` 且 `assertion_evidence` 证明关键断言时，才可把该项 mapping 的 `coverage` 改为 `semantic`。
+- 只有当真实测试已写入、`validated_obligations` 覆盖全部 `semantic_obligations` 且 `assertion_evidence` 证明关键断言时，才可把该项 mapping 更新为 `implementation_status: implemented` 和 `coverage: semantic`。
+- 先用 `migrate_tests.py` 生成动态任务映射；该工具不生成测试体，必须由你直接编写真实 Rust 测试，并将完成项更新为 `implementation_status: implemented`；
+- 运行 `placeholder_check.py`，恒真断言、待实现宏、占位标记、`#[ignore]`、缺失测试函数或缺失断言均不得通过；
 - coverage 分级：`api` 只代表调用覆盖；`assertion_semantic` 代表断言属性等价；`deep_semantic` 代表数据规模、布局和边界条件等价。不得把 `api` 级测试标记为 `semantic`。
 - 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。
 
@@ -51,7 +53,9 @@ permission:
 - 不得删除测试。
 - 不得弱化断言。
 - 不得把测试改成恒真。
+- 不得生成 `todo!()`、`unimplemented!()` 或任何可被 cargo 收集的占位测试。
+- 不得硬编码固定 suite、case 名或总数。
 - 不得用 `is_ok()`、`is_some()`、`is_none()` 这类状态/存在性断言替代 C 测试中的属性断言。
 - 不得只按注册测试名判断评分覆盖。
-- 不得只修改 mapping 状态而保留 `MIGRATION_PENDING`。
+- 不得只修改 mapping 状态而不写真实测试。
 - 不得手写 `attempts.jsonl` 或 `workbench-issues.jsonl`。

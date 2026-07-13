@@ -57,7 +57,7 @@ logs/trace/rust_test_mapping.json
   "tsdb": [],
   "extension": [],
   "unmapped": [],
-  "total_scenarios": 24,
+  "total_scenarios": "从 scorer_standard_cases 动态推导",
   "source_to_rust": {},
   "assertion_evidence": []
 }
@@ -86,8 +86,7 @@ logs/trace/rust_test_mapping.json
 
 目标覆盖：
 
-- KVDB：13 个标准场景；
-- TSDB：11 个标准场景；
+- KVDB、TSDB 及其他 suite 的场景数量均从当前输入动态推导；
 - 扩展测试：来自真实 FlashDB 新增测试文件或新增注册项；
 - 每个测试必须有实际断言；
 - 测试命名能追溯 C 测试或标准场景。
@@ -98,6 +97,7 @@ logs/trace/rust_test_mapping.json
 python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 # opencode 调用 test-migrator subagent 生成 Rust tests
 python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json
+python3 work/tools/placeholder_check.py --root . --tests flashDB_rust/tests --mapping logs/trace/rust_test_mapping.json --output logs/trace/test-placeholder-check.json
 python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json
 python3 work/tools/gate.py --stage MIGRATE_TESTS
 ```
@@ -110,9 +110,10 @@ python3 work/tools/gate.py --stage MIGRATE_TESTS
 - `tsdb_tests.rs` 存在；
 - `equivalence_tests.rs` 存在；
 - `rust_test_mapping.json` 存在；
-- 映射覆盖 24 个标准场景；
+- 映射与当前 `scorer_standard_cases` 动态推导的全部场景一一对应；
 - 新增 C 测试不能静默丢弃，必须进入 `extension`、`unmapped` 或带理由的排除记录；
 - Rust 测试文件包含非恒真断言；
+- `test-placeholder-check.json` 必须通过，不存在占位宏、占位标记、恒真断言、忽略测试、缺失测试函数或缺失断言；
 - `coverage: semantic` 的测试必须有对应 `assertion_evidence` 或等价的 `validated_obligations`；
 - 关键 expected value 必须能追溯到 C 测试、C 模型、规格或可计算事实；
 - `test-consistency.json` 必须通过；若发现 `missing_assertion_evidence`、`rust_assertion_count_below_threshold`、`missing_direct_verify_obligation` 或 `shallow_assertion_dominance`，本阶段失败并回到测试迁移；
@@ -127,6 +128,8 @@ python3 work/tools/gate.py --stage MIGRATE_TESTS
 - 不把测试改成恒真。
 - 不跳过 C 测试主干语义。
 - 不要求本阶段自行修复所有测试失败；失败必须进入 08，由主控和 repairer 处理。
+- `migrate_tests.py` 只生成任务映射，不创建或覆盖测试文件；真实测试由 `test-migrator` 编写。
+- `gate.py` 只校验事实，不承担路由。
 
 ## 下一阶段交接
 

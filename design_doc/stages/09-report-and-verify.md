@@ -60,6 +60,7 @@ python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsaf
 测试语义预评分：
 
 ```bash
+python3 work/tools/placeholder_check.py --root . --tests flashDB_rust/tests --mapping logs/trace/rust_test_mapping.json --output logs/trace/test-placeholder-check.json
 python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json
 ```
 
@@ -70,6 +71,8 @@ python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-cons
 ```bash
 python3 work/tools/report_writer.py --out result/output.md --issues result/issues/00-summary.md
 ```
+
+无论前置 build、test、占位或一致性检查是否通过，都必须执行报告生成命令。gate 失败只表示验证未通过，不得导致比赛产物缺失；失败状态必须如实写入报告。
 
 报告必须包含：
 

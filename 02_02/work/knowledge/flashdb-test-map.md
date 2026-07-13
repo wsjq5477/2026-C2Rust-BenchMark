@@ -30,7 +30,8 @@
 
 - Rust tests 必须保留 C test intent，而不是逐行复刻语法。
 - 每个迁移后的 scenario 都必须包含有意义的断言。
-- 生成的 baseline tests 会标记为 `MIGRATION_PENDING`，不计入 semantic coverage。
+- `migrate_tests.py` 只生成动态任务映射，不生成 baseline 测试体；`test-migrator` 必须直接编写真实测试。
+- 测试文件不得包含 `MIGRATION_PENDING`、待实现宏、恒真断言或被忽略的正式测试，完成项必须标记 `implementation_status: implemented`。
 - 只有当 scenario 的 `semantic_obligations` 已反映到 Rust test、复制到 `validated_obligations`，并通过 `assertion_evidence` 证明关键断言后，才能使用 `coverage: semantic`。
 - coverage 分级：L1/API 调用覆盖不能标记 semantic；L2/断言属性覆盖可作为普通 semantic；L3/数据规模、布局和边界覆盖用于高风险场景。
 - coverage 维度必须由当前 C API 分组和测试事实推导，不能用固定函数清单代替。
