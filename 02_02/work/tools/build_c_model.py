@@ -450,9 +450,15 @@ def _invocation_scenario_id(invocation: dict[str, Any], occurrence: int) -> str:
 
 def extract_function_bodies(text: str) -> dict[str, str]:
     clean = strip_comments(text)
-    pattern = re.compile(r"\b(test_[A-Za-z0-9_]+)\s*\([^;{}]*\)\s*\{")
+    # Test semantics often live in callbacks and helpers rather than in the
+    # registered test body.  Capture every local function body so the caller
+    # can later build a bounded call graph from a registered test.
+    pattern = re.compile(r"\b(?P<name>" + IDENT + r")\s*\([^;{}]*\)\s*\{")
     bodies: dict[str, str] = {}
     for match in pattern.finditer(clean):
+        name = match.group("name")
+        if name in CONTROL_WORDS:
+            continue
         depth = 1
         cursor = match.end()
         while cursor < len(clean) and depth:
@@ -462,7 +468,7 @@ def extract_function_bodies(text: str) -> dict[str, str]:
                 depth -= 1
             cursor += 1
         if depth == 0:
-            bodies[match.group(1)] = clean[match.end() : cursor - 1]
+            bodies[name] = clean[match.end() : cursor - 1]
     return bodies
 
 
@@ -672,6 +678,23 @@ def extract_test_semantics(body: str) -> dict[str, Any]:
     data_shape = data_shape_from_body(body)
     scenario_features = scenario_features_from_body(body, data_shape)
     semantic_markers = semantic_markers_from_body(body, assertion_targets)
+    callback_bindings: list[dict[str, str]] = []
+    callback_positions = {
+        "fdb_tsl_iter": 1,
+        "fdb_tsl_iter_reverse": 1,
+        "fdb_tsl_iter_by_time": 3,
+    }
+    for match in iter_call_matches(body):
+        iterator_api = match.group(1)
+        callback_position = callback_positions.get(iterator_api)
+        if callback_position is None:
+            continue
+        args = split_params(match.group("args"))
+        if callback_position >= len(args):
+            continue
+        callback = args[callback_position].strip()
+        if re.fullmatch(IDENT, callback):
+            callback_bindings.append({"iterator_api": iterator_api, "callback": callback})
     return {
         "called_functions": calls,
         "observed_c_symbols": observed_symbols,
@@ -684,6 +707,7 @@ def extract_test_semantics(body: str) -> dict[str, Any]:
         "data_shape": data_shape,
         "scenario_features": scenario_features,
         "semantic_markers": semantic_markers,
+        "callback_bindings": sorted(callback_bindings, key=lambda item: (item["iterator_api"], item["callback"])),
     }
 
 
@@ -736,18 +760,7 @@ def build_standard_scenarios(
                 "source_file": invocation.get("source_file"),
                 "order": index,
                 "tags": tags,
-                "semantic_facts": test_semantics.get(
-                    name,
-                    {
-                        "called_functions": [],
-                        "observed_c_symbols": [],
-                        "helper_calls": [],
-                        "assertion_macros": [],
-                        "assertion_count": 0,
-                        "public_api_calls": [],
-                        "private_function_calls": [],
-                    },
-                ),
+                "semantic_facts": merge_semantic_facts(related_test_names(name, test_semantics), test_semantics),
                 "c_cross": determine_c_cross_enabled(name),
             }
         )
@@ -759,6 +772,7 @@ def empty_semantic_facts() -> dict[str, Any]:
         "called_functions": [],
         "observed_c_symbols": [],
         "helper_calls": [],
+        "local_function_calls": [],
         "assertion_macros": [],
         "assertion_count": 0,
         "assertion_details": [],
@@ -773,6 +787,8 @@ def empty_semantic_facts() -> dict[str, Any]:
         },
         "scenario_features": [],
         "semantic_markers": [],
+        "callback_bindings": [],
+        "callback_paths": [],
         "public_api_calls": [],
         "private_function_calls": [],
     }
@@ -784,11 +800,11 @@ def merge_semantic_facts(names: list[str], test_semantics: dict[str, dict[str, A
         facts = test_semantics.get(name)
         if not isinstance(facts, dict):
             continue
-        for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros", "assertion_details", "assertion_targets", "control_usage", "scenario_features", "semantic_markers", "public_api_calls", "private_function_calls"]:
+        for key in ["called_functions", "observed_c_symbols", "helper_calls", "local_function_calls", "assertion_macros", "assertion_details", "assertion_targets", "control_usage", "scenario_features", "semantic_markers", "callback_bindings", "callback_paths", "public_api_calls", "private_function_calls"]:
             values = facts.get(key)
             if isinstance(values, list):
                 merged[key].extend(item for item in values if isinstance(item, str))
-                if key in {"assertion_details", "control_usage"}:
+                if key in {"assertion_details", "control_usage", "callback_bindings", "callback_paths"}:
                     merged[key].extend(item for item in values if isinstance(item, dict))
         count = facts.get("assertion_count")
         if isinstance(count, int):
@@ -802,7 +818,7 @@ def merge_semantic_facts(names: list[str], test_semantics: dict[str, dict[str, A
                         merged["data_shape"][shape_key] = max(merged["data_shape"][shape_key], value)
                     else:
                         merged["data_shape"][shape_key] += value
-    for key in ["called_functions", "observed_c_symbols", "helper_calls", "assertion_macros", "assertion_targets", "scenario_features", "semantic_markers", "public_api_calls", "private_function_calls"]:
+    for key in ["called_functions", "observed_c_symbols", "helper_calls", "local_function_calls", "assertion_macros", "assertion_targets", "scenario_features", "semantic_markers", "public_api_calls", "private_function_calls"]:
         merged[key] = sorted(dict.fromkeys(merged[key]))
     return merged
 
@@ -854,6 +870,26 @@ def semantic_obligations_from_facts(tags: list[str], facts: dict[str, Any]) -> l
     if isinstance(facts.get("assertion_count"), int) and facts["assertion_count"] > 0:
         obligations.append("assertion_count")
 
+    callback_paths = facts.get("callback_paths")
+    if isinstance(callback_paths, list):
+        for path in callback_paths:
+            if not isinstance(path, dict):
+                continue
+            assertions = path.get("assertion_details")
+            if isinstance(assertions, list) and any(
+                isinstance(item, dict)
+                and "->time" in str(item.get("expression", ""))
+                and "atoi" in str(item.get("expression", ""))
+                for item in assertions
+            ):
+                obligations.append("iterator_time_payload_consistency")
+            calls = path.get("public_api_calls")
+            if isinstance(calls, list) and any(
+                isinstance(call, str) and "set_status" in call
+                for call in calls
+            ):
+                obligations.append("callback_reentrant_state_mutation")
+
     return sorted(dict.fromkeys(obligations or ["registered_scenario"]))
 
 
@@ -867,14 +903,55 @@ def related_test_names(name: str, test_semantics: dict[str, dict[str, Any]]) -> 
         seen.add(current)
         ordered.append(current)
         facts = test_semantics.get(current, {})
-        helpers = facts.get("helper_calls")
-        if isinstance(helpers, list):
-            for helper in helpers:
-                if isinstance(helper, str) and helper in test_semantics:
-                    visit(helper)
+        for key in ["helper_calls", "local_function_calls"]:
+            helpers = facts.get(key)
+            if isinstance(helpers, list):
+                for helper in helpers:
+                    if isinstance(helper, str) and helper in test_semantics:
+                        visit(helper)
 
     visit(name)
     return ordered
+
+
+def enrich_callback_paths(test_semantics: dict[str, dict[str, Any]]) -> None:
+    """Attach the semantic closure of callbacks registered by each local function.
+
+    Iterator callbacks are part of a test's observable contract: their
+    assertions and re-entrant API calls cannot be inferred from the iterator
+    invocation alone.  Keep the path explicit so both requirements derivation
+    and repair agents receive evidence instead of a guessed test name.
+    """
+    for owner, facts in test_semantics.items():
+        bindings = facts.get("callback_bindings", [])
+        paths: list[dict[str, Any]] = []
+        if not isinstance(bindings, list):
+            facts["callback_paths"] = paths
+            continue
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                continue
+            callback = binding.get("callback")
+            iterator_api = binding.get("iterator_api")
+            if not isinstance(callback, str) or not isinstance(iterator_api, str):
+                continue
+            closure = related_test_names(callback, test_semantics) if callback in test_semantics else []
+            callback_facts = merge_semantic_facts(closure, test_semantics)
+            paths.append(
+                {
+                    "iterator_api": iterator_api,
+                    "callback": callback,
+                    "call_chain": closure,
+                    "resolved": bool(closure),
+                    "assertion_details": callback_facts["assertion_details"],
+                    "public_api_calls": callback_facts["public_api_calls"],
+                    "private_function_calls": callback_facts["private_function_calls"],
+                }
+            )
+        facts["callback_paths"] = sorted(
+            paths,
+            key=lambda item: (str(item["iterator_api"]), str(item["callback"])),
+        )
 
 
 def build_scorer_standard_cases(
@@ -972,6 +1049,22 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     tsdb_symbols = sorted([name for name in public_functions if "tsl" in name or "tsdb" in name])
     common_symbols = sorted(set(public_functions) - set(kvdb_symbols) - set(tsdb_symbols))
     abi_layouts = extract_abi_layouts(root, headers, structs)
+    macro_values: dict[str, dict[str, Any]] = {}
+    for layout in abi_layouts:
+        if not isinstance(layout, dict):
+            continue
+        active = layout.get("active_macros")
+        if not isinstance(active, dict):
+            continue
+        for name, expression in active.items():
+            if not isinstance(name, str) or not isinstance(expression, str):
+                continue
+            macro_values.setdefault(name, {
+                "raw_expression": expression,
+                "evaluated_value": expression if re.fullmatch(r"(?:0x[0-9A-Fa-f]+|[0-9]+)(?:[uUlL]+)?", expression) else None,
+                "evaluation_status": "literal" if re.fullmatch(r"(?:0x[0-9A-Fa-f]+|[0-9]+)(?:[uUlL]+)?", expression) else "expression",
+                "source": "active_preprocessor",
+            })
     annotate_compiler_confirmed_typedefs(typedef_map, abi_layouts)
     unresolved_signatures = [
         {
@@ -1012,6 +1105,18 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
             scenario_tags[name] = tag_test(name)
         for name, body in bodies.items():
             test_semantics[name] = extract_test_semantics(body)
+
+    # A helper can have any local name (not just ``test_*``).  Restrict edges
+    # to functions actually defined in the test translation units so library
+    # calls never become false call-graph nodes.
+    local_function_names = set(test_semantics)
+    for name, semantics in test_semantics.items():
+        calls = semantics.get("called_functions", [])
+        semantics["local_function_calls"] = sorted(
+            call
+            for call in calls
+            if isinstance(call, str) and call in local_function_names and call != name
+        )
 
     runner_sources: dict[str, list[str]] = {}
     for candidate, text in test_source_text.items():
@@ -1067,10 +1172,12 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         called = semantics.get("called_functions", [])
         semantics["public_api_calls"] = sorted(dict.fromkeys(f for f in called if f in public_function_set))
         semantics["private_function_calls"] = sorted(dict.fromkeys(f for f in called if f in private_function_set))
+    enrich_callback_paths(test_semantics)
     standard_scenarios = build_standard_scenarios(registered_invocations, scenario_tags, test_semantics)
     scorer_standard_cases = build_scorer_standard_cases(registered_invocations, scenario_tags, test_semantics)
 
     c_project_model = {
+        "input_digest": manifest.get("input_digest"),
         "source_root": str(root),
         "modules": modules,
         "source_files": source_files,
@@ -1087,6 +1194,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
     c_api_model = {
+        "input_digest": manifest.get("input_digest"),
         "public_headers": public_headers,
         "public_functions": public_functions,
         "function_signatures": {
@@ -1109,6 +1217,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         "structs": sorted({(item["file"], item["name"]) for item in structs}),
         "typedefs": sorted({(item["file"], item["name"]) for item in typedefs}),
         "macros": sorted(dict.fromkeys(macros)),
+        "macro_values": dict(sorted(macro_values.items())),
         "enums": sorted({(item["file"], item["name"]) for item in enum_blocks}),
         "enum_values": sorted(dict.fromkeys(enum_values)),
         "abi_layouts": abi_layouts,
@@ -1121,6 +1230,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     c_api_model["enums"] = [{"file": file, "name": name} for file, name in c_api_model["enums"]]
 
     c_test_model = {
+        "input_digest": manifest.get("input_digest"),
         "test_files": test_files,
         "test_functions": test_functions,
         "registered_tests": registered_tests,

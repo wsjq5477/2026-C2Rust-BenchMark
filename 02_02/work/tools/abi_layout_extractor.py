@@ -95,23 +95,32 @@ def _preprocess(project_root: Path, include_dirs: list[str], config_headers: lis
     return output
 
 
-def _active_macros(project_root: Path, include_dirs: list[str], config_headers: list[str], tmp: Path) -> list[str]:
+def _active_macros(project_root: Path, include_dirs: list[str], config_headers: list[str], tmp: Path) -> dict[str, str]:
     cc = _cc()
     if cc is None:
-        return []
+        return {}
     _prepare_config_alias(project_root, config_headers, tmp)
     source = tmp / "abi_macros.c"
     source.write_text(_discovered_header_includes(project_root, include_dirs), encoding="utf-8")
     command = [cc, "-dM", "-E", *_include_args(project_root, include_dirs, tmp), str(source)]
     code, output = _run(command, cwd=project_root)
     if code != 0:
-        return []
-    names = []
+        return {}
+    macros: dict[str, str] = {}
     for line in output.splitlines():
-        match = re.match(r"#define\s+(" + IDENT + r")\b", line)
+        match = re.match(r"#define\s+(" + IDENT + r")\b(?:\s+(.*))?$", line)
         if match and match.group(1).startswith("FDB_"):
-            names.append(match.group(1))
-    return sorted(dict.fromkeys(names))
+            macros[match.group(1)] = (match.group(2) or "1").strip()
+    return dict(sorted(macros.items()))
+
+
+def _referenced_structs(fields: list[dict[str, Any]]) -> set[str]:
+    names: set[str] = set()
+    for field in fields:
+        ctype = field.get("ctype")
+        if isinstance(ctype, str):
+            names.update(re.findall(r"\bstruct\s+(" + IDENT + r")\b", ctype))
+    return names
 
 
 def _find_struct_body(preprocessed: str, struct_name: str) -> str | None:
@@ -266,11 +275,25 @@ def extract_layouts(
         tmp = Path(td)
         preprocessed = _preprocess(root, include_dirs, config_headers, tmp)
         active_macros = _active_macros(root, include_dirs, config_headers, tmp)
-        fields_by_struct = {
-            name: _parse_fields(preprocessed, name)
-            for name in names
-            if _find_struct_body(preprocessed, name) is not None
-        }
+        # ABI correctness includes named structs embedded by value or pointer
+        # in public structs.  Probe their complete transitive closure, rather
+        # than silently omitting private-named implementation nodes.
+        queue = [(name, name) for name in names]
+        fields_by_struct: dict[str, list[dict[str, Any]]] = {}
+        dependency_of: dict[str, set[str]] = {name: {name} for name in names}
+        expanded_pairs: set[tuple[str, str]] = set()
+        while queue:
+            name, root_name = queue.pop(0)
+            dependency_of.setdefault(name, set()).add(root_name)
+            if (name, root_name) in expanded_pairs:
+                continue
+            expanded_pairs.add((name, root_name))
+            if _find_struct_body(preprocessed, name) is None:
+                continue
+            fields = fields_by_struct.setdefault(name, _parse_fields(preprocessed, name))
+            for dependency in sorted(_referenced_structs(fields)):
+                dependency_of.setdefault(dependency, set()).add(root_name)
+                queue.append((dependency, root_name))
         probed = _run_probe(root, include_dirs, config_headers, fields_by_struct, tmp) if fields_by_struct else {}
     layouts: list[dict[str, Any]] = []
     for name, fields in fields_by_struct.items():
@@ -284,6 +307,7 @@ def extract_layouts(
                 "sizeof": values["sizeof"],
                 "alignof": values["alignof"],
                 "active_macros": active_macros,
+                "dependency_of": sorted(dependency_of.get(name, {name})),
                 "fields": fields,
             }
         )

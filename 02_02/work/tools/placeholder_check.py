@@ -49,7 +49,32 @@ def analyze_placeholders(root: Path, tests: Path, mapping_path: Path) -> dict[st
     root = root.resolve()
     tests = tests if tests.is_absolute() else root / tests
     mapping_path = mapping_path if mapping_path.is_absolute() else root / mapping_path
-    mapping = load_json(mapping_path)
+    try:
+        mapping = load_json(mapping_path)
+    except FileNotFoundError:
+        return {
+            "stage": "PLACEHOLDER_CHECK",
+            "status": "fail",
+            "issue_count": 1,
+            "issues": [{
+                "code": "missing_mapping",
+                "file": str(mapping_path),
+                "test_name": None,
+                "message": "missing rust_test_mapping.json",
+            }],
+        }
+    except json.JSONDecodeError as exc:
+        return {
+            "stage": "PLACEHOLDER_CHECK",
+            "status": "fail",
+            "issue_count": 1,
+            "issues": [{
+                "code": "invalid_mapping",
+                "file": str(mapping_path),
+                "test_name": None,
+                "message": f"invalid rust_test_mapping.json: {exc}",
+            }],
+        }
     scenarios = mapping.get("scenarios", [])
     issues: list[dict[str, Any]] = []
 

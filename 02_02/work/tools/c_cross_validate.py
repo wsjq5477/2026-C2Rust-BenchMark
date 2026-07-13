@@ -125,25 +125,47 @@ def parse_runner_test_results(output: str, expected_tests: list[str], exit_code:
         reasons.append("unexpected repeated start: " + ", ".join(sorted(unexpected_repeated_starts)))
     if unknown_failed:
         reasons.append("unknown failed tests: " + ", ".join(unknown_failed))
+    # A timeout can lose buffered C stdout while still preserving stderr FAIL
+    # lines.  Such a FAIL is still attributable and must not turn every other
+    # scenario in the suite into a synthetic parse failure.
+    warnings: list[str] = []
     if failed_without_start:
-        reasons.append("failed tests missing start records: " + ", ".join(failed_without_start))
+        message = "failed tests missing start records: " + ", ".join(failed_without_start)
+        if exit_code == 0:
+            reasons.append(message)
+        else:
+            warnings.append(message)
     if exit_code == 0 and failures:
         reasons.append("successful runner reported test failures")
     if exit_code == 0 and started_set != expected_set:
         reasons.append("successful runner did not start all expected tests")
-    if exit_code != 0 and not failures:
+    if exit_code not in {0, -124} and not failures:
         reasons.append("nonzero runner exit has no attributed test failure")
+    if exit_code == -124 and not failures and not started_set:
+        reasons.append("timed out runner has no started or failed test evidence")
 
     failed = [name for name in expected_tests if name in failures]
-    passed = [name for name in expected_tests if name in started_set and name not in failures]
-    not_run = [name for name in expected_tests if name not in started_set]
+    timed_out: list[str] = []
+    if exit_code == -124 and started_scenarios:
+        last_started = started_scenarios[-1]
+        if last_started not in failures:
+            timed_out.append(last_started)
+    passed = [name for name in expected_tests if name in started_set and name not in failures and name not in timed_out]
+    not_run = [
+        name for name in expected_tests
+        if name not in started_set and name not in failures and name not in timed_out
+    ]
+    status = "parse_failed" if reasons else ("partial" if exit_code == -124 or warnings else "parsed")
     return {
-        "status": "parse_failed" if reasons else "parsed",
+        "status": status,
         "started": [name for name in expected_tests if name in started_set],
         "passed": passed,
         "failed": failed,
+        "timed_out": timed_out,
         "not_run": not_run,
         "failures": failures,
+        "warnings": warnings,
+        "exit_code": exit_code,
         "reason": "; ".join(reasons) if reasons else "runner output mapped to expected tests",
     }
 
@@ -550,18 +572,23 @@ def _compile_suite_runner(
     return True, binary, text
 
 
-def _run_suite_runner(suite: str, binary: Path, c_cross: Path) -> tuple[bool, str, str]:
+def _run_suite_runner(suite: str, binary: Path, c_cross: Path) -> tuple[bool | str, str, str]:
     run_dir = c_cross / f"{suite}_run"
     if run_dir.exists():
         shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = c_cross / f"{suite}_runner.log"
-    command = [str(binary.resolve())]
+    if shutil.which("stdbuf"):
+        command = ["stdbuf", "-oL", "-eL", str(binary.resolve())]
+        capture_mode = "stdbuf_line_buffered"
+    else:
+        command = [str(binary.resolve())]
+        capture_mode = "pipe_buffering_fallback"
     code, output = _run(command, cwd=run_dir, timeout=60)
-    text = f"$ {_command_text(command, run_dir)}\n{output}\n"
+    text = f"capture_mode={capture_mode}\n$ {_command_text(command, run_dir)}\n{output}\n"
     _write(log_path, text)
     if code == -124:
-        return False, text, f"{suite} runner timeout after 60s, see {log_path}"
+        return "timeout", text, f"{suite} runner timeout after 60s, see {log_path}"
     if code != 0:
         text += f"runner exited with {code}\n"
         _write(log_path, text)
@@ -805,11 +832,39 @@ def _malformed_invocation_row(index: int, invocation: Any, c_cross: Path, root: 
     }
 
 
-def _source_evidence_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[str, str]]:
+def _repair_context_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    contexts: dict[str, dict[str, Any]] = {}
+    for collection in ["scorer_standard_cases", "standard_scenarios"]:
+        cases = test_model.get(collection)
+        if not isinstance(cases, list):
+            continue
+        for case in cases:
+            if not isinstance(case, dict) or not isinstance(case.get("scenario_id") or case.get("id"), str):
+                continue
+            scenario_id = str(case.get("scenario_id") or case.get("id"))
+            facts = case.get("semantic_facts") if isinstance(case.get("semantic_facts"), dict) else {}
+            context = {
+                "semantic_obligations": case.get("semantic_obligations", []),
+                "public_api_calls": facts.get("public_api_calls", []),
+                "data_shape": facts.get("data_shape", {}),
+                "scenario_features": facts.get("scenario_features", []),
+                "semantic_markers": facts.get("semantic_markers", []),
+                "callback_paths": facts.get("callback_paths", []),
+                "assertion_details": facts.get("assertion_details", []),
+            }
+            # scorer_standard_cases carry expanded helper evidence and take
+            # precedence over the shallower registered-scenario snapshot.
+            if scenario_id not in contexts or collection == "scorer_standard_cases":
+                contexts[scenario_id] = context
+    return contexts
+
+
+def _source_evidence_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[str, Any]]:
     raw = test_model.get("registered_test_invocations")
     if not isinstance(raw, list):
         return {}
-    evidence: dict[str, dict[str, str]] = {}
+    evidence: dict[str, dict[str, Any]] = {}
+    repair_contexts = _repair_context_by_scenario(test_model)
     invocation_counter: dict[str, int] = {}
     for item in raw:
         if not isinstance(item, dict):
@@ -830,19 +885,27 @@ def _source_evidence_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[s
         if not isinstance(test_function, str) or not isinstance(scenarios, list):
             continue
         for scenario in scenarios:
-            item_evidence = {"source_test": test_function}
+            item_evidence: dict[str, Any] = {"source_test": test_function}
             invocation_idx = invocation_index if isinstance(invocation_index, int) else None
             if invocation_idx is not None:
                 item_evidence["invocation_index"] = invocation_idx
             if isinstance(runner, str) and runner:
                 item_evidence["source_runner"] = runner
+            runner_order = item.get("runner_order")
+            if isinstance(runner_order, int):
+                item_evidence["runner_order"] = runner_order
+            source_file = item.get("source_file")
+            if isinstance(source_file, str) and source_file:
+                item_evidence["source_file"] = source_file
+            if isinstance(scenario, str) and scenario in repair_contexts:
+                item_evidence["repair_context"] = repair_contexts[scenario]
             evidence[scenario] = item_evidence
     return evidence
 
 
 def _expected_tests_by_suite(
     cases: list[dict[str, Any]],
-    source_evidence: dict[str, dict[str, str]],
+    source_evidence: dict[str, dict[str, Any]],
 ) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
     for case in cases:
@@ -865,6 +928,7 @@ def _handoff_for_diagnosis(diagnosis: str) -> str:
         "c_abi_layout_mismatch",
         "c_runner_link_failed",
         "c_runner_runtime_failed",
+        "c_runner_timeout",
         "c_test_case_failed",
         "rust_implementation_failed_c_baseline",
     }:
@@ -878,7 +942,7 @@ def _suite_result_rows(
     suite_test_results: dict[str, dict[str, Any]],
     suite_phases: dict[str, str],
     suite_diagnoses: dict[str, str],
-    source_evidence: dict[str, dict[str, str]],
+    source_evidence: dict[str, dict[str, Any]],
     c_cross: Path,
     root: Path,
 ) -> list[dict[str, Any]]:
@@ -898,11 +962,7 @@ def _suite_result_rows(
         source_runner = evidence.get("source_runner", f"{suite}_runner")
         parsed = suite_test_results.get(suite)
         if phase == "full" and parsed is not None:
-            if parsed.get("status") != "parsed":
-                status = "fail"
-                diagnosis = "c_cross_result_parse_failed"
-                reason = str(parsed.get("reason") or reason)
-            elif scenario_id in parsed.get("passed", []):
+            if scenario_id in parsed.get("passed", []):
                 status = "pass"
                 diagnosis = "rust_implementation_matches_c_baseline_for_scenario"
                 reason = f"{source_test} passed in original C runner"
@@ -910,12 +970,20 @@ def _suite_result_rows(
                 status = "fail"
                 diagnosis = "c_test_case_failed"
                 reason = str(parsed.get("failures", {}).get(scenario_id) or f"{source_test} failed")
+            elif scenario_id in parsed.get("timed_out", []):
+                status = "not_run"
+                diagnosis = "c_runner_timeout"
+                reason = f"{source_test} was running when {suite} runner timed out"
             elif scenario_id in parsed.get("not_run", []):
                 status = "not_run"
-                diagnosis = "c_runner_runtime_failed"
-                reason = f"{source_test} was not run before the runner exited"
+                if parsed.get("exit_code") == -124:
+                    diagnosis = "c_runner_timeout"
+                    reason = f"{source_test} was not run because {suite} runner timed out"
+                else:
+                    diagnosis = "c_runner_runtime_failed"
+                    reason = f"{source_test} was not run before the runner exited"
             else:
-                status = "fail"
+                status = "unresolved"
                 diagnosis = "c_cross_result_parse_failed"
                 reason = f"no parsed result for expected scenario {scenario_id}"
         if not diagnosis:
@@ -925,13 +993,21 @@ def _suite_result_rows(
                 diagnosis = "rust_implementation_failed_c_baseline"
             else:
                 diagnosis = "c_cross_harness_not_supported"
-        _write(log, f"suite={suite}\nsource_test={source_test}\nstatus={status}\nreason={reason}\n")
-        rows.append(
-            {
+        repair_context = evidence.get("repair_context")
+        log_text = f"suite={suite}\nsource_test={source_test}\nstatus={status}\nreason={reason}\n"
+        if isinstance(repair_context, dict):
+            log_text += "repair_context=" + json.dumps(repair_context, ensure_ascii=False, sort_keys=True) + "\n"
+        _write(log, log_text)
+        row = {
                 "scenario_id": scenario_id,
                 "suite": suite,
                 "phase": phase,
-                "failure_layer": phase,
+                "failure_layer": (
+                    "assertion" if diagnosis == "c_test_case_failed"
+                    else "timeout" if diagnosis == "c_runner_timeout"
+                    else "protocol" if diagnosis == "c_cross_result_parse_failed"
+                    else phase
+                ),
                 "source_runner": source_runner,
                 "source_test": source_test,
                 "c_impl_c_test": "baseline",
@@ -943,7 +1019,9 @@ def _suite_result_rows(
                 "log": _relative_log_path(log, root),
                 "handoff": _handoff_for_diagnosis(diagnosis),
             }
-        )
+        if isinstance(repair_context, dict):
+            row["repair_context"] = repair_context
+        rows.append(row)
         if isinstance(case.get("case_id"), str) and case["case_id"]:
             rows[-1]["scorer_case_id"] = case["case_id"]
     return rows
@@ -1229,28 +1307,29 @@ def build_matrix(
                             suite_diagnoses[suite] = "blocked_before_rust_test_migration"
                 else:
                     for suite, binary in compiled_binaries.items():
-                        run_ok, run_output, run_reason = _run_suite_runner(suite, binary, c_cross)
+                        run_status, run_output, run_reason = _run_suite_runner(suite, binary, c_cross)
+                        normalized_status = "timeout" if run_status == "timeout" else "pass" if run_status is True else "fail"
                         test_log.append(run_output)
                         suite_results[suite] = (
-                            "pass" if run_ok else "fail",
+                            normalized_status,
                             run_reason,
                         )
                         suite_test_results[suite] = parse_runner_test_results(
                             run_output,
                             expected_tests_by_suite.get(suite, []),
-                            0 if run_ok else 1,
+                            0 if normalized_status == "pass" else -124 if normalized_status == "timeout" else 1,
                         )
                         suite_phases[suite] = "full"
                         suite_diagnoses[suite] = (
                             "rust_implementation_matches_c_baseline_for_scenario"
-                            if run_ok
-                            else "c_runner_runtime_failed"
+                            if normalized_status == "pass"
+                            else "c_runner_timeout" if normalized_status == "timeout" else "c_runner_runtime_failed"
                         )
-                        if not run_ok:
+                        if normalized_status != "pass":
                             diagnostics.append(
                                 {
                                     "phase": "full",
-                                    "diagnosis": "c_runner_runtime_failed",
+                                    "diagnosis": suite_diagnoses[suite],
                                     "suite": suite,
                                     "handoff": "rust-implementer",
                                     "reason": run_reason,
@@ -1274,19 +1353,25 @@ def build_matrix(
         root,
     )
     _write_jsonl(c_cross / "case-results.jsonl", scenarios)
-    # Add per-scenario diagnostics for parse_failed scenarios
+    # Add per-scenario diagnostics with the semantic context needed by a
+    # targeted repair.  Suite-level diagnostics alone cannot distinguish an
+    # assertion from a timeout or an unstarted scenario.
     for scenario_row in scenarios:
-        if scenario_row.get("diagnosis") == "c_cross_result_parse_failed":
-            diagnostics.append({
+        if scenario_row.get("rust_impl_c_test") in {"fail", "not_run", "unresolved"}:
+            diagnostic = {
                 "phase": scenario_row.get("phase", "full"),
-                "diagnosis": "c_cross_result_parse_failed",
+                "diagnosis": scenario_row.get("diagnosis"),
                 "scenario_id": scenario_row.get("scenario_id"),
                 "scorer_case_id": scenario_row.get("scorer_case_id"),
                 "suite": scenario_row.get("suite"),
                 "handoff": scenario_row.get("handoff"),
                 "reason": scenario_row.get("reason"),
                 "log": scenario_row.get("log"),
-            })
+                "failure_layer": scenario_row.get("failure_layer"),
+            }
+            if isinstance(scenario_row.get("repair_context"), dict):
+                diagnostic["repair_context"] = scenario_row["repair_context"]
+            diagnostics.append(diagnostic)
     _write_jsonl(c_cross / "diagnostics.jsonl", diagnostics)
     workbench_issues = [
         {

@@ -58,12 +58,13 @@ VALID_DIAGNOSES = {
     "c_abi_layout_mismatch",
     "c_runner_link_failed",
     "c_runner_runtime_failed",
+    "c_runner_timeout",
     "c_test_case_failed",
     "c_cross_result_parse_failed",
     "c_model_signature_gap",
 }
 
-VALID_FAILURE_LAYERS = {"model", "build", "layout", "link", "full"}
+VALID_FAILURE_LAYERS = {"model", "build", "layout", "link", "full", "assertion", "timeout", "protocol"}
 VALID_HANDOFFS = {"none", "controller", "c-analyzer", "rust-implementer", "test-migrator", "repairer"}
 
 VALID_TEST_TRIAGE_CLASSIFICATIONS = {
@@ -181,6 +182,13 @@ def check_abi_layout_contract(api_model: dict[str, Any]) -> list[str]:
         names.add(name)
         if layout.get("error"):
             errors.append(f"c_api_model.json abi_layouts {name} has extractor error: {layout.get('error')}")
+        dependency_of = layout.get("dependency_of")
+        if dependency_of is not None and (
+            not isinstance(dependency_of, list)
+            or not dependency_of
+            or not all(isinstance(item, str) and item for item in dependency_of)
+        ):
+            errors.append(f"c_api_model.json abi_layouts {name} dependency_of must be a non-empty string list")
         if not isinstance(layout.get("sizeof"), int) or layout.get("sizeof") <= 0:
             errors.append(f"c_api_model.json abi_layouts {name} must include positive sizeof")
         if not isinstance(layout.get("alignof"), int) or layout.get("alignof") <= 0:
@@ -462,7 +470,7 @@ def contains_cjk(text: str) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in text)
 
 
-def check_subagent_evidence(root: Path) -> list[str]:
+def check_subagent_evidence(root: Path, required_agents: set[str] | None = None) -> list[str]:
     errors: list[str] = []
     trace = root / "logs" / "trace"
     registry, registry_error = load_json(trace / "agent-registry.json")
@@ -478,7 +486,10 @@ def check_subagent_evidence(root: Path) -> list[str]:
             }
         else:
             agent_items = {}
+        required = required_agents or set(REQUIRED_SUBAGENTS)
         for name, stages in REQUIRED_SUBAGENTS.items():
+            if name not in required:
+                continue
             entry = agent_items.get(name)
             if not isinstance(entry, dict):
                 errors.append(f"agent-registry.json missing subagent {name}")
@@ -501,7 +512,7 @@ def check_subagent_evidence(root: Path) -> list[str]:
         c_analyzer_success_stages: set[str] = set()
         for index, row in enumerate(rows, start=1):
             agent = row.get("agent")
-            if agent in REQUIRED_SUBAGENTS:
+            if agent in (required_agents or set(REQUIRED_SUBAGENTS)):
                 seen.add(agent)
             if agent == "c-analyzer" and row.get("status") in {"pass", "success"}:
                 stage = row.get("stage")
@@ -520,7 +531,8 @@ def check_subagent_evidence(root: Path) -> list[str]:
                 reason = row.get("fallback_to_primary_reason")
                 if not isinstance(reason, str) or not reason.strip():
                     errors.append("primary_fallback records must include fallback_to_primary_reason")
-        missing = sorted(set(REQUIRED_SUBAGENTS) - seen)
+        required = required_agents or set(REQUIRED_SUBAGENTS)
+        missing = sorted(required - seen)
         if missing:
             errors.append(f"subagent-invocations.jsonl missing records for: {', '.join(missing)}")
         individual_c_stages = {"READ_C_PROJECT", "BUILD_C_MODEL", "DESIGN_RUST_API"}
@@ -868,8 +880,26 @@ def check_build_c_model(root: Path) -> list[str]:
         errors.append("c_api_model.json kvdb_symbols must be non-empty")
     if not api_model.get("tsdb_symbols"):
         errors.append("c_api_model.json tsdb_symbols must be non-empty")
+    manifest, manifest_error = load_json(root / "logs" / "trace" / "input_manifest.json")
+    if not manifest_error:
+        digest = manifest.get("input_digest")
+        for name, model in [("c_project_model.json", project_model), ("c_api_model.json", api_model), ("c_test_model.json", test_model)]:
+            if "input_digest" in model and (not isinstance(digest, str) or not digest or model.get("input_digest") != digest):
+                errors.append(f"{name} input_digest must match input_manifest.json")
+    macro_values = api_model.get("macro_values")
+    if macro_values is not None and (not isinstance(macro_values, dict) or not macro_values):
+        errors.append("c_api_model.json macro_values must be a non-empty object")
+    elif isinstance(macro_values, dict) and any(
+        not isinstance(value, dict)
+        or not isinstance(value.get("raw_expression"), str)
+        or value.get("evaluation_status") not in {"literal", "expression"}
+        for value in macro_values.values()
+    ):
+        errors.append("c_api_model.json macro_values entries must describe expression and evaluation status")
     errors.extend(check_abi_layout_contract(api_model))
     errors.extend(check_function_signature_contract(api_model, test_model))
+    if (root / "logs" / "trace" / "agent-registry.json").exists() or (root / "logs" / "trace" / "subagent-invocations.jsonl").exists():
+        errors.extend(check_subagent_evidence(root, {"c-analyzer"}))
 
     if not isinstance(test_model.get("test_functions"), list) or not test_model.get("test_functions"):
         errors.append("c_test_model.json test_functions must be non-empty")
@@ -985,6 +1015,9 @@ def check_design_rust_api(root: Path) -> list[str]:
     else:
         if design.get("crate_name") != "flashdb_rust":
             errors.append("rust_api_design.json crate_name must be flashdb_rust")
+        manifest, manifest_error = load_json(root / "logs" / "trace" / "input_manifest.json")
+        if "input_digest" in design and (manifest_error or design.get("input_digest") != manifest.get("input_digest")):
+            errors.append("rust_api_design.json input_digest must match input_manifest.json")
 
         modules = design.get("modules")
         if not isinstance(modules, list) or not modules or not all(isinstance(item, str) and item for item in modules):
@@ -1017,6 +1050,23 @@ def check_design_rust_api(root: Path) -> list[str]:
         storage_constraints = design.get("storage_constraints")
         if storage_constraints is not None and not isinstance(storage_constraints, dict):
             errors.append("rust_api_design.json storage_constraints must be an object when present")
+
+        ffi_strategy = design.get("ffi_strategy")
+        required_ffi_strategy = {
+            "kind": "c_facade_with_sidecar_state",
+            "c_struct_ownership": "caller_owned",
+        }
+        if ffi_strategy is None:
+            pass
+        elif not isinstance(ffi_strategy, dict):
+            errors.append("rust_api_design.json ffi_strategy must be an object")
+        else:
+            for key, expected in required_ffi_strategy.items():
+                if ffi_strategy.get(key) != expected:
+                    errors.append(f"rust_api_design.json ffi_strategy.{key} must be {expected}")
+            for key in ["sidecar_key", "user_data", "callback_lock_rule", "facade_sync"]:
+                if not isinstance(ffi_strategy.get(key), str) or not ffi_strategy[key].strip():
+                    errors.append(f"rust_api_design.json ffi_strategy.{key} must be a non-empty string")
 
         symbol_map = design.get("c_to_rust_symbol_map")
         if not isinstance(symbol_map, dict):
@@ -1133,6 +1183,15 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
     elif not batches:
         errors.append("core_rewrite_batches.jsonl must contain at least one implementation batch")
     else:
+        required_obligations: set[str] = set()
+        if isinstance(design, dict):
+            requirements = design.get("implementation_requirements")
+            if isinstance(requirements, list):
+                required_obligations = {
+                    item.get("id") for item in requirements
+                    if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id")
+                }
+        implemented_obligations: set[str] = set()
         for index, batch in enumerate(batches, start=1):
             if batch.get("stage") != "REWRITE_CORE_MODULES":
                 errors.append(f"core_rewrite_batches.jsonl record {index} stage must be REWRITE_CORE_MODULES")
@@ -1151,6 +1210,16 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
             obligations = batch.get("obligations")
             if not isinstance(obligations, list) or not obligations:
                 errors.append(f"core_rewrite_batches.jsonl record {index} must include implemented obligations")
+            elif not all(isinstance(item, str) and item for item in obligations):
+                errors.append(f"core_rewrite_batches.jsonl record {index} obligations must be non-empty strings")
+            else:
+                implemented_obligations.update(obligations)
+        missing_obligations = sorted(required_obligations - implemented_obligations)
+        if missing_obligations:
+            errors.append(
+                "core_rewrite_batches.jsonl must cover all rust_api_design.json implementation_requirements: "
+                + ", ".join(missing_obligations)
+            )
     if project.exists():
         errors.extend(check_project_command(project, ["cargo", "fmt", "--all", "--", "--check"], "rewritten project cargo fmt"))
         errors.extend(check_project_command(project, ["cargo", "build", "--release"], "rewritten project release build"))
@@ -1254,6 +1323,8 @@ def check_validation_matrix(root: Path, *, allow_not_supported: bool = True, req
                 errors.append(f"validation-matrix.json {key} has unknown value for scenario {scenario_id}: {value}")
                 continue
             if value == "fail":
+                has_blocking_value = True
+            if key == "rust_impl_c_test" and value in {"not_run", "unresolved", "parse_failed"}:
                 has_blocking_value = True
             if value == "not_supported":
                 if not is_c_cross_exempt:
@@ -1679,6 +1750,9 @@ def check_test_consistency(root: Path) -> list[str]:
 
 
 def check_test_placeholders(root: Path) -> list[str]:
+    mapping_path = root / "logs" / "trace" / "rust_test_mapping.json"
+    if not mapping_path.exists():
+        return ["missing logs/trace/rust_test_mapping.json"]
     tool_path = Path(__file__).resolve().with_name("placeholder_check.py")
     spec = importlib.util.spec_from_file_location("placeholder_check", tool_path)
     if spec is None or spec.loader is None:
@@ -1688,7 +1762,7 @@ def check_test_placeholders(root: Path) -> list[str]:
     report = module.analyze_placeholders(
         root,
         root / "flashDB_rust" / "tests",
-        root / "logs" / "trace" / "rust_test_mapping.json",
+        mapping_path,
     )
     report_path = root / "logs" / "trace" / "test-placeholder-check.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")

@@ -99,6 +99,14 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 7. 写入中文 `logs/trace/01-init-workspace.md`。
 8. 运行 `python3 work/tools/gate.py --stage INIT_WORKSPACE`。
 
+每次 subagent 调用结束后、对应 gate 之前，向该 JSONL **追加一行**（不得使用 `agent_name`、`result` 等替代字段）：
+
+```json
+{"agent":"c-analyzer","stage":"C_ANALYSIS","mode":"native","status":"pass","timestamp":"2026-01-01T00:00:00Z"}
+```
+
+`agent` 只能是注册的角色名；`mode` 只能是 `native`、`generic_subagent`、`isolated_proxy` 或 `primary_fallback`；`status` 必须非空。`c-analyzer` 成功记录只能用单一 `stage=C_ANALYSIS`，不能按三个子阶段拆行。若使用 `primary_fallback`，同一行还必须写入 `consecutive_failures >= 3` 和非空 `fallback_to_primary_reason`。
+
 ### READ_C_PROJECT
 
 1. 优先调用 `c-analyzer` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/c-analyzer.md` 后执行；连续 3 次失败后才允许主控 fallback。`READ_C_PROJECT`、`BUILD_C_MODEL`、`DESIGN_RUST_API` 必须作为 `C_ANALYSIS 阶段族` 由一次 `c-analyzer` 任务连续执行。

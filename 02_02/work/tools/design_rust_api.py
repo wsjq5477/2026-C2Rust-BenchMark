@@ -409,6 +409,18 @@ def derive_implementation_requirements(c_test_model: dict[str, Any]) -> list[dic
             "Record status transitions persist and every query/iteration filter observes the same status model.",
             sorted(symbol for symbol in observed_symbols if "status" in symbol or "query_count" in symbol),
         )
+    if "iterator_time_payload_consistency" in obligations:
+        add(
+            "iterator_time_payload_consistency",
+            "Each iterator callback receives a time field that agrees with the payload encoding asserted by the C callback.",
+            ["iterator_time_payload_consistency"],
+        )
+    if "callback_reentrant_state_mutation" in obligations:
+        add(
+            "callback_reentrant_state_mutation",
+            "Callbacks may change record status through the public facade without deadlocking or invalidating iteration state.",
+            ["callback_reentrant_state_mutation"],
+        )
     return requirements
 
 
@@ -506,9 +518,13 @@ def design_c_abi_facade(c_api_model: dict[str, Any]) -> dict[str, Any]:
         fields = layout.get("fields", [])
         active_macros = layout.get("active_macros", [])
         notes = ["Fields reflect active C preprocessor configuration from c_api_model.abi_layouts."]
-        conditional_macros = [
-            macro for macro in active_macros if isinstance(macro, str) and macro.startswith("FDB_USING_")
-        ] if isinstance(active_macros, list) else []
+        conditional_macros = (
+            [macro for macro in active_macros if isinstance(macro, str) and macro.startswith("FDB_USING_")]
+            if isinstance(active_macros, list)
+            else [macro for macro in active_macros if isinstance(macro, str) and macro.startswith("FDB_USING_")]
+            if isinstance(active_macros, dict)
+            else []
+        )
         if conditional_macros:
             notes.append("Active layout macros: " + ", ".join(sorted(conditional_macros)))
         if layout.get("error"):
@@ -580,10 +596,12 @@ def design_api(
     storage_implementation = (
         "FileSectorStorage" if storage_constraints["backend"] == "file_sector_mode" else "MemoryStorage"
     )
+    input_digest = c_api_model.get("input_digest") or c_project_model.get("input_digest") or c_test_model.get("input_digest")
 
     return {
         "stage": "DESIGN_RUST_API",
         "crate_name": "flashdb_rust",
+        "input_digest": input_digest,
         "modules": modules,
         "core_types": core_types,
         "traits": ["FlashStorage"],
@@ -601,6 +619,14 @@ def design_api(
             ],
         },
         "storage_constraints": storage_constraints,
+        "ffi_strategy": {
+            "kind": "c_facade_with_sidecar_state",
+            "c_struct_ownership": "caller_owned",
+            "sidecar_key": "stable C object address while initialized",
+            "user_data": "caller_owned_and_never_freed_by_rust",
+            "callback_lock_rule": "Release internal mutable borrows before invoking a C callback; callbacks may re-enter public APIs.",
+            "facade_sync": "The facade is the sole boundary that synchronizes C-visible fields with Rust-owned state.",
+        },
         "c_abi_facade": facade,
         "common_api": common_api,
         "kvdb_api": kvdb_api,

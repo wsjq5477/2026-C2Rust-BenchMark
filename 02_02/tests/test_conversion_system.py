@@ -841,6 +841,25 @@ class FrameworkCheckpointTests(unittest.TestCase):
         self.assertEqual(["test_c"], result["not_run"])
         self.assertIn("value == expected", result["failures"]["test_b"])
 
+    def test_c_cross_timeout_preserves_buffered_failures_and_marks_only_active_case(self):
+        cross = load_tool("c_cross_validate.py")
+
+        result = cross.parse_runner_test_results(
+            "\n".join([
+                "  FAIL test_iter: tsl->time == atoi(data) (line 137)",
+                "  FAIL test_iter_by_time: tsl->time == atoi(data) (line 137)",
+                "  Running: test_set_status ...",
+            ]),
+            ["test_init", "test_iter", "test_iter_by_time", "test_set_status", "test_clean"],
+            -124,
+        )
+
+        self.assertEqual("partial", result["status"])
+        self.assertEqual(["test_iter", "test_iter_by_time"], result["failed"])
+        self.assertEqual(["test_set_status"], result["timed_out"])
+        self.assertEqual(["test_init", "test_clean"], result["not_run"])
+        self.assertTrue(result["warnings"])
+
     def test_c_cross_rejects_unknown_or_unregistered_duplicate_test_output(self):
         cross = load_tool("c_cross_validate.py")
 
@@ -2157,6 +2176,23 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
         self.assertIn("unresolved", type_map)
         self.assertIn("rules", type_map)
         self.assertEqual([], type_map["unresolved"])
+        self.assertEqual("c_facade_with_sidecar_state", design["ffi_strategy"]["kind"])
+        self.assertTrue(design["input_digest"])
+        requirements = {item["id"] for item in design["implementation_requirements"]}
+        self.assertIn("iterator_time_payload_consistency", requirements)
+        self.assertIn("callback_reentrant_state_mutation", requirements)
+        macro_values = models["c_api_model"]["macro_values"]
+        self.assertTrue(macro_values)
+        self.assertTrue(all("raw_expression" in item for item in macro_values.values()))
+        nested_layouts = [
+            item for item in models["c_api_model"]["abi_layouts"]
+            if item["name"] in {"kv_cache_node", "kvdb_sec_info", "tsdb_sec_info"}
+        ]
+        self.assertEqual(3, len(nested_layouts))
+        self.assertTrue(all(item["dependency_of"] for item in nested_layouts))
+        cases = {item["scenario_id"]: item for item in models["c_test_model"]["scorer_standard_cases"]}
+        self.assertIn("iterator_time_payload_consistency", cases["test_fdb_tsl_iter"]["semantic_obligations"])
+        self.assertIn("callback_reentrant_state_mutation", cases["test_fdb_tsl_set_status"]["semantic_obligations"])
 
     def test_design_rust_api_cli_writes_design(self):
         scanner = load_tool("scan_c_project.py")
