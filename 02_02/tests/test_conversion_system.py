@@ -1726,6 +1726,15 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 "link-check.json": {"phase": "link", "status": "pass", "suites": {"alpha": "pass"}},
             }.items():
                 (c_cross / filename).write_text(json.dumps(payload), encoding="utf-8")
+            (trace / "ffi_manifest.json").write_text(json.dumps({
+                "required_ffi_apis": ["fdb_alpha"],
+                "suite_requirements": {
+                    "alpha": {
+                        "object": "test-side-alpha.o",
+                        "required_ffi_apis": ["fdb_alpha"],
+                    },
+                },
+            }), encoding="utf-8")
             (c_cross / "case-results.jsonl").write_text(json.dumps(scenario) + "\n", encoding="utf-8")
             (c_cross / "diagnostics.jsonl").write_text(json.dumps({
                 "phase": "full",

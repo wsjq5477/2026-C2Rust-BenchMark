@@ -79,19 +79,86 @@ def rust_ffi_base_type(c_type: str) -> str:
         "int32_t": "i32",
         "int64_t": "i64",
         "fdb_err_t": "i32",
-        "fdb_time_t": "i64",
     }
     if normalized in primitive:
         return primitive[normalized]
     if normalized.startswith("struct "):
         return rust_type_name_from_c_struct(normalized.split(" ", 1)[1])
-    if normalized.endswith("_t") and normalized.startswith("fdb_"):
-        return rust_type_name_from_c_struct(normalized[:-2])
+    if normalized == "enum" or normalized.startswith("enum "):
+        return "std::ffi::c_int"
     return "std::ffi::c_void"
 
 
-def rust_ffi_type(raw_type: str, pointer_depth: int, is_const: bool) -> str:
-    base = rust_ffi_base_type(raw_type)
+def callback_param_type(raw: str) -> str:
+    text = re.sub(r"\s+", " ", raw).strip()
+    match = re.search(r"(?P<prefix>.*?)(?P<stars>[*]?\s*)(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*$", text)
+    if match and match.group("prefix").strip():
+        return (match.group("prefix") + match.group("stars")).strip()
+    return text
+
+
+def split_c_params(raw: str) -> list[str]:
+    params: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for char in raw:
+        if char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        if char == "," and depth == 0:
+            params.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    if current:
+        params.append("".join(current).strip())
+    return [item for item in params if item and item != "void"]
+
+
+def rust_ffi_type(
+    raw_type: str,
+    pointer_depth: int,
+    is_const: bool,
+    typedef_map: dict[str, Any] | None = None,
+    seen: set[str] | None = None,
+) -> str:
+    typedefs = typedef_map or {}
+    normalized = re.sub(r"\bconst\b", "", raw_type.replace("*", " ")).strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    visited = set(seen or set())
+    entry = typedefs.get(normalized)
+    if isinstance(entry, dict) and normalized not in visited:
+        visited.add(normalized)
+        category = str(entry.get("category", "alias"))
+        if category == "function_pointer":
+            callback_params = []
+            for item in split_c_params(str(entry.get("params", ""))):
+                c_type = callback_param_type(item)
+                callback_params.append(
+                    rust_ffi_type(c_type, c_type.count("*"), "const" in c_type.split(), typedefs, visited)
+                )
+            return_type = str(entry.get("target", "void"))
+            rust_return = rust_ffi_type(
+                return_type,
+                return_type.count("*"),
+                "const" in return_type.split(),
+                typedefs,
+                visited,
+            )
+            suffix = "" if rust_return == "()" else f" -> {rust_return}"
+            return f"Option<unsafe extern \"C\" fn({', '.join(callback_params)}){suffix}>"
+        alias_pointer_depth = int(entry.get("pointer_depth", 0) or 0)
+        target = str(entry.get("target", "void"))
+        return rust_ffi_type(
+            target,
+            pointer_depth + alias_pointer_depth,
+            is_const,
+            typedefs,
+            visited,
+        )
+
+    base = rust_ffi_base_type(normalized)
     if pointer_depth <= 0:
         return "()" if base == "std::ffi::c_void" else base
     pointer = "*const" if is_const else "*mut"
@@ -101,7 +168,9 @@ def rust_ffi_type(raw_type: str, pointer_depth: int, is_const: bool) -> str:
     return result
 
 
-def c_type_map_from_signatures(function_signatures: dict[str, Any]) -> dict[str, Any]:
+def c_type_map_from_signatures(
+    function_signatures: dict[str, Any], typedef_map: dict[str, Any]
+) -> dict[str, Any]:
     resolved: dict[str, dict[str, Any]] = {}
     unresolved: list[dict[str, str]] = []
     for symbol, signature in sorted(function_signatures.items()):
@@ -114,7 +183,7 @@ def c_type_map_from_signatures(function_signatures: dict[str, Any]) -> dict[str,
                 raw,
                 {
                     "c_type": raw,
-                    "rust_ffi_type": rust_ffi_type(raw, raw.count("*"), "const" in raw.split()),
+                    "rust_ffi_type": rust_ffi_type(raw, raw.count("*"), "const" in raw.split(), typedef_map),
                     "category": return_type.get("category", "return"),
                     "source": f"function_signatures.{symbol}.return_type",
                 },
@@ -126,7 +195,8 @@ def c_type_map_from_signatures(function_signatures: dict[str, Any]) -> dict[str,
             if not isinstance(param, dict) or not isinstance(param.get("raw_type"), str):
                 continue
             raw = param["raw_type"]
-            rust_type = rust_ffi_type(raw, int(param.get("pointer_depth", 0) or 0), bool(param.get("const")))
+            declared_depth = int(param.get("declared_pointer_depth", param.get("pointer_depth", 0)) or 0)
+            rust_type = rust_ffi_type(raw, declared_depth, bool(param.get("const")), typedef_map)
             if rust_type == "std::ffi::c_void" and raw not in {"void", "void *", "const void *"}:
                 unresolved.append(
                     {
@@ -164,6 +234,7 @@ def c_type_map_from_signatures(function_signatures: dict[str, Any]) -> dict[str,
 def facade_functions_from_signatures(
     function_signatures: dict[str, Any],
     c_to_rust_symbol_map: dict[str, str],
+    typedef_map: dict[str, Any],
 ) -> list[dict[str, Any]]:
     functions: list[dict[str, Any]] = []
     for symbol in sorted(c_to_rust_symbol_map):
@@ -179,11 +250,12 @@ def facade_functions_from_signatures(
                 if not isinstance(param, dict):
                     continue
                 raw_type = str(param.get("raw_type", "void"))
+                declared_depth = int(param.get("declared_pointer_depth", param.get("pointer_depth", 0)) or 0)
                 params.append(
                     {
                         "name": str(param.get("name", f"arg{len(params)}")),
                         "c_type": raw_type,
-                        "rust_ffi_type": rust_ffi_type(raw_type, int(param.get("pointer_depth", 0) or 0), bool(param.get("const"))),
+                        "rust_ffi_type": rust_ffi_type(raw_type, declared_depth, bool(param.get("const")), typedef_map),
                         "safe_role": str(param.get("canonical", "param")),
                         "nullable": param.get("nullable", "unknown"),
                         "ownership": param.get("ownership", "unknown"),
@@ -196,7 +268,7 @@ def facade_functions_from_signatures(
                 "source_signature": f"c_api_model.function_signatures.{symbol}",
                 "return": {
                     "c_type": raw_return,
-                    "rust_ffi_type": rust_ffi_type(raw_return, raw_return.count("*"), "const" in raw_return.split()),
+                    "rust_ffi_type": rust_ffi_type(raw_return, raw_return.count("*"), "const" in raw_return.split(), typedef_map),
                     "safe_mapping": str(return_type.get("category", "return")),
                 },
                 "params": params,
@@ -207,7 +279,30 @@ def facade_functions_from_signatures(
     return functions
 
 
-def api_items_from_symbols(module: str, c_symbols: list[str]) -> list[dict[str, Any]]:
+def safe_return_from_signature(signature: dict[str, Any] | None) -> str:
+    return_type = signature.get("return_type") if isinstance(signature, dict) else None
+    if not isinstance(return_type, dict):
+        return "Result<(), Error>"
+    raw = str(return_type.get("raw", "void"))
+    category = str(return_type.get("category", ""))
+    if category == "status_code":
+        return "Result<(), Error>"
+    if raw == "void":
+        return "()"
+    if raw == "bool":
+        return "Result<bool, Error>"
+    if raw == "size_t":
+        return "Result<usize, Error>"
+    if raw == "char *":
+        return "Result<Option<String>, Error>"
+    if int(return_type.get("pointer_depth", 0) or 0) > 0:
+        return "Result<Option<BorrowedHandle>, Error>"
+    return "Result<Value, Error>"
+
+
+def api_items_from_symbols(
+    module: str, c_symbols: list[str], function_signatures: dict[str, Any]
+) -> list[dict[str, Any]]:
     type_name = type_name_from_module(module)
     items: list[dict[str, Any]] = []
     for symbol in sorted(dict.fromkeys(c_symbols)):
@@ -217,7 +312,7 @@ def api_items_from_symbols(module: str, c_symbols: list[str]) -> list[dict[str, 
                 "name": method,
                 "rust": f"{type_name}::{method}",
                 "c_symbols": [symbol],
-                "returns": "Result<(), Error>",
+                "returns": safe_return_from_signature(function_signatures.get(symbol)),
                 "notes": "Derived from current C public API evidence.",
             }
         )
@@ -240,6 +335,81 @@ def all_semantic_obligations(c_test_model: dict[str, Any]) -> set[str]:
             if isinstance(values, list):
                 obligations.update(item for item in values if isinstance(item, str))
     return obligations
+
+
+def derive_implementation_requirements(c_test_model: dict[str, Any]) -> list[dict[str, Any]]:
+    obligations = all_semantic_obligations(c_test_model)
+    observed_symbols: set[str] = set()
+    tags: set[str] = set()
+    cases = c_test_model.get("scorer_standard_cases", [])
+    if isinstance(cases, list):
+        for case in cases:
+            if not isinstance(case, dict):
+                continue
+            raw_tags = case.get("tags")
+            if isinstance(raw_tags, list):
+                tags.update(item for item in raw_tags if isinstance(item, str))
+            facts = case.get("semantic_facts")
+            symbols = facts.get("observed_c_symbols") if isinstance(facts, dict) else None
+            if isinstance(symbols, list):
+                observed_symbols.update(item for item in symbols if isinstance(item, str))
+
+    requirements: list[dict[str, Any]] = []
+
+    def add(identifier: str, invariant: str, evidence: list[str]) -> None:
+        requirements.append({
+            "id": identifier,
+            "invariant": invariant,
+            "derived_from": sorted(dict.fromkeys(evidence)),
+        })
+
+    sector_evidence = sorted(
+        item for item in obligations
+        if item == "verify_addr_alignment" or item.startswith("data_shape:cross_sector")
+    )
+    if sector_evidence:
+        add(
+            "physical_sector_address_fidelity",
+            "Externally visible record addresses are byte offsets in the configured sector geometry; collection indexes are not valid substitutes.",
+            sector_evidence,
+        )
+    if "verify_persistence_after_reboot" in obligations:
+        add(
+            "reload_reconstructs_state",
+            "Deinit/reinit reconstructs values, statuses, addresses, allocation cursors, and sector metadata from persistent storage.",
+            ["verify_persistence_after_reboot"],
+        )
+    if "use_control_interface" in obligations:
+        add(
+            "control_updates_runtime_storage",
+            "Geometry and mode controls update both the C-visible facade and the internal storage engine before subsequent operations.",
+            ["use_control_interface"],
+        )
+    if "gc" in tags or any("multi_kv_gc_pressure" in item for item in obligations):
+        add(
+            "gc_retains_latest_live_records",
+            "GC and scale-up retain the latest live value, tombstone deleted values, and preserve sector-address observables.",
+            [item for item in obligations if "gc" in item or "multi_kv" in item] or ["tag:gc"],
+        )
+    if any("blob" in symbol for symbol in observed_symbols):
+        add(
+            "blob_handle_round_trip",
+            "Objects returned by get/iterate convert to stable blob handles whose read operation copies the original bytes and reports the full saved length.",
+            sorted(symbol for symbol in observed_symbols if "blob" in symbol or "to_blob" in symbol),
+        )
+    if any("iterate" in symbol or "_iter" in symbol for symbol in observed_symbols):
+        add(
+            "iterator_object_fidelity",
+            "Iterator objects populate every address, length, status, name and value field consumed by later facade calls.",
+            sorted(symbol for symbol in observed_symbols if "iterate" in symbol or "_iter" in symbol),
+        )
+    if any("set_status" in symbol or "query_count" in symbol for symbol in observed_symbols):
+        add(
+            "status_persistence_and_filtering",
+            "Record status transitions persist and every query/iteration filter observes the same status model.",
+            sorted(symbol for symbol in observed_symbols if "status" in symbol or "query_count" in symbol),
+        )
+    return requirements
 
 
 def design_test_api(
@@ -344,15 +514,14 @@ def design_c_abi_facade(c_api_model: dict[str, Any]) -> dict[str, Any]:
         if layout.get("error"):
             notes.append(str(layout["error"]))
         c_name = layout["name"]
-        is_opaque = c_name in ("fdb_kvdb", "fdb_tsdb")
         structs.append(
             {
                 "c_name": c_name,
                 "rust_name": rust_type_name_from_c_struct(c_name),
                 "sizeof": layout.get("sizeof"),
                 "alignof": layout.get("alignof"),
-                "fields": fields if isinstance(fields, list) and not is_opaque else [],
-                "opaque": is_opaque,
+                "fields": fields if isinstance(fields, list) else [],
+                "opaque": False,
                 "notes": notes,
             }
         )
@@ -379,48 +548,61 @@ def design_api(
 
     kvdb_symbols = as_string_list(c_api_model, "kvdb_symbols")
     tsdb_symbols = as_string_list(c_api_model, "tsdb_symbols")
+    common_symbols = as_string_list(c_api_model, "common_symbols")
+    raw_signatures = c_api_model.get("function_signatures")
+    function_signatures = raw_signatures if isinstance(raw_signatures, dict) else {}
+    raw_typedefs = c_api_model.get("typedef_map")
+    typedef_map = raw_typedefs if isinstance(raw_typedefs, dict) else {}
     modules = ["error", "storage"]
+    if common_symbols:
+        modules.append("common")
     if kvdb_symbols:
         modules.append("kvdb")
     if tsdb_symbols:
         modules.append("tsdb")
 
-    kvdb_api = api_items_from_symbols("kvdb", kvdb_symbols)
-    tsdb_api = api_items_from_symbols("tsdb", tsdb_symbols)
+    common_api = api_items_from_symbols("common", common_symbols, function_signatures)
+    kvdb_api = api_items_from_symbols("kvdb", kvdb_symbols, function_signatures)
+    tsdb_api = api_items_from_symbols("tsdb", tsdb_symbols, function_signatures)
     obligations = all_semantic_obligations(c_test_model)
     c_to_rust_symbol_map = {
         item["c_symbols"][0]: item["rust"]
-        for item in kvdb_api + tsdb_api
+        for item in common_api + kvdb_api + tsdb_api
         if isinstance(item.get("c_symbols"), list) and item["c_symbols"]
     }
     core_types = [type_name_from_module(module) for module in modules]
     facade = design_c_abi_facade(c_api_model)
-    raw_signatures = c_api_model.get("function_signatures")
-    function_signatures = raw_signatures if isinstance(raw_signatures, dict) else {}
-    facade["functions"] = facade_functions_from_signatures(function_signatures, c_to_rust_symbol_map)
-    facade["c_type_map"] = c_type_map_from_signatures(function_signatures)
+    facade["functions"] = facade_functions_from_signatures(
+        function_signatures, c_to_rust_symbol_map, typedef_map
+    )
+    facade["c_type_map"] = c_type_map_from_signatures(function_signatures, typedef_map)
+    storage_constraints = design_storage_constraints(c_project_model, c_api_model)
+    storage_implementation = (
+        "FileSectorStorage" if storage_constraints["backend"] == "file_sector_mode" else "MemoryStorage"
+    )
 
     return {
         "stage": "DESIGN_RUST_API",
         "crate_name": "flashdb_rust",
         "modules": modules,
         "core_types": core_types,
-        "traits": [],
+        "traits": ["FlashStorage"],
         "error_model": {
             "type": "Error",
             "result_alias": "Result<T, Error>",
             "strategy": "Map C status and validation failures observed in the current API model into typed Rust Result values.",
         },
         "storage_model": {
-            "implementations": [],
+            "implementations": [storage_implementation],
             "semantics": [
                 "record_append",
                 "reload_scan",
                 "retain_valid_records",
             ],
         },
-        "storage_constraints": design_storage_constraints(c_project_model, c_api_model),
+        "storage_constraints": storage_constraints,
         "c_abi_facade": facade,
+        "common_api": common_api,
         "kvdb_api": kvdb_api,
         "tsdb_api": tsdb_api,
         "test_api": design_test_api(
@@ -437,6 +619,7 @@ def design_api(
             "Use safe Rust boundaries for public APIs.",
             "Keep source-to-Rust evidence in stage artifacts.",
         ],
+        "implementation_requirements": derive_implementation_requirements(c_test_model),
         "source_evidence": {
             "source_files": count_list(c_project_model, "source_files"),
             "headers": count_list(c_project_model, "headers"),
@@ -444,6 +627,7 @@ def design_api(
             "public_functions": count_list(c_api_model, "public_functions"),
             "kvdb_symbols": count_list(c_api_model, "kvdb_symbols"),
             "tsdb_symbols": count_list(c_api_model, "tsdb_symbols"),
+            "common_symbols": count_list(c_api_model, "common_symbols"),
             "registered_tests": count_list(c_test_model, "registered_tests"),
             "kvdb_tests": len(kvdb_tests),
             "tsdb_tests": len(tsdb_tests),

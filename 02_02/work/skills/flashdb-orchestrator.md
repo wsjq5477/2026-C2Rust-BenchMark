@@ -47,6 +47,10 @@ permission:
 
 4. **diagnostics.jsonl 必须覆盖 parse_failed**：`c_cross_validate.py` 在产生 per-scenario `parse_failed` diagnosis 时必须同步写入 per-scenario diagnostics 条目（`diagnosis=c_cross_result_parse_failed`），不只是 suite 级条目。
 
+5. **subagent 调用必须在对应阶段 gate 前落盘**：记录格式至少为 `{"agent":"...","stage":"...","mode":"native|generic_subagent|isolated_proxy|primary_fallback","status":"pass|fail","timestamp":"..."}`。C 分析阶段族使用 `stage=C_ANALYSIS`，不得拆成三个成功记录。
+
+6. **核心改写批次必须是机器可读证据**：`core_rewrite_batches.jsonl` 每行必须含 `stage=REWRITE_CORE_MODULES`、`status=complete|pass`、非空 `changed_files` 和非空 `obligations`；路径只允许位于 `flashDB_rust/src/`。
+
 `logs/trace` 是机器证据仓库，不是默认上下文输入。除 `workflow_state.json`、短阶段日志和必要错误 tail 外，subagent 默认不得全文读取 `c_api_model.json`、`c_test_model.json`、`rust_api_design.json`、`validation-matrix.json`、总设计文档或历史报告；需要模型事实时只能读取与当前阶段直接相关的局部片段。
 
 `READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API` 是 `C_ANALYSIS 阶段族`。主控必须一次拉起 `c-analyzer`，让它在同一个 subagent 任务内从当前 checkpoint 继续执行剩余 C 分析阶段；不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。如果 `READ_C_PROJECT` 已通过后用户要求继续 `BUILD_C_MODEL`，主控只能启动一次 `c-analyzer`，任务目标是从 `BUILD_C_MODEL` 继续到 `DESIGN_RUST_API` 或到用户指定的停止点。
@@ -205,6 +209,7 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 实现或完善：
 
 - `rust_api_design.json.modules` 声明的核心、支持和扩展模块
+- `rust_api_design.json.implementation_requirements` 声明的全部动态语义要求；sector/address、reload、control、GC、blob/iterator 和 status 要求必须落实到内部模型，不能只补 facade 返回值
 
 写入：
 

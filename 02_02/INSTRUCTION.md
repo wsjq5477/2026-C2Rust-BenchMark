@@ -140,8 +140,10 @@ python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 2. 基于 `rust_api_design.json` 和 C 模型的必要局部片段完善 `flashDB_rust/src/` 中设计声明的模块；不得全文读取 trace 大 JSON。
 3. 不链接 C 源码，不写 `todo!()`、`unimplemented!()`。
 4. 写入中文 `logs/trace/06-rewrite-core-modules.md` 和必要的 `logs/trace/core_rewrite_batches.jsonl`。
+   `core_rewrite_batches.jsonl` 每行必须是合法 JSON，并包含 `stage=REWRITE_CORE_MODULES`、`status=complete|pass`、非空 `changed_files` 和非空 `obligations`；changed files 只能位于 `flashDB_rust/src/`。
 5. 更新 `workflow_state.json`，`current_stage` 为 `REWRITE_CORE_MODULES`。
 6. 运行 `python3 work/tools/gate.py --stage REWRITE_CORE_MODULES`。
+   gate 会执行 `cargo fmt --all -- --check` 与 `cargo build --release`，任一失败都不得推进。
 7. 只有本阶段可按需读取 C 源码局部窗口。读取前必须说明要验证的模型缺口或实现疑点；超过 400 行的 C/Rust 文件禁止全文读取，必须先用 `rg` 定位，再读取命中点附近窗口，单次窗口不超过 120 行。
 
 ### VERIFY_RUST_WITH_C_TESTS

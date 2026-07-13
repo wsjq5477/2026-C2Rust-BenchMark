@@ -421,7 +421,14 @@ def _test_side_sources(c_root: Path, runner: Path, cases: list[dict[str, Any]]) 
     return sorted(sources)
 
 
-def _write_ffi_manifest(c_root: Path, c_cross: Path, trace: Path, objects: list[Path], root: Path) -> str:
+def _write_ffi_manifest(
+    suite: str,
+    c_root: Path,
+    c_cross: Path,
+    trace: Path,
+    objects: list[Path],
+    root: Path,
+) -> str:
     manifest_path = trace / "ffi_manifest.json"
     public_api: set[str] = set()
     api_path = trace / "c_api_model.json"
@@ -431,19 +438,45 @@ def _write_ffi_manifest(c_root: Path, c_cross: Path, trace: Path, objects: list[
     linker = shutil.which("ld")
     symbol_tool = shutil.which("nm") or shutil.which("llvm-nm")
     if not objects or linker is None or symbol_tool is None:
-        _write_json(manifest_path, {"required_ffi_apis": [], "reason": "partial-link tools or test objects unavailable"})
+        _write_json(manifest_path, {
+            "required_ffi_apis": [],
+            "suite_requirements": {},
+            "reason": "partial-link tools or test objects unavailable",
+        })
         return "ffi manifest skipped: partial-link tools or test objects unavailable\n"
-    combined = c_cross / "test-side-combined.o"
+    combined = c_cross / f"test-side-{_safe_c_suffix(suite)}.o"
     code, output = _run([linker, "-r", *[str(path) for path in objects], "-o", str(combined)])
     log = f"$ {_command_text([linker, '-r', *[str(path) for path in objects], '-o', str(combined)])}\n{output}\n"
     if code != 0:
-        _write_json(manifest_path, {"required_ffi_apis": [], "reason": "test-side partial link failed"})
+        _write_json(manifest_path, {
+            "required_ffi_apis": [],
+            "suite_requirements": {},
+            "reason": "test-side partial link failed",
+        })
         return log
     code, output = _run([symbol_tool, "-u", str(combined)])
     log += f"$ {_command_text([symbol_tool, '-u', str(combined)])}\n{output}\n"
     symbols = set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)$", output, flags=re.MULTILINE))
     required = sorted(symbols & public_api)
-    _write_json(manifest_path, {"required_ffi_apis": required, "source": "test_side_undefined_symbols", "object": _relative_log_path(combined, root)})
+    existing = load_json(manifest_path) if manifest_path.exists() else {}
+    suite_requirements = existing.get("suite_requirements") if isinstance(existing, dict) else None
+    suite_requirements = dict(suite_requirements) if isinstance(suite_requirements, dict) else {}
+    suite_requirements[suite] = {
+        "required_ffi_apis": required,
+        "object": _relative_log_path(combined, root),
+    }
+    aggregate = sorted({
+        symbol
+        for item in suite_requirements.values()
+        if isinstance(item, dict)
+        for symbol in item.get("required_ffi_apis", [])
+        if isinstance(symbol, str)
+    })
+    _write_json(manifest_path, {
+        "required_ffi_apis": aggregate,
+        "suite_requirements": suite_requirements,
+        "source": "test_side_undefined_symbols",
+    })
     return log
 
 
@@ -494,7 +527,7 @@ def _compile_suite_runner(
         objects.append(obj)
     trace = c_cross.parent
     workbench_root = trace.parent.parent
-    output_parts.append(_write_ffi_manifest(c_root, c_cross, trace, objects, workbench_root))
+    output_parts.append(_write_ffi_manifest(suite, c_root, c_cross, trace, objects, workbench_root))
     command = [
         cc,
         "-O0",
@@ -946,6 +979,7 @@ def build_matrix(
     # stale artifact from older workbench runs so it cannot be mistaken for
     # current evidence.
     (c_cross / "deferred.jsonl").unlink(missing_ok=True)
+    (trace / "ffi_manifest.json").unlink(missing_ok=True)
 
     test_model = load_json(trace / "c_test_model.json")
     malformed = []

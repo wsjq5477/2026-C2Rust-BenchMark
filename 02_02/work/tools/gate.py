@@ -7,6 +7,7 @@ import argparse
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -209,12 +210,7 @@ def required_signature_symbols(api_model: dict[str, Any], test_model: dict[str, 
         item for item in api_model.get("public_functions", [])
         if isinstance(item, str)
     } if isinstance(api_model.get("public_functions"), list) else set()
-    required = {
-        item
-        for key in ["kvdb_symbols", "tsdb_symbols"]
-        for item in api_model.get(key, [])
-        if isinstance(item, str)
-    }
+    required = set(public)
     cases = test_model.get("scorer_standard_cases")
     if isinstance(cases, list):
         for case in cases:
@@ -254,6 +250,8 @@ def check_function_signature_contract(api_model: dict[str, Any], test_model: dic
         return_type = signature.get("return_type")
         if not isinstance(return_type, dict) or not isinstance(return_type.get("raw"), str) or not return_type.get("raw"):
             errors.append(f"c_api_model.json function_signatures.{symbol}.return_type.raw must be present")
+        elif "unresolved:" in str(return_type.get("canonical", "")):
+            errors.append(f"c_api_model.json required return type is unresolved for {symbol}")
         params = signature.get("params")
         if not isinstance(params, list):
             errors.append(f"c_api_model.json function_signatures.{symbol}.params must be a list")
@@ -268,6 +266,19 @@ def check_function_signature_contract(api_model: dict[str, Any], test_model: dic
             for key in ["name", "raw_type", "canonical", "pointer_depth", "const"]:
                 if key not in param:
                     errors.append(f"c_api_model.json function_signatures.{symbol}.params[{param.get('index', '?')}] missing {key}")
+            if "unresolved:" in str(param.get("canonical", "")):
+                errors.append(
+                    f"c_api_model.json required parameter type is unresolved for {symbol} "
+                    f"param {param.get('name', param.get('index', '?'))}"
+                )
+            raw_type = param.get("raw_type")
+            typedefs = api_model.get("typedef_map")
+            typedef = typedefs.get(raw_type) if isinstance(typedefs, dict) and isinstance(raw_type, str) else None
+            if isinstance(typedef, dict) and int(typedef.get("pointer_depth", 0) or 0) > 0:
+                if int(param.get("pointer_depth", 0) or 0) < int(typedef["pointer_depth"]):
+                    errors.append(
+                        f"c_api_model.json pointer typedef depth was not expanded for {symbol} param {param.get('name')}"
+                    )
 
     for field in ["unresolved_signatures", "unresolved_types"]:
         unresolved = api_model.get(field, [])
@@ -328,7 +339,7 @@ def check_c_abi_facade_contract(design: dict[str, Any], api_model: dict[str, Any
     mapped_symbols = set(symbol_map) if isinstance(symbol_map, dict) else set()
     required_symbols = mapped_symbols | {
         item
-        for key in ["kvdb_symbols", "tsdb_symbols"]
+        for key in ["common_symbols", "kvdb_symbols", "tsdb_symbols"]
         for item in api_model.get(key, [])
         if isinstance(item, str)
     }
@@ -357,6 +368,11 @@ def check_c_abi_facade_contract(design: dict[str, Any], api_model: dict[str, Any
         return_info = function.get("return")
         if not isinstance(return_info, dict) or not isinstance(return_info.get("rust_ffi_type"), str) or not return_info.get("rust_ffi_type"):
             errors.append(f"rust_api_design.json c_abi_facade.functions {symbol} return.rust_ffi_type must be present")
+        else:
+            signature = signatures.get(symbol) if isinstance(signatures, dict) else None
+            c_return = signature.get("return_type") if isinstance(signature, dict) else None
+            if isinstance(c_return, dict) and c_return.get("raw") != "void" and return_info.get("rust_ffi_type") == "()":
+                errors.append(f"rust_api_design.json {symbol} maps non-void C return to Rust ()")
         params = function.get("params")
         if not isinstance(params, list):
             errors.append(f"rust_api_design.json c_abi_facade.functions {symbol} params must be a list")
@@ -368,6 +384,16 @@ def check_c_abi_facade_contract(design: dict[str, Any], api_model: dict[str, Any
                 for key in ["name", "c_type", "rust_ffi_type"]:
                     if not isinstance(param.get(key), str) or not param.get(key):
                         errors.append(f"rust_api_design.json c_abi_facade.functions {symbol} params[{index}] must include {key}")
+                c_type = param.get("c_type")
+                rust_type = str(param.get("rust_ffi_type") or "")
+                typedefs = api_model.get("typedef_map")
+                typedef = typedefs.get(c_type) if isinstance(typedefs, dict) and isinstance(c_type, str) else None
+                if isinstance(typedef, dict):
+                    category = typedef.get("category")
+                    if int(typedef.get("pointer_depth", 0) or 0) > 0 and category != "function_pointer" and not rust_type.startswith("*"):
+                        errors.append(f"rust_api_design.json {symbol} must map pointer typedef {c_type} to a Rust pointer")
+                    if category == "function_pointer" and not rust_type.startswith("Option<unsafe extern \"C\" fn("):
+                        errors.append(f"rust_api_design.json {symbol} must map callback typedef {c_type} to a typed callback")
 
     type_map = facade.get("c_type_map") if isinstance(facade, dict) else None
     if not isinstance(type_map, dict):
@@ -584,6 +610,24 @@ def check_common_after_scaffold(root: Path) -> list[str]:
         if not path.exists():
             errors.append(f"missing {path.relative_to(root)}")
     return errors
+
+
+def check_project_command(project: Path, command: list[str], label: str) -> list[str]:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=project,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=180,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [f"{label} could not run: {exc}"]
+    if completed.returncode == 0:
+        return []
+    tail = "\n".join(completed.stdout.splitlines()[-20:])
+    return [f"{label} failed:\n{tail}"]
 
 
 def check_no_c_sources_in_src(root: Path) -> list[str]:
@@ -1041,6 +1085,9 @@ def check_generate_rust_scaffold(root: Path) -> list[str]:
                         errors.append(f"src/lib.rs missing pub mod {module};")
             errors.extend(check_typed_ffi_scaffold(project, design))
 
+    if project.exists():
+        errors.extend(check_project_command(project, ["cargo", "check", "--all-targets"], "generated scaffold cargo check"))
+
     stage_log = root / "logs" / "trace" / "05-generate-rust-scaffold.md"
     if not stage_log.exists():
         errors.append("missing logs/trace/05-generate-rust-scaffold.md")
@@ -1080,6 +1127,33 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
                 errors.append(f"flashDB_rust/{rel_path} must not contain todo!() or unimplemented!()")
 
     errors.extend(check_no_c_sources_in_src(root))
+    batches, batches_error = load_jsonl(root / "logs" / "trace" / "core_rewrite_batches.jsonl")
+    if batches_error:
+        errors.append(f"core_rewrite_batches.jsonl: {batches_error}")
+    elif not batches:
+        errors.append("core_rewrite_batches.jsonl must contain at least one implementation batch")
+    else:
+        for index, batch in enumerate(batches, start=1):
+            if batch.get("stage") != "REWRITE_CORE_MODULES":
+                errors.append(f"core_rewrite_batches.jsonl record {index} stage must be REWRITE_CORE_MODULES")
+            if batch.get("status") not in {"complete", "pass"}:
+                errors.append(f"core_rewrite_batches.jsonl record {index} must include complete/pass status")
+            changed_files = batch.get("changed_files")
+            if not isinstance(changed_files, list) or not changed_files:
+                errors.append(f"core_rewrite_batches.jsonl record {index} must include changed_files")
+            elif any(
+                not isinstance(path, str)
+                or not path.startswith("flashDB_rust/src/")
+                or ".." in Path(path).parts
+                for path in changed_files
+            ):
+                errors.append(f"core_rewrite_batches.jsonl record {index} changed_files must stay under flashDB_rust/src/")
+            obligations = batch.get("obligations")
+            if not isinstance(obligations, list) or not obligations:
+                errors.append(f"core_rewrite_batches.jsonl record {index} must include implemented obligations")
+    if project.exists():
+        errors.extend(check_project_command(project, ["cargo", "fmt", "--all", "--", "--check"], "rewritten project cargo fmt"))
+        errors.extend(check_project_command(project, ["cargo", "build", "--release"], "rewritten project release build"))
     if not (root / "logs" / "trace" / "06-rewrite-core-modules.md").exists():
         errors.append("missing logs/trace/06-rewrite-core-modules.md")
     return errors
@@ -1322,6 +1396,32 @@ def check_c_cross_intermediate_evidence(root: Path) -> list[str]:
     matrix, matrix_error = load_json(trace / "validation-matrix.json")
     if matrix_error:
         return [f"validation-matrix.json: {matrix_error}"]
+
+    link_check, link_error = load_json(c_cross / "link-check.json")
+    if not link_error and link_check.get("status") == "pass":
+        ffi_manifest, ffi_error = load_json(trace / "ffi_manifest.json")
+        if ffi_error:
+            errors.append(f"ffi_manifest.json: {ffi_error}")
+        else:
+            suite_requirements = ffi_manifest.get("suite_requirements")
+            aggregate = ffi_manifest.get("required_ffi_apis")
+            if not isinstance(suite_requirements, dict) or not suite_requirements:
+                errors.append("ffi_manifest.json must retain per-suite requirements")
+            if not isinstance(aggregate, list):
+                errors.append("ffi_manifest.json required_ffi_apis must be a list")
+            if isinstance(suite_requirements, dict) and isinstance(aggregate, list):
+                expected = {
+                    symbol
+                    for item in suite_requirements.values()
+                    if isinstance(item, dict)
+                    for symbol in item.get("required_ffi_apis", [])
+                    if isinstance(symbol, str)
+                }
+                if set(aggregate) != expected:
+                    errors.append("ffi_manifest.json aggregate must equal the union of per-suite requirements")
+                selected = matrix.get("selected_suites")
+                if isinstance(selected, list) and not set(selected).issubset(set(suite_requirements)):
+                    errors.append("ffi_manifest.json must include every successfully linked selected suite")
 
     for filename, expected_phase in [("build-check.json", "build"), ("layout-check.json", "layout"), ("link-check.json", "link")]:
         data, data_error = load_json(c_cross / filename)

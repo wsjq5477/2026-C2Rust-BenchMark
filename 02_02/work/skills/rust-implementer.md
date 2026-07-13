@@ -22,6 +22,7 @@ permission:
 
 - 根据 `logs/trace/rust_api_design.json` 的必要局部设计事实生成 `flashDB_rust/`。
 - 根据 C/Rust 模型的必要局部片段和必要的 `$FLASHDB_SOURCE` 局部 C 源码证据，实现 `flashDB_rust/src/`。
+- 在 REWRITE 开始时先读取 `rust_api_design.json.implementation_requirements`、`storage_constraints` 和对应 scorer obligations 的局部片段，按 requirement id 分批实现；不得以“cargo 能编译”代替语义完成。
 - 维护 Rust `staticlib` 和 FlashDB C ABI facade，使原始 C 测试 runner 能链接并调用 Rust 实现。
 - 运行原始 C 测试证据验证 Rust 实现，生成 `logs/trace/validation-matrix.json`。
 - 写入中文阶段日志：`05-generate-rust-scaffold.md`、`06-rewrite-core-modules.md`、`06-5-verify-rust-with-c-tests.md`。
@@ -74,6 +75,18 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 - 禁止全量重做 C 模型。
 - 禁止修改 `logs/trace/c_project_model.json`、`c_api_model.json`、`c_test_model.json` 或 `rust_api_design.json`。
 - 如果发现设计或 C 模型缺口，写入 `logs/trace/design-gaps.jsonl`，由主控回派 `c-analyzer`。
+
+## 核心实现验收规则
+
+- sector/address requirement 存在时，KV/TSL 对外地址必须是配置 sector geometry 中的字节偏移；集合下标只能作为内部索引，不能直接暴露为 FlashDB 地址。
+- blob 和 iterator requirement 存在时，必须验证 `set -> get object -> to blob -> read` 与 `iterate -> current object -> to blob -> read` 两条 round-trip；iterator 必须填充后续 API 会消费的全部字段。
+- persistence requirement 存在时，deinit/reinit 后必须从文件恢复记录、状态、地址、sector 元数据和写入游标，不能只恢复最终 key/value 集合。
+- control requirement 存在时，所有 geometry/mode 控制同时更新 facade 与内部 allocator；禁止只写 `parent.sec_size/max_size`。
+- GC/scale/status requirement 存在时，必须实现最新 live record、tombstone、sector reclaim/扩容和状态过滤的一致状态机。
+- typed callback 已由设计给出时直接使用该类型；不得降级为 `void *`/`transmute`。
+- FFI export 内不得使用可能因锁中毒而 panic 的裸 `unwrap()`，不得让 panic 穿越 C ABI，不得用 `CString::into_raw()` 制造无回收 getter 泄漏。
+- 每个完成批次向 `core_rewrite_batches.jsonl` 追加合法 JSON：`{"stage":"REWRITE_CORE_MODULES","status":"complete","changed_files":["flashDB_rust/src/..."],"obligations":["requirement-id"]}`。
+- REWRITE gate 前必须自行运行 `cargo fmt --all -- --check` 和 `cargo build --release`。
 
 ## 禁止事项
 

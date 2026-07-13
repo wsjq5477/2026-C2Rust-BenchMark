@@ -22,18 +22,15 @@ CONTROL_WORDS = {
     "defined",
 }
 
-C_CROSS_DISABLED_TESTS = {
-    "test_fdb_gc": "depends_on_private_storage_layout_and_gc_sector_management",
-    "test_fdb_gc2": "depends_on_private_storage_layout_and_gc_sector_management",
-    "test_fdb_scale_up": "depends_on_private_storage_layout_and_sector_management",
-}
-
-
 def determine_c_cross_enabled(name: str) -> dict[str, Any]:
-    reason = C_CROSS_DISABLED_TESTS.get(name)
-    if reason:
-        return {"enabled": False, "reason": reason}
-    return {"enabled": True, "reason": "behavior_test_supported"}
+    """Keep every dynamically registered C test eligible for C-cross.
+
+    A test may only become not_supported after the validation harness has
+    produced concrete evidence.  Model construction must not pre-disable
+    cases by name because doing so hides precisely the storage semantics the
+    migration is expected to preserve.
+    """
+    return {"enabled": True, "reason": "registered_behavior_test"}
 
 
 def read_text(path: Path) -> str:
@@ -130,6 +127,7 @@ def extract_typedef_map(text: str) -> dict[str, dict[str, Any]]:
                 "target": callback.group("return").strip(),
                 "category": "function_pointer",
                 "params": callback.group("params").strip(),
+                "pointer_depth": 1,
             }
             continue
 
@@ -142,19 +140,42 @@ def extract_typedef_map(text: str) -> dict[str, dict[str, Any]]:
             }
             continue
 
-        alias = re.match(r"typedef\s+(?P<target>.+?)\s+(?P<name>" + IDENT + r")\s*;", compact)
+        # Match the final identifier rather than requiring whitespace before
+        # it.  C commonly writes pointer aliases as ``*fdb_kv_t``.
+        alias = re.match(r"typedef\s+(?P<target>.+?)(?P<name>" + IDENT + r")\s*;$", compact)
         if alias:
             target = alias.group("target").strip()
+            pointer_depth = target.count("*")
+            target_base = normalize_c_type(target.replace("*", " "))
             result[alias.group("name")] = {
                 "raw": compact,
-                "target": target,
-                "category": "alias",
+                "target": target_base,
+                "category": "pointer_alias" if pointer_depth else "alias",
+                "pointer_depth": pointer_depth,
             }
     return result
 
 
+def strip_preprocessor_directives(text: str) -> str:
+    """Remove preprocessor directives, including continued macro bodies."""
+    lines: list[str] = []
+    in_directive = False
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not in_directive and stripped.startswith("#"):
+            in_directive = line.rstrip().endswith("\\")
+            lines.append("")
+            continue
+        if in_directive:
+            in_directive = line.rstrip().endswith("\\")
+            lines.append("")
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def collapse_function_lines(text: str) -> str:
-    clean = strip_comments(text)
+    clean = strip_preprocessor_directives(strip_comments(text))
     clean = re.sub(r"\\\n", " ", clean)
     clean = re.sub(r"\s+", " ", clean)
     return clean
@@ -186,6 +207,32 @@ def normalize_c_type(raw: str) -> str:
     return re.sub(r"\s+", " ", raw.replace(" *", " *").replace("* ", "* ")).strip()
 
 
+def resolve_typedef(base: str, typedef_map: dict[str, dict[str, Any]]) -> tuple[str, int, str]:
+    """Resolve alias chains into an ABI base, effective pointer depth and kind."""
+    current = base
+    pointer_depth = 0
+    seen: set[str] = set()
+    category = "unresolved"
+    while current in typedef_map and current not in seen:
+        seen.add(current)
+        entry = typedef_map[current]
+        category = str(entry.get("category", "alias"))
+        if category == "function_pointer":
+            return current, pointer_depth + 1, category
+        pointer_depth += int(entry.get("pointer_depth", 0) or 0)
+        target = str(entry.get("target", "")).strip()
+        if not target:
+            break
+        current = normalize_c_type(target.replace("*", " "))
+    if current.startswith("struct "):
+        category = "struct"
+    elif current.startswith("enum "):
+        category = "enum"
+    elif current in {"void", "char", "int", "bool", "size_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t"}:
+        category = "primitive"
+    return current, pointer_depth, category
+
+
 def parse_param(raw: str, index: int, typedef_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
     text = normalize_c_type(raw)
     if text == "...":
@@ -212,14 +259,20 @@ def parse_param(raw: str, index: int, typedef_map: dict[str, dict[str, Any]]) ->
             name = match.group("name")
             type_part = (match.group("prefix") + match.group("stars")).strip()
 
-    pointer_depth = type_part.count("*")
+    declared_pointer_depth = type_part.count("*")
+    pointer_depth = declared_pointer_depth
     const = bool(re.search(r"\bconst\b", type_part))
     base = normalize_c_type(type_part.replace("*", " "))
     base = re.sub(r"\bconst\b", "", base).strip()
     if base in typedef_map:
-        target = typedef_map[base]
-        category = target.get("category", "typedef")
-        canonical = f"{'pointer:' if pointer_depth else ''}{category}:{base}"
+        resolved_base, alias_pointer_depth, category = resolve_typedef(base, typedef_map)
+        pointer_depth = declared_pointer_depth + alias_pointer_depth
+        if category == "function_pointer":
+            canonical = f"function_pointer:{base}"
+        elif category in {"struct", "enum"}:
+            canonical = f"{'pointer:' if pointer_depth else ''}{resolved_base}"
+        else:
+            canonical = f"{'pointer:' if pointer_depth else ''}{category}:{resolved_base}"
     elif base.startswith("struct "):
         canonical = f"{'pointer:' if pointer_depth else ''}{base}"
     elif base.startswith("enum "):
@@ -235,6 +288,7 @@ def parse_param(raw: str, index: int, typedef_map: dict[str, dict[str, Any]]) ->
         "raw_type": type_part,
         "canonical": canonical,
         "pointer_depth": pointer_depth,
+        "declared_pointer_depth": declared_pointer_depth,
         "const": const,
         "nullable": "unknown",
         "ownership": "borrowed" if const and pointer_depth else ("borrowed_mut" if pointer_depth else "value"),
@@ -246,9 +300,20 @@ def parse_return_type(raw: str, typedef_map: dict[str, dict[str, Any]]) -> dict[
     base = re.sub(r"\bconst\b", "", text.replace("*", " ")).strip()
     pointer_depth = text.count("*")
     if base in typedef_map:
-        category = typedef_map[base].get("category", "typedef")
-        canonical = f"{'pointer:' if pointer_depth else ''}{category}:{base}"
-        return_category = "status_code" if base.endswith("err_t") or "err" in base.lower() else str(category)
+        resolved_base, alias_pointer_depth, category = resolve_typedef(base, typedef_map)
+        pointer_depth += alias_pointer_depth
+        if category == "function_pointer":
+            canonical = f"function_pointer:{base}"
+        elif category in {"struct", "enum"}:
+            canonical = f"{'pointer:' if pointer_depth else ''}{resolved_base}"
+        else:
+            canonical = f"{'pointer:' if pointer_depth else ''}{category}:{resolved_base}"
+        if base.endswith("err_t") or "err" in base.lower():
+            return_category = "status_code"
+        elif pointer_depth:
+            return_category = "struct_pointer" if resolved_base.startswith("struct ") else "pointer"
+        else:
+            return_category = str(category)
     elif base == "void":
         canonical = "primitive:void"
         return_category = "void"
@@ -258,7 +323,7 @@ def parse_return_type(raw: str, typedef_map: dict[str, dict[str, Any]]) -> dict[
     else:
         canonical = f"{'pointer:' if pointer_depth else ''}primitive:{base}" if base in {"bool", "int", "size_t", "char", "uint32_t"} else f"{'pointer:' if pointer_depth else ''}unresolved:{base}"
         return_category = "primitive" if "unresolved:" not in canonical else "unresolved"
-    return {"raw": text, "canonical": canonical, "category": return_category}
+    return {"raw": text, "canonical": canonical, "category": return_category, "pointer_depth": pointer_depth}
 
 
 def extract_function_signatures(text: str, file_name: str, typedef_map: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -270,7 +335,7 @@ def extract_function_signatures(text: str, file_name: str, typedef_map: dict[str
     signatures: dict[str, dict[str, Any]] = {}
     for match in pattern.finditer(one_line):
         name = match.group("name")
-        if name in CONTROL_WORDS:
+        if name in CONTROL_WORDS or name in typedef_map or "typedef" in match.group("return").split():
             continue
         raw_params = match.group("params").strip()
         params = [] if raw_params in {"", "void"} else [
@@ -304,12 +369,57 @@ def extract_functions(text: str, file_name: str) -> list[dict[str, str]]:
         if name in CONTROL_WORDS:
             continue
         kind = "definition" if match.group("end") == "{" else "prototype"
+        linkage = "internal" if re.search(r"\bstatic\b", match.group("signature")) else "external"
         key = (file_name, name)
         if key in seen:
             continue
         seen.add(key)
-        functions.append({"name": name, "file": file_name, "kind": kind})
+        functions.append({"name": name, "file": file_name, "kind": kind, "linkage": linkage})
     return sorted(functions, key=lambda item: (item["file"], item["name"]))
+
+
+def annotate_compiler_confirmed_typedefs(
+    typedef_map: dict[str, dict[str, Any]], abi_layouts: list[dict[str, Any]]
+) -> None:
+    """Use compiler-confirmed field widths to resolve conditional ABI aliases."""
+    time_size = None
+    for layout in abi_layouts:
+        if not isinstance(layout, dict) or layout.get("name") != "fdb_tsl":
+            continue
+        for field in layout.get("fields", []):
+            if isinstance(field, dict) and field.get("name") == "time":
+                time_size = field.get("sizeof")
+                break
+    entry = typedef_map.get("fdb_time_t")
+    if isinstance(entry, dict) and time_size in {4, 8}:
+        entry["target"] = "int32_t" if time_size == 4 else "int64_t"
+        entry["abi_size"] = time_size
+        entry["compiler_confirmed"] = True
+
+
+def collect_unresolved_type_evidence(
+    signatures: dict[str, dict[str, Any]],
+) -> list[dict[str, str]]:
+    unresolved: list[dict[str, str]] = []
+    for symbol, signature in sorted(signatures.items()):
+        return_type = signature.get("return_type")
+        if isinstance(return_type, dict) and "unresolved:" in str(return_type.get("canonical", "")):
+            unresolved.append({
+                "symbol": symbol,
+                "reason": f"unresolved return type: {return_type.get('raw')}",
+                "source": f"function_signatures.{symbol}.return_type",
+            })
+        params = signature.get("params")
+        if not isinstance(params, list):
+            continue
+        for param in params:
+            if isinstance(param, dict) and "unresolved:" in str(param.get("canonical", "")):
+                unresolved.append({
+                    "symbol": symbol,
+                    "reason": f"unresolved parameter type: {param.get('raw_type')}",
+                    "source": f"function_signatures.{symbol}.params[{param.get('index', '?')}]",
+                })
+    return unresolved
 
 
 def extract_registered_tests(text: str) -> list[str]:
@@ -830,6 +940,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     enum_values: list[str] = []
     macros: list[str] = []
     function_signatures: dict[str, dict[str, Any]] = {}
+    header_texts: dict[str, str] = {}
 
     for file_name in sorted(dict.fromkeys(headers + source_files + test_files)):
         path = root / file_name
@@ -840,24 +951,44 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         macros.extend(extract_macros(text))
         structs.extend(extract_structs(text, file_name))
         typedefs.extend(extract_typedefs(text, file_name))
-        typedef_map.update(extract_typedef_map(text))
+        if file_name.startswith("inc/"):
+            header_texts[file_name] = text
+            typedef_map.update(extract_typedef_map(text))
         enums, values = extract_enum_blocks(text, file_name)
         enum_blocks.extend(enums)
         enum_values.extend(values)
         all_functions.extend(extract_functions(text, file_name))
-        if file_name.startswith("inc/"):
-            function_signatures.update(extract_function_signatures(text, file_name, typedef_map))
+    # Parse signatures only after all public-header typedefs are available so
+    # pointer aliases and callback typedefs resolve consistently regardless of
+    # header traversal order.
+    for file_name, text in sorted(header_texts.items()):
+        function_signatures.update(extract_function_signatures(text, file_name, typedef_map))
 
-    public_functions = sorted(
-        dict.fromkeys(
-            item["name"]
-            for item in all_functions
-            if item["file"].startswith("inc/") or item["name"].startswith("fdb_")
-        )
-    )
+    # FlashDB's externally callable API follows the fdb_* namespace and must
+    # have a header declaration.  This excludes macros, primitive typedefs,
+    # low-level _fdb_* helpers and test-only fdb_* functions.
+    public_functions = sorted(name for name in function_signatures if name.startswith("fdb_"))
     kvdb_symbols = sorted([name for name in public_functions if "kv" in name or "kvdb" in name])
     tsdb_symbols = sorted([name for name in public_functions if "tsl" in name or "tsdb" in name])
+    common_symbols = sorted(set(public_functions) - set(kvdb_symbols) - set(tsdb_symbols))
     abi_layouts = extract_abi_layouts(root, headers, structs)
+    annotate_compiler_confirmed_typedefs(typedef_map, abi_layouts)
+    unresolved_signatures = [
+        {
+            "symbol": item["name"],
+            "reason": "external fdb_* definition has no public header signature",
+            "source": item["file"],
+        }
+        for item in all_functions
+        if item.get("kind") == "definition"
+        and item.get("linkage") == "external"
+        and item.get("file", "").startswith("src/")
+        and item.get("name", "").startswith("fdb_")
+        and item["name"] not in function_signatures
+    ]
+    unresolved_types = collect_unresolved_type_evidence(
+        {name: function_signatures[name] for name in public_functions}
+    )
 
     test_functions: list[str] = []
     registered_tests: list[str] = []
@@ -972,8 +1103,8 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
             for item in enum_blocks
             if isinstance(item.get("name"), str)
         },
-        "unresolved_signatures": [],
-        "unresolved_types": [],
+        "unresolved_signatures": unresolved_signatures,
+        "unresolved_types": unresolved_types,
         "all_functions": all_functions,
         "structs": sorted({(item["file"], item["name"]) for item in structs}),
         "typedefs": sorted({(item["file"], item["name"]) for item in typedefs}),
@@ -983,6 +1114,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         "abi_layouts": abi_layouts,
         "kvdb_symbols": kvdb_symbols,
         "tsdb_symbols": tsdb_symbols,
+        "common_symbols": common_symbols,
     }
     c_api_model["structs"] = [{"file": file, "name": name} for file, name in c_api_model["structs"]]
     c_api_model["typedefs"] = [{"file": file, "name": name} for file, name in c_api_model["typedefs"]]

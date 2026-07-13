@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,14 @@ def sorted_rel_files(root: Path, base: Path, suffixes: set[str] | None = None) -
     return sorted(files)
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def scan_project(source: Path | str) -> dict[str, Any]:
     root = Path(source).resolve()
     if not root.exists():
@@ -61,6 +70,20 @@ def scan_project(source: Path | str) -> dict[str, Any]:
         if path.is_file() and path.name in BUILD_FILE_NAMES:
             build_files.append(rel(path, root))
     build_files.sort()
+    evidence_files = sorted(dict.fromkeys(core_sources + test_sources + headers + build_files))
+    file_evidence = {
+        name: {
+            "sha256": sha256_file(root / name),
+            "size": (root / name).stat().st_size,
+        }
+        for name in evidence_files
+    }
+    aggregate = hashlib.sha256()
+    for name, evidence in file_evidence.items():
+        aggregate.update(name.encode("utf-8"))
+        aggregate.update(b"\0")
+        aggregate.update(evidence["sha256"].encode("ascii"))
+        aggregate.update(b"\n")
 
     manifest: dict[str, Any] = {
         "source_root": str(root),
@@ -70,6 +93,8 @@ def scan_project(source: Path | str) -> dict[str, Any]:
         "test_sources": test_sources,
         "headers": headers,
         "build_files": build_files,
+        "file_evidence": file_evidence,
+        "input_digest": aggregate.hexdigest(),
         "counts": {
             "core_sources": len(core_sources),
             "test_sources": len(test_sources),

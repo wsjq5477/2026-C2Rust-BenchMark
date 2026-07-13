@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -287,7 +288,7 @@ def collect_type_aliases(design: dict[str, Any]) -> list[str]:
             return_info = func.get("return")
             if isinstance(return_info, dict):
                 rt = str(return_info.get("rust_ffi_type") or "").strip()
-                if rt and rt not in struct_names and rt not in ("()", "bool", "i32", "i64", "u32", "u64", "u8", "u16", "usize", "std::ffi::c_int", "*mut std::ffi::c_void", "*const std::ffi::c_void", "*mut std::ffi::c_char", "*const std::ffi::c_char") and not rt.startswith("*"):
+                if rt and rt not in struct_names and rt not in ("()", "bool", "i32", "i64", "u32", "u64", "u8", "u16", "usize", "std::ffi::c_int", "*mut std::ffi::c_void", "*const std::ffi::c_void", "*mut std::ffi::c_char", "*const std::ffi::c_char") and not rt.startswith(("*", "Option<unsafe extern")):
                     if rt not in needed:
                         needed[rt] = "u32"
             params = func.get("params")
@@ -296,7 +297,7 @@ def collect_type_aliases(design: dict[str, Any]) -> list[str]:
                     if not isinstance(param, dict):
                         continue
                     pt = str(param.get("rust_ffi_type") or "").strip()
-                    if pt and pt not in struct_names and pt not in ("()", "bool", "i32", "i64", "u32", "u64", "u8", "u16", "usize", "std::ffi::c_int", "*mut std::ffi::c_void", "*const std::ffi::c_void", "*mut std::ffi::c_char", "*const std::ffi::c_char") and not pt.startswith("*"):
+                    if pt and pt not in struct_names and pt not in ("()", "bool", "i32", "i64", "u32", "u64", "u8", "u16", "usize", "std::ffi::c_int", "*mut std::ffi::c_void", "*const std::ffi::c_void", "*mut std::ffi::c_char", "*const std::ffi::c_char") and not pt.startswith(("*", "Option<unsafe extern")):
                         if pt not in needed:
                             needed[pt] = "u32"
     alias_lines: list[str] = []
@@ -321,6 +322,8 @@ def neutral_return(rust_type: str, struct_names: set[str] | None = None) -> str:
         return ""
     if stripped == "bool":
         return "false"
+    if stripped.startswith("Option<unsafe extern"):
+        return "None"
     if stripped.startswith("*const"):
         return "std::ptr::null()"
     if stripped.startswith("*mut"):
@@ -493,6 +496,14 @@ pub fn {function_name}() -> bool {{
     write(project / "src" / "ffi" / "layout_probe.rs", generate_layout_probe(design))
 
     (project / "tests").mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["cargo", "fmt", "--all"],
+        cwd=project,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
