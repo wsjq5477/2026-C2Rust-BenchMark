@@ -20,6 +20,8 @@ permission:
 
 如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
 
+调度必须提供 `workflowctl begin` 生成的 task packet。你只读取 packet 引用的局部证据并写业务产物/中文日志；不得直接编辑 `workflow_state.json`、stage receipt 或 `subagent-invocations.jsonl`。同一 C_ANALYSIS session 可调用 `workflowctl finish/begin` 连续推进三个阶段，但所有状态和 gate 结论必须由工具生成。
+
 这三个阶段是 `C_ANALYSIS 阶段族`，必须在一次 subagent 任务内连续执行。主控不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。如果从中间 checkpoint 恢复，你必须从当前 checkpoint 继续执行剩余 C 分析阶段。
 
 ## 职责范围
@@ -29,10 +31,10 @@ permission:
 - 基于当前 C 输入动态生成 `logs/trace/c_project_model.json`、`logs/trace/c_api_model.json`、`logs/trace/c_test_model.json`，其中 `c_api_model.json.function_signatures` 必须记录 public header 中关键 C ABI 函数的 return type、参数顺序、参数类型、pointer depth、const 信息和声明来源，`c_api_model.json.abi_layouts` 必须记录 C 编译器确认的 ABI struct 布局。
 - 维护 `c_api_model.json.typedef_map`、`enum_map`、`unresolved_signatures` 和 `unresolved_types`。C runner、scorer case 或 layout checker 依赖的关键路径不得 unresolved；非关键扩展符号如果 unresolved，必须记录 `symbol`、`reason`、`source` 和后续去向。
 - 在 `c_test_model.json.registered_test_invocations` 中保留 `TEST_RUN(...)` 的动态注册顺序、来源 runner 和测试函数名；不得固定测试数量或 scorer case 数量。
+- 每个 registered/scorer scenario 必须包含有序 `scenario_ir`，显式保留 call/control/assert 步骤及 helper/callback 展开顺序，不能只给无序 symbol 集合。
 - 基于 C 模型和测试模型生成 `logs/trace/rust_api_design.json`，其中 `c_abi_facade.structs` 必须来自 `c_api_model.json.abi_layouts`，`c_abi_facade.functions` 必须来自 `c_api_model.json.function_signatures`，`c_abi_facade.c_type_map` 必须说明 C->Rust FFI 类型映射和 unresolved 类型。
 - 写入中文阶段日志：`02-read-c-project.md`、`03-build-c-model.md`、`04-design-rust-api.md`。
-- 更新 `logs/trace/workflow_state.json`。
-- 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。
+- 阶段状态、回执和调用证据由主控通过 `workflowctl` 生成；你不得手写。
 
 ## 执行要求
 
@@ -40,12 +42,11 @@ permission:
 
 ```bash
 python3 work/tools/scan_c_project.py --source "$FLASHDB_SOURCE" --output logs/trace/input_manifest.json
-python3 work/tools/gate.py --stage READ_C_PROJECT
 python3 work/tools/build_c_model.py --manifest logs/trace/input_manifest.json --output-dir logs/trace
-python3 work/tools/gate.py --stage BUILD_C_MODEL
 python3 work/tools/design_rust_api.py --project-model logs/trace/c_project_model.json --api-model logs/trace/c_api_model.json --test-model logs/trace/c_test_model.json --output logs/trace/rust_api_design.json
-python3 work/tools/gate.py --stage DESIGN_RUST_API
 ```
+
+每个阶段写完 required outputs 后调用 `workflowctl finish`；同一 session 读取 `status`，再对下一阶段调用 `begin`。不要手工运行 gate 或修改状态来模拟通过。
 
 ## 边界
 

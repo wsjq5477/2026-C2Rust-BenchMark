@@ -16,6 +16,8 @@ permission:
 
 如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
 
+每次调度必须提供 `workflowctl begin` 生成的 task packet。你只读取 packet 中的 requirements、symbols、scenario IR 和 evidence paths；不得直接编辑 `workflow_state.json`、stage receipt 或 `subagent-invocations.jsonl`，也不得凭自然语言声明 gate 通过。
+
 编辑边界：只允许修改本职责内的 `flashDB_rust/**` 和规定的 `logs/trace/**` 运行证据；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时，不得自行修复；由主控追加到 `logs/trace/c-cross/workbench-issues.jsonl`。
 
 ## 职责范围
@@ -26,8 +28,7 @@ permission:
 - 维护 Rust `staticlib` 和 FlashDB C ABI facade，使原始 C 测试 runner 能链接并调用 Rust 实现。
 - 运行原始 C 测试证据验证 Rust 实现，生成 `logs/trace/validation-matrix.json`。
 - 写入中文阶段日志：`05-generate-rust-scaffold.md`、`06-rewrite-core-modules.md`、`06-5-verify-rust-with-c-tests.md`。
-- 更新 `logs/trace/workflow_state.json`。
-- 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。
+- 状态、stage receipt 和调用证据由主控通过 `workflowctl` 生成；你不得手写。
 
 ## 执行要求
 
@@ -35,13 +36,16 @@ permission:
 
 ```bash
 python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust
-python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
-python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
+python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --scaffold-layout-only
+python3 work/tools/core_impl_audit.py --root . --project flashDB_rust --manifest logs/trace/scaffold-manifest.json --design logs/trace/rust_api_design.json --output logs/trace/implementation-audit.json
 python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind checkpoint --trigger core_complete
-python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 ```
 
-`VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。工具按 build/layout/link/full 分层执行并解析 runner 的逐测试输出；全量 invocation 必须都有真实结果或 unresolved 证据。实现期间可按动态发现的 suite 使用 `--suite <suite>`，不得硬编码 suite 名或用例总数。阶段只输出 `PASS` 或 `CONTINUE_WITH_FAILURES`；失败不得伪装为通过，但后者仍允许测试迁移、Rust 测试、评分和最终报告。平台问题由主控登记到 `logs/trace/c-cross/workbench-issues.jsonl`。最终全量 C-cross 由 `REPORT_AND_VERIFY` 在所有修复后另行执行。
+`GENERATE_RUST_SCAFFOLD` 必须写 scaffold manifest，并在任何模型实现前通过 compiler-confirmed layout-only 检查。复杂聚合字段优先使用编译器确认 size/offset/align 的 byte region，不得从 C type 字符串猜嵌套 struct、union 或 array。
+
+`REWRITE_CORE_MODULES` 必须通过 implementation audit：与 baseline 相同、只删 marker/改空白、constant-only neutral body 和 placeholder module 都不算实现。batch changed_files 必须与 workflow receipt 的实际 diff 一致。
+
+`VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。工具按 build/layout/link/full 分层执行并解析 runner 的逐测试输出；全量 invocation 必须都有真实结果或 unresolved 证据。实现期间可按动态发现的 suite 使用 `--suite <suite>`，不得硬编码 suite 名或用例总数。checkpoint/repair 写出完整证据后返回 0，`CONTINUE_WITH_FAILURES` 必须消费 repair plan，按 target agent、scenario IDs、symbols、requirements、selected suites 和 verification command 定向修复，直到全通过或预算耗尽。crash/timeout 的 not_run 必须消费 isolation queue；regression 时不得覆盖 best-known。只有 final 非全通过返回非零。平台问题由工具登记到 `logs/trace/c-cross/workbench-issues.jsonl`。
 
 ## 上下文边界
 
@@ -57,6 +61,7 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 `logs/trace/rust_api_design.json.c_abi_facade` 是 FFI struct 的唯一布局合同。实现 C ABI facade 时必须遵守，但只读取当前需要的 struct 局部片段：
 
 - `GENERATE_RUST_SCAFFOLD` 阶段必须创建 `src/ffi/mod.rs`、`src/ffi/c_types.rs`、`src/ffi/c_abi.rs` 和 `src/ffi/layout_probe.rs`，根级 `src/c_abi.rs` 只能作为兼容 re-export。
+- scaffold generator 必须输出 `logs/trace/scaffold-manifest.json`；FFI stub marker 只允许存在于 scaffold checkpoint，REWRITE gate 前必须全部消除。
 - 所有暴露给 C runner 或 layout checker 的 FFI struct 必须使用 `#[repr(C)]`。
 - Rust 字段顺序、类型宽度、`sizeof`、`alignof` 和字段 offset 必须匹配 `c_abi_facade.structs`。
 - 不得用 `_opaque` 替代 C runner 或 layout checker 需要字段 offset 的 struct；必须生成真实字段和必要 padding。
@@ -86,6 +91,7 @@ python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
 - typed callback 已由设计给出时直接使用该类型；不得降级为 `void *`/`transmute`。
 - FFI export 内不得使用可能因锁中毒而 panic 的裸 `unwrap()`，不得让 panic 穿越 C ABI，不得用 `CString::into_raw()` 制造无回收 getter 泄漏。
 - 每个完成批次向 `core_rewrite_batches.jsonl` 追加合法 JSON：`{"stage":"REWRITE_CORE_MODULES","status":"complete","changed_files":["flashDB_rust/src/..."],"obligations":["requirement-id"]}`。
+- 运行 `core_impl_audit.py` 并确认 `implementation-audit.json.status == pass`；不能通过伪造 batch 代替真实函数体变更。
 - REWRITE gate 前必须自行运行 `cargo fmt --all -- --check` 和 `cargo build --release`。
 
 ## 禁止事项

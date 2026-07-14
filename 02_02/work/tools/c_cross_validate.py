@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -144,6 +146,11 @@ def parse_runner_test_results(output: str, expected_tests: list[str], exit_code:
     if exit_code == -124 and not failures and not started_set:
         reasons.append("timed out runner has no started or failed test evidence")
 
+    runtime_failed: list[str] = []
+    if exit_code not in {0, -124} and not failures and started_scenarios:
+        crashed = started_scenarios[-1]
+        failures[crashed] = f"runner exited with {exit_code} while {crashed} was active"
+        runtime_failed.append(crashed)
     failed = [name for name in expected_tests if name in failures]
     timed_out: list[str] = []
     if exit_code == -124 and started_scenarios:
@@ -161,6 +168,7 @@ def parse_runner_test_results(output: str, expected_tests: list[str], exit_code:
         "started": [name for name in expected_tests if name in started_set],
         "passed": passed,
         "failed": failed,
+        "runtime_failed": runtime_failed,
         "timed_out": timed_out,
         "not_run": not_run,
         "failures": failures,
@@ -181,7 +189,7 @@ def failure_fingerprint(row: dict[str, Any]) -> str:
         [
             str(row.get("failure_layer") or row.get("phase") or "unknown"),
             str(row.get("suite") or "unknown"),
-            str(row.get("source_test") or row.get("scenario_id") or "unknown"),
+            str(row.get("scenario_id") or row.get("source_test") or "unknown"),
             _normalized_failure_reason(row.get("reason")),
         ]
     )
@@ -195,7 +203,7 @@ def _matrix_outcomes(matrix: dict[str, Any] | None) -> dict[str, Any]:
     not_run: set[str] = set()
     failures: dict[str, dict[str, Any]] = {}
     for row in rows:
-        source_test = str(row.get("source_test") or row.get("scenario_id") or "unknown")
+        source_test = str(row.get("scenario_id") or row.get("source_test") or "unknown")
         status = row.get("rust_impl_c_test")
         if status == "pass":
             passed.add(source_test)
@@ -224,7 +232,18 @@ def compare_attempt(previous: dict[str, Any] | None, current: dict[str, Any]) ->
     if after["passed"] - before["passed"]:
         progress_reasons.append("passed set increased")
 
-    layer_order = {"model": 0, "scaffold": 1, "build": 2, "layout": 3, "link": 4, "full": 5}
+    layer_order = {
+        "model": 0,
+        "protocol": 0,
+        "scaffold": 1,
+        "build": 2,
+        "layout": 3,
+        "link": 4,
+        "runtime": 5,
+        "full": 5,
+        "assertion": 5,
+        "timeout": 5,
+    }
     for source_test in sorted(set(before["failures"]) & set(after["failures"])):
         before_row = before["failures"][source_test]
         after_row = after["failures"][source_test]
@@ -279,6 +298,99 @@ def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
         handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _attempt_score(matrix: dict[str, Any]) -> list[int]:
+    outcomes = _matrix_outcomes(matrix)
+    layer_rank = {
+        "model": 0,
+        "protocol": 0,
+        "build": 1,
+        "layout": 2,
+        "link": 3,
+        "runtime": 4,
+        "full": 4,
+        "assertion": 5,
+        "timeout": 4,
+    }
+    depth = sum(
+        layer_rank.get(str(row.get("failure_layer") or row.get("phase") or "unknown"), 0)
+        for row in outcomes["failures"].values()
+    )
+    # Lexicographic order: pass count dominates, then fewer not-run/fail rows,
+    # then how far remaining failures advanced through the validation stack.
+    return [len(outcomes["passed"]), -len(outcomes["not_run"]), -len(outcomes["failed"]), depth]
+
+
+def _project_snapshot_files(project_root: Path) -> list[Path]:
+    result: set[Path] = set()
+    directory = project_root / "src"
+    if directory.is_dir():
+        result.update(path for path in directory.rglob("*") if path.is_file() and not path.is_symlink())
+    return sorted(result)
+
+
+def _snapshot_project(
+    c_cross: Path,
+    project_root: Path,
+    *,
+    attempt_id: str,
+    score: list[int],
+) -> dict[str, Any] | None:
+    project_root = project_root.resolve()
+    files = _project_snapshot_files(project_root)
+    if not files:
+        return None
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", attempt_id)
+    snapshot_root = c_cross / "snapshots" / safe_id
+    file_root = snapshot_root / "files"
+    manifest_files: list[dict[str, str]] = []
+    if snapshot_root.exists():
+        shutil.rmtree(snapshot_root)
+    for source in files:
+        relative = source.relative_to(project_root)
+        destination = file_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        manifest_files.append({"path": relative.as_posix(), "sha256": _sha256(destination)})
+    manifest = {
+        "schema_version": 1,
+        "attempt_id": attempt_id,
+        "score": score,
+        "project_name": project_root.name,
+        "source_scope": "src/**",
+        "files": manifest_files,
+    }
+    _write_json(snapshot_root / "manifest.json", manifest)
+    best = {
+        "attempt_id": attempt_id,
+        "score": score,
+        "snapshot": f"logs/trace/c-cross/snapshots/{safe_id}",
+        "manifest": f"logs/trace/c-cross/snapshots/{safe_id}/manifest.json",
+        "file_count": len(manifest_files),
+        "source_scope": "src/**",
+    }
+    _write_json(c_cross / "snapshots" / "best.json", best)
+    return best
+
+
+def _load_best_known(c_cross: Path) -> dict[str, Any] | None:
+    path = c_cross / "snapshots" / "best.json"
+    if not path.is_file():
+        return None
+    try:
+        value = load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    return value
+
+
 def record_attempt(
     c_cross: Path,
     previous: dict[str, Any] | None,
@@ -287,26 +399,81 @@ def record_attempt(
     attempt_kind: str,
     trigger: str,
     changed_files: list[str],
+    project_root: Path | None = None,
 ) -> dict[str, Any]:
+    changed_file_hashes: dict[str, str | None] = {}
     if attempt_kind == "repair":
+        if not changed_files:
+            raise ValueError("repair attempts require at least one --changed-file under flashDB_rust/src/")
         invalid_changes = [
             path
             for path in changed_files
-            if not Path(path).as_posix().startswith("flashDB_rust/") or ".." in Path(path).parts
+            if (
+                Path(path).is_absolute()
+                or ".." in Path(path).parts
+                or len(Path(path).parts) < 3
+                or Path(path).parts[0] != "flashDB_rust"
+                or Path(path).parts[1] != "src"
+            )
         ]
         if invalid_changes:
             raise ValueError(
-                "repair changed_files must stay under flashDB_rust/: " + ", ".join(sorted(invalid_changes))
+                "repair changed_files must stay under flashDB_rust/src/: " + ", ".join(sorted(invalid_changes))
             )
+        for path in changed_files:
+            if project_root is None:
+                # Direct unit callers may not have a workbench root.  The CLI
+                # always supplies project_root and therefore records a real
+                # content hash for every repair edit.
+                changed_file_hashes[path] = None
+                continue
+            relative = Path(*Path(path).parts[1:])
+            unresolved_candidate = project_root.resolve() / relative
+            candidate = unresolved_candidate.resolve()
+            source_root = (project_root.resolve() / "src").resolve()
+            if source_root not in candidate.parents or not candidate.is_file() or unresolved_candidate.is_symlink():
+                raise ValueError(f"repair changed_file is missing, unsafe, or not a regular src file: {path}")
+            changed_file_hashes[path] = _sha256(candidate)
 
     attempts_path = c_cross / "attempts.jsonl"
     prior_attempts = _read_jsonl(attempts_path)
     attempt_id = str(current.get("execution_id") or f"attempt-{time.time_ns()}")
+    comparison = compare_attempt(previous, current)
+    prior_stalled = int(prior_attempts[-1].get("stalled_rounds", 0)) if prior_attempts else 0
+    stalled_rounds = 0 if previous is None or comparison["progress"] else prior_stalled + 1
     outcomes = Counter(
         str(row.get("rust_impl_c_test") or "unresolved")
         for row in current.get("scenarios", [])
         if isinstance(row, dict)
     )
+    diagnostics_history = c_cross / "diagnostics-history" / f"{re.sub(r'[^A-Za-z0-9_.-]+', '_', attempt_id)}.jsonl"
+    diagnostics_path = c_cross / "diagnostics.jsonl"
+    if diagnostics_path.exists():
+        diagnostics_history.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(diagnostics_path, diagnostics_history)
+
+    best_known = _load_best_known(c_cross)
+    score = _attempt_score(current)
+    full_scope = current.get("scope", "all") == "all"
+    best_score = best_known.get("score") if isinstance(best_known, dict) else None
+    best_scope_compatible = isinstance(best_known, dict) and best_known.get("source_scope") == "src/**"
+    snapshot_error = None
+    if (
+        project_root is not None
+        and full_scope
+        and not comparison["regression"]
+        and (not best_scope_compatible or not isinstance(best_score, list) or score > best_score)
+    ):
+        try:
+            best_known = _snapshot_project(
+                c_cross,
+                project_root,
+                attempt_id=attempt_id,
+                score=score,
+            ) or best_known
+        except (OSError, ValueError) as exc:
+            snapshot_error = str(exc)
+
     record = {
         "attempt_id": attempt_id,
         "attempt": len(prior_attempts) + 1,
@@ -319,9 +486,28 @@ def record_attempt(
             if isinstance(row, dict) and row.get("suite")
         }),
         "changed_files": list(changed_files),
+        "changed_file_hashes": changed_file_hashes,
         "result": "pass" if outcomes and set(outcomes) == {"pass"} else "continue_with_failures",
         "summary": dict(sorted(outcomes.items())),
         "matrix_snapshot": f"logs/trace/c-cross/checkpoints/{attempt_id}.json",
+        "diagnostics_snapshot": (
+            f"logs/trace/c-cross/diagnostics-history/{diagnostics_history.name}"
+            if diagnostics_path.exists()
+            else None
+        ),
+        "progress": comparison["progress"],
+        "regression": comparison["regression"],
+        "progress_reasons": comparison["progress_reasons"],
+        "fingerprints": {
+            "before": comparison["fingerprints_before"],
+            "after": comparison["fingerprints_after"],
+            "comparable": comparison["comparable_fingerprints"],
+        },
+        "stalled_rounds": stalled_rounds,
+        "score": score,
+        "best_known": best_known,
+        "snapshot_error": snapshot_error,
+        "restore_best_available": bool(comparison["regression"] and best_known),
     }
     _append_jsonl(attempts_path, record)
 
@@ -421,22 +607,137 @@ def _included_c_sources(source: Path, tests_dir: Path, seen: set[Path] | None = 
     seen.add(source)
     text = source.read_text(encoding="utf-8", errors="ignore")
     for included in re.findall(r'^\s*#\s*include\s+"([^"/]+\.c)"', text, flags=re.MULTILINE):
-        _included_c_sources(tests_dir / included, tests_dir, seen)
+        local = source.parent / included
+        _included_c_sources(local if local.is_file() else tests_dir / included, tests_dir, seen)
     return seen
 
 
-def _test_side_sources(c_root: Path, runner: Path, cases: list[dict[str, Any]]) -> list[Path]:
+def _test_side_sources(
+    c_root: Path,
+    runner: Path,
+    cases: list[dict[str, Any]],
+    *,
+    ignored_sources: set[Path] | None = None,
+    extra_sources: set[Path] | None = None,
+) -> list[Path]:
     tests_dir = c_root / "tests"
     included = _included_c_sources(runner, tests_dir)
     sources = set(included)
+    sources.update(path.resolve() for path in (extra_sources or set()) if path.is_file())
+    ignored = {path.resolve() for path in (ignored_sources or set())}
     for case in cases:
         source_file = case.get("source_file")
         if not isinstance(source_file, str):
             continue
         source = c_root / source_file
-        if source.is_file() and source.resolve() not in included:
+        if source.is_file() and source.resolve() not in included and source.resolve() not in ignored:
             sources.add(source.resolve())
     return sorted(sources)
+
+
+def _create_filtered_runner(
+    source: Path,
+    c_root: Path,
+    c_cross: Path,
+    case: dict[str, Any],
+    suite_case_count: int,
+) -> tuple[Path | None, Path | None, Path | None, str]:
+    """Create a generated runner that executes one TEST_RUN/RUN_TEST call.
+
+    The platform C source remains read-only.  When the runner contains no
+    recognizable test macro, a suite with exactly one modeled case is already
+    isolated; otherwise we return an actionable unsupported reason.
+    """
+
+    scenario_id = str(case.get("scenario_id") or "unknown")
+    test_function = str(case.get("test_function") or case.get("source_test") or scenario_id)
+    invocation_index = case.get("invocation_index")
+    target_index = invocation_index if isinstance(invocation_index, int) and invocation_index > 0 else 1
+    case_source_value = case.get("source_file")
+    case_source = (c_root / case_source_value).resolve() if isinstance(case_source_value, str) else None
+    pattern = re.compile(r"\b(?:TEST_RUN|RUN_TEST)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
+
+    def invocation_matches(value: str) -> list[re.Match[str]]:
+        result: list[re.Match[str]] = []
+        for match in pattern.finditer(value):
+            line_prefix = value[value.rfind("\n", 0, match.start()) + 1:match.start()]
+            if re.match(r"\s*#\s*define\b", line_prefix):
+                continue
+            result.append(match)
+        return result
+
+    candidates = [source]
+    if case_source is not None and case_source.is_file() and case_source != source.resolve():
+        candidates.append(case_source)
+    target_source = next(
+        (
+            candidate
+            for candidate in candidates
+            if invocation_matches(candidate.read_text(encoding="utf-8", errors="ignore"))
+        ),
+        None,
+    )
+    if target_source is None:
+        if suite_case_count == 1:
+            return source, None, None, "runner already contains only one modeled scenario"
+        return None, None, None, (
+            f"cannot isolate {scenario_id}: runner/test source has no supported TEST_RUN/RUN_TEST invocations"
+        )
+
+    text = target_source.read_text(encoding="utf-8", errors="ignore")
+    matches = invocation_matches(text)
+    if not matches:
+        return None, None, None, f"cannot isolate {scenario_id}: no test registration calls found"
+
+    seen: dict[str, int] = {}
+    kept = False
+    pieces: list[str] = []
+    cursor = 0
+    for match in matches:
+        function = match.group(1)
+        seen[function] = seen.get(function, 0) + 1
+        keep = function == test_function and seen[function] == target_index
+        pieces.append(text[cursor:match.start()])
+        pieces.append(match.group(0) if keep else "((void)0)")
+        cursor = match.end()
+        kept = kept or keep
+    pieces.append(text[cursor:])
+    if not kept:
+        return None, None, None, (
+            f"cannot isolate {scenario_id}: {test_function} invocation {target_index} not found in {target_source}"
+        )
+
+    isolation_dir = c_cross / "isolation" / _safe_c_suffix(scenario_id)
+    isolation_dir.mkdir(parents=True, exist_ok=True)
+    generated_target = isolation_dir / target_source.name
+    _write(generated_target, "".join(pieces))
+    if target_source.resolve() == source.resolve():
+        generated_runner = generated_target
+        replaced_source = None
+        extra_source = None
+    else:
+        generated_runner = isolation_dir / source.name
+        _write(generated_runner, source.read_text(encoding="utf-8", errors="ignore"))
+        replaced_source = target_source.resolve()
+        extra_source = generated_target
+    _write_json(
+        isolation_dir / "filter.json",
+        {
+            "scenario_id": scenario_id,
+            "source_runner": source.as_posix(),
+            "source_runner_sha256": _sha256(source),
+            "source_registration_file": target_source.as_posix(),
+            "source_registration_sha256": _sha256(target_source),
+            "generated_runner": generated_runner.as_posix(),
+            "generated_runner_sha256": _sha256(generated_runner),
+            "generated_registration_file": generated_target.as_posix(),
+            "generated_registration_sha256": _sha256(generated_target),
+            "test_function": test_function,
+            "invocation_index": target_index,
+            "matched_invocations": len(matches),
+        },
+    )
+    return generated_runner, replaced_source, extra_source, f"generated filtered runner for {scenario_id}"
 
 
 def _write_ffi_manifest(
@@ -504,6 +805,8 @@ def _compile_suite_runner(
     c_cross: Path,
     rust_lib: Path,
     cases: list[dict[str, Any]] | None = None,
+    isolation_case: dict[str, Any] | None = None,
+    suite_case_count: int | None = None,
 ) -> tuple[bool, Path | None, str]:
     source = None
     if cases:
@@ -515,15 +818,41 @@ def _compile_suite_runner(
     source = source or _discover_suite_runner(suite, c_root)
     if source is None:
         return False, None, f"missing discovered C test runner for suite: {suite}\n"
-    binary = c_cross / f"{suite}_runner"
+    original_source = source.resolve()
+    isolation_note = ""
+    replaced_source: Path | None = None
+    extra_source: Path | None = None
+    if isolation_case is not None:
+        source, replaced_source, extra_source, isolation_note = _create_filtered_runner(
+            original_source,
+            c_root,
+            c_cross,
+            isolation_case,
+            suite_case_count if isinstance(suite_case_count, int) else len(cases or []),
+        )
+        if source is None:
+            return False, None, isolation_note + "\n"
+        binary = source.parent / "runner"
+    else:
+        binary = c_cross / f"{suite}_runner"
     cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if cc is None:
         return False, None, "missing C compiler: cc/gcc/clang not found\n"
-    sources = _test_side_sources(c_root, source, cases or [])
+    sources = _test_side_sources(
+        c_root,
+        source,
+        cases or [],
+        ignored_sources=(
+            {path for path in {original_source, replaced_source} if path is not None}
+            if isolation_case is not None
+            else None
+        ),
+        extra_sources={extra_source} if extra_source is not None else None,
+    )
     runner_dir = c_cross / "runners" / _safe_c_suffix(source.stem)
     runner_dir.mkdir(parents=True, exist_ok=True)
     objects: list[Path] = []
-    output_parts: list[str] = []
+    output_parts: list[str] = [f"isolation={isolation_note}\n"] if isolation_note else []
     for index, test_source in enumerate(sources):
         obj = runner_dir / f"{index}-{_safe_c_suffix(test_source.stem)}.o"
         compile_command = [
@@ -721,12 +1050,25 @@ def _layout_checker_source(structs: list[dict[str, Any]], headers: list[str]) ->
     return "\n".join(lines) + "\n"
 
 
-def _run_layout_checker(c_root: Path, c_cross: Path, rust_lib: Path, trace: Path) -> tuple[bool, str]:
+def _run_layout_checker(
+    c_root: Path,
+    c_cross: Path,
+    rust_lib: Path,
+    trace: Path,
+    *,
+    artifact_name: str = "layout",
+) -> tuple[bool, str]:
     structs = _layout_structs(trace)
     headers = _layout_headers(c_root, structs)
-    source = c_cross / "layout_checker.c"
-    binary = c_cross / "layout_checker"
-    log_path = c_cross / "layout-check.log"
+    if artifact_name == "layout":
+        source = c_cross / "layout_checker.c"
+        binary = c_cross / "layout_checker"
+        log_path = c_cross / "layout-check.log"
+    else:
+        safe_name = _safe_c_suffix(artifact_name)
+        source = c_cross / f"{safe_name}_checker.c"
+        binary = c_cross / f"{safe_name}_checker"
+        log_path = c_cross / f"{safe_name}-check.log"
     source.write_text(_layout_checker_source(structs, headers), encoding="utf-8")
     cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if cc is None:
@@ -763,6 +1105,105 @@ def _run_layout_checker(c_root: Path, c_cross: Path, rust_lib: Path, trace: Path
         return False, text
     _write(log_path, text)
     return True, text
+
+
+def run_scaffold_layout_check(
+    root: Path,
+    out: Path,
+    *,
+    project_name: str = "flashDB_rust",
+) -> dict[str, Any]:
+    """Validate fresh scaffold layout without creating formal C-cross state."""
+
+    trace = out
+    c_cross = trace / "c-cross"
+    c_cross.mkdir(parents=True, exist_ok=True)
+    log_path = c_cross / "scaffold-layout-check.log"
+    check_path = c_cross / "scaffold-layout-check.json"
+    try:
+        c_root = _find_c_project_root(root, trace)
+    except Exception as exc:
+        result = {
+            "phase": "layout",
+            "status": "fail",
+            "build_status": "not_run",
+            "layout_status": "not_run",
+            "reason": f"cannot resolve scaffold layout inputs: {exc}",
+            "log": _relative_log_path(log_path, root),
+        }
+        _write(log_path, result["reason"] + "\n")
+        _write_json(check_path, result)
+        return result
+    project = (root / project_name).resolve()
+    if c_root is None:
+        result = {
+            "phase": "layout",
+            "status": "fail",
+            "build_status": "not_run",
+            "layout_status": "not_run",
+            "reason": "FlashDB C project root not found",
+            "log": _relative_log_path(log_path, root),
+        }
+        _write(log_path, result["reason"] + "\n")
+        _write_json(check_path, result)
+        return result
+    if not project.is_dir():
+        result = {
+            "phase": "layout",
+            "status": "fail",
+            "build_status": "not_run",
+            "layout_status": "not_run",
+            "reason": f"Rust project not found: {project}",
+            "log": _relative_log_path(log_path, root),
+        }
+        _write(log_path, result["reason"] + "\n")
+        _write_json(check_path, result)
+        return result
+
+    try:
+        build_ok, build_output = _build_rust_staticlib(project)
+    except Exception as exc:
+        result = {
+            "phase": "layout",
+            "status": "fail",
+            "build_status": "fail",
+            "layout_status": "not_run",
+            "reason": f"fresh scaffold staticlib build could not run: {exc}",
+            "log": _relative_log_path(log_path, root),
+        }
+        _write(log_path, result["reason"] + "\n")
+        _write_json(check_path, result)
+        return result
+    layout_ok = False
+    layout_output = "layout not run because scaffold staticlib build failed\n"
+    if build_ok:
+        try:
+            layout_ok, layout_output = _run_layout_checker(
+                c_root,
+                c_cross,
+                _rust_staticlib(project),
+                trace,
+                artifact_name="scaffold-layout",
+            )
+        except Exception as exc:
+            layout_ok = False
+            layout_output = f"scaffold layout checker could not run: {exc}\n"
+    _write(log_path, build_output + "\n" + layout_output)
+    try:
+        struct_count = len(_layout_structs(trace))
+    except Exception:
+        struct_count = 0
+    result = {
+        "phase": "layout",
+        "status": "pass" if build_ok and layout_ok else "fail",
+        "build_status": "pass" if build_ok else "fail",
+        "layout_status": "pass" if layout_ok else "fail" if build_ok else "not_run",
+        "struct_count": struct_count,
+        "reason": "fresh scaffold ABI layout matches compiler evidence" if build_ok and layout_ok else "fresh scaffold ABI layout validation failed",
+        "log": _relative_log_path(log_path, root),
+    }
+    _write_json(check_path, result)
+    return result
 
 
 def _malformed_row(index: int, case: Any, c_cross: Path, root: Path) -> dict[str, Any]:
@@ -842,6 +1283,7 @@ def _repair_context_by_scenario(test_model: dict[str, Any]) -> dict[str, dict[st
             context = {
                 "semantic_obligations": case.get("semantic_obligations", []),
                 "public_api_calls": facts.get("public_api_calls", []),
+                "observed_c_symbols": facts.get("observed_c_symbols", []),
                 "data_shape": facts.get("data_shape", {}),
                 "scenario_features": facts.get("scenario_features", []),
                 "semantic_markers": facts.get("semantic_markers", []),
@@ -962,6 +1404,10 @@ def _suite_result_rows(
                 status = "pass"
                 diagnosis = "rust_implementation_matches_c_baseline_for_scenario"
                 reason = f"{source_test} passed in original C runner"
+            elif scenario_id in parsed.get("runtime_failed", []):
+                status = "fail"
+                diagnosis = "c_runner_runtime_failed"
+                reason = str(parsed.get("failures", {}).get(scenario_id) or f"{source_test} crashed")
             elif scenario_id in parsed.get("failed", []):
                 status = "fail"
                 diagnosis = "c_test_case_failed"
@@ -1017,6 +1463,9 @@ def _suite_result_rows(
             }
         if isinstance(repair_context, dict):
             row["repair_context"] = repair_context
+        if isinstance(parsed, dict):
+            row["parse_status"] = parsed.get("status")
+            row["parse_reason"] = parsed.get("reason")
         rows.append(row)
         if isinstance(case.get("case_id"), str) and case["case_id"]:
             rows[-1]["scorer_case_id"] = case["case_id"]
@@ -1025,6 +1474,8 @@ def _suite_result_rows(
 
 def _verification_results(scenarios: list[dict[str, Any]]) -> tuple[str, str]:
     outcomes = [str(item.get("rust_impl_c_test") or "unresolved") for item in scenarios]
+    if any(item.get("parse_status") == "parse_failed" for item in scenarios):
+        return "CONTINUE_WITH_FAILURES", "unresolved"
     if outcomes and all(value == "pass" for value in outcomes):
         return "PASS", "pass"
     if any(value in {"unresolved", "parse_failed"} for value in outcomes):
@@ -1034,12 +1485,84 @@ def _verification_results(scenarios: list[dict[str, Any]]) -> tuple[str, str]:
     return "CONTINUE_WITH_FAILURES", "failed"
 
 
+def _load_repair_planner() -> Any:
+    module_path = Path(__file__).resolve().with_name("repair_planner.py")
+    spec = importlib.util.spec_from_file_location("c_cross_repair_planner", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load repair planner: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _write_current_repair_plan(
+    matrix: dict[str, Any],
+    c_cross: Path,
+    *,
+    project: str,
+    out: str,
+) -> dict[str, Any]:
+    planner = _load_repair_planner()
+    return planner.write_repair_plan(matrix, c_cross, project=project, out=out)
+
+
+def _has_complete_attempt_evidence(matrix: dict[str, Any], root: Path) -> bool:
+    scenarios = matrix.get("scenarios")
+    if not isinstance(scenarios, list) or not scenarios:
+        return False
+    try:
+        diagnostics = _read_jsonl(root / "logs" / "trace" / "c-cross" / "diagnostics.jsonl")
+    except (OSError, ValueError, json.JSONDecodeError):
+        diagnostics = []
+    parse_diagnostics = {
+        str(row.get("scenario_id")): row
+        for row in diagnostics
+        if isinstance(row, dict)
+        and row.get("diagnosis") == "c_cross_result_parse_failed"
+        and isinstance(row.get("scenario_id"), str)
+    }
+    for row in scenarios:
+        if not isinstance(row, dict) or not isinstance(row.get("scenario_id"), str):
+            return False
+        status = row.get("rust_impl_c_test")
+        if status not in {"pass", "fail", "not_run", "unresolved", "not_supported", "parse_failed"}:
+            return False
+        parse_failed = row.get("parse_status") == "parse_failed" or status == "parse_failed"
+        if status == "pass" and not parse_failed:
+            continue
+        log = row.get("log")
+        if not isinstance(log, str) or not log.startswith("logs/trace/c-cross/"):
+            return False
+        if not (root / log).is_file():
+            return False
+        if parse_failed:
+            diagnostic = parse_diagnostics.get(row["scenario_id"])
+            if not isinstance(row.get("parse_reason"), str) or not row.get("parse_reason"):
+                return False
+            if (
+                not isinstance(diagnostic, dict)
+                or not isinstance(diagnostic.get("handoff"), str)
+                or diagnostic.get("handoff") in {"", "none"}
+            ):
+                return False
+            continue
+        if (
+            not isinstance(row.get("diagnosis"), str)
+            or not row.get("diagnosis")
+            or not isinstance(row.get("handoff"), str)
+            or row.get("handoff") in {"", "none"}
+        ):
+            return False
+    return True
+
+
 def build_matrix(
     root: Path,
     out: Path,
     project_name: str = "flashDB_rust",
     mode: str = "full",
     selected_suites: set[str] | None = None,
+    selected_scenarios: set[str] | None = None,
     attempt_kind: str = "checkpoint",
     trigger: str = "manual",
     changed_files: list[str] | None = None,
@@ -1120,12 +1643,31 @@ def build_matrix(
             else:
                 valid_cases.append(case)
 
+    all_valid_cases = list(valid_cases)
     available_suites = {_suite_for_case(case) for case in valid_cases}
+    available_scenarios = {str(case["scenario_id"]) for case in valid_cases}
     if selected_suites is not None:
         unknown_suites = sorted(selected_suites - available_suites)
         if unknown_suites:
             raise ValueError("unknown requested C-cross suites: " + ", ".join(unknown_suites))
         valid_cases = [case for case in valid_cases if _suite_for_case(case) in selected_suites]
+    if selected_scenarios is not None:
+        unknown_scenarios = sorted(selected_scenarios - available_scenarios)
+        if unknown_scenarios:
+            raise ValueError("unknown requested C-cross scenarios: " + ", ".join(unknown_scenarios))
+        valid_cases = [case for case in valid_cases if str(case["scenario_id"]) in selected_scenarios]
+        filtered_scenarios = {str(case["scenario_id"]) for case in valid_cases}
+        excluded_by_suite = sorted(selected_scenarios - filtered_scenarios)
+        if excluded_by_suite:
+            raise ValueError(
+                "requested scenarios are excluded by --suite selection: " + ", ".join(excluded_by_suite)
+            )
+        selected_counts = Counter(_suite_for_case(case) for case in valid_cases)
+        ambiguous_suites = sorted(suite for suite, count in selected_counts.items() if count > 1)
+        if ambiguous_suites:
+            raise ValueError(
+                "scenario isolation accepts at most one scenario per suite: " + ", ".join(ambiguous_suites)
+            )
 
     enabled_cases = [case for case in valid_cases if case.get("c_cross", {}).get("enabled", True)]
     not_enabled_cases = [case for case in valid_cases if not case.get("c_cross", {}).get("enabled", True)]
@@ -1262,7 +1804,19 @@ def build_matrix(
                 compiled_binaries: dict[str, Path] = {}
                 for suite in suites:
                     suite_cases = [case for case in enabled_cases if _suite_for_case(case) == suite]
-                    ok, binary, output = _compile_suite_runner(suite, c_root, c_cross, rust_lib, suite_cases)
+                    isolation_case = suite_cases[0] if selected_scenarios is not None and len(suite_cases) == 1 else None
+                    original_suite_count = sum(
+                        1 for case in all_valid_cases if _suite_for_case(case) == suite
+                    )
+                    ok, binary, output = _compile_suite_runner(
+                        suite,
+                        c_root,
+                        c_cross,
+                        rust_lib,
+                        suite_cases,
+                        isolation_case=isolation_case,
+                        suite_case_count=original_suite_count,
+                    )
                     compile_log.append(output)
                     if not ok or binary is None:
                         reason = f"{suite} original C runner failed to compile"
@@ -1353,17 +1907,18 @@ def build_matrix(
     # targeted repair.  Suite-level diagnostics alone cannot distinguish an
     # assertion from a timeout or an unstarted scenario.
     for scenario_row in scenarios:
-        if scenario_row.get("rust_impl_c_test") in {"fail", "not_run", "unresolved"}:
+        parse_failed = scenario_row.get("parse_status") == "parse_failed"
+        if scenario_row.get("rust_impl_c_test") in {"fail", "not_run", "unresolved"} or parse_failed:
             diagnostic = {
                 "phase": scenario_row.get("phase", "full"),
-                "diagnosis": scenario_row.get("diagnosis"),
+                "diagnosis": "c_cross_result_parse_failed" if parse_failed else scenario_row.get("diagnosis"),
                 "scenario_id": scenario_row.get("scenario_id"),
                 "scorer_case_id": scenario_row.get("scorer_case_id"),
                 "suite": scenario_row.get("suite"),
-                "handoff": scenario_row.get("handoff"),
-                "reason": scenario_row.get("reason"),
+                "handoff": "c-analyzer" if parse_failed else scenario_row.get("handoff"),
+                "reason": scenario_row.get("parse_reason") if parse_failed else scenario_row.get("reason"),
                 "log": scenario_row.get("log"),
-                "failure_layer": scenario_row.get("failure_layer"),
+                "failure_layer": "protocol" if parse_failed else scenario_row.get("failure_layer"),
             }
             if isinstance(scenario_row.get("repair_context"), dict):
                 diagnostic["repair_context"] = scenario_row["repair_context"]
@@ -1375,13 +1930,13 @@ def build_matrix(
             "type": "toolchain_defect",
             "owner": "controller",
             "tool": "c_cross_validate.py",
-            "reason": row.get("reason"),
+            "reason": row.get("parse_reason") if row.get("parse_status") == "parse_failed" else row.get("reason"),
             "evidence": row.get("log"),
             "affected_scenarios": [row.get("scenario_id")],
             "status": "unresolved",
         }
         for row in scenarios
-        if row.get("rust_impl_c_test") == "unresolved"
+        if row.get("rust_impl_c_test") == "unresolved" or row.get("parse_status") == "parse_failed"
     ]
     _write_jsonl(c_cross / "workbench-issues.jsonl", workbench_issues)
     summary = Counter(item["rust_impl_c_test"] for item in scenarios)
@@ -1390,8 +1945,9 @@ def build_matrix(
         "stage": "VERIFY_RUST_WITH_C_TESTS",
         "policy": "strict",
         "mode": mode,
-        "scope": "selected" if selected_suites is not None else "all",
-        "selected_suites": sorted(selected_suites if selected_suites is not None else available_suites),
+        "scope": "selected" if selected_suites is not None or selected_scenarios is not None else "all",
+        "selected_suites": sorted({_suite_for_case(case) for case in valid_cases}),
+        "selected_scenarios": sorted(selected_scenarios or []),
         "attempt_kind": attempt_kind,
         "trigger": trigger,
         "changed_files": list(changed_files or []),
@@ -1410,6 +1966,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="logs/trace", help="Trace output directory, relative to root.")
     parser.add_argument("--mode", choices=["build", "layout", "link", "full"], default="full", help="C-cross checkpoint depth.")
     parser.add_argument("--suite", action="append", dest="suites", help="Run only a suite discovered from the current C test model. Repeatable.")
+    parser.add_argument("--scenario", action="append", dest="scenarios", help="Run one generated, filtered scenario runner. Repeatable.")
+    parser.add_argument(
+        "--scaffold-layout-only",
+        action="store_true",
+        help="Build the fresh scaffold and check ABI layout without writing validation-matrix.json or attempts.jsonl.",
+    )
     parser.add_argument(
         "--attempt-kind",
         choices=["checkpoint", "repair", "confirmation", "final"],
@@ -1420,8 +1982,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--changed-file", action="append", default=[], help="File changed before a repair execution. Repeatable.")
     args = parser.parse_args(argv)
 
+    if args.attempt_kind == "repair":
+        if not args.changed_file:
+            parser.error("--attempt-kind repair requires at least one --changed-file flashDB_rust/src/<file>")
+        invalid_repair_paths = [
+            value
+            for value in args.changed_file
+            if (
+                Path(value).is_absolute()
+                or ".." in Path(value).parts
+                or len(Path(value).parts) < 3
+                or Path(value).parts[0:2] != ("flashDB_rust", "src")
+            )
+        ]
+        if invalid_repair_paths:
+            parser.error("repair --changed-file must stay under flashDB_rust/src/")
+
     root = Path(args.root).resolve()
     out = (root / args.out).resolve()
+    if args.scaffold_layout_only:
+        result = run_scaffold_layout_check(root, out, project_name=args.project)
+        print("GENERATE_RUST_SCAFFOLD: LAYOUT_CHECK_WRITTEN")
+        print(f"stage_result={'PASS' if result['status'] == 'pass' else 'FAIL'}")
+        print(f"verification_result={result['status']}")
+        print(f"next_action={'REWRITE_CORE_MODULES' if result['status'] == 'pass' else 'REPAIR_ABI_LAYOUT'}")
+        return 0 if result["status"] == "pass" else 1
+
     matrix_path = out / "validation-matrix.json"
     previous_matrix = load_json(matrix_path) if matrix_path.exists() else None
     matrix = build_matrix(
@@ -1430,12 +2016,31 @@ def main(argv: list[str] | None = None) -> int:
         project_name=args.project,
         mode=args.mode,
         selected_suites=set(args.suites) if args.suites else None,
+        selected_scenarios=set(args.scenarios) if args.scenarios else None,
         attempt_kind=args.attempt_kind,
         trigger=args.trigger,
         changed_files=args.changed_file,
     )
     execution_id = f"{time.time_ns()}-{_safe_c_suffix(args.attempt_kind)}-{_safe_c_suffix(args.trigger)}"
     matrix["execution_id"] = execution_id
+    plan = _write_current_repair_plan(
+        matrix,
+        out / "c-cross",
+        project=args.project,
+        out=args.out,
+    )
+    next_action = str(plan.get("next_action") or "REPAIR_RUST")
+    final_complete = (
+        matrix.get("verification_result") == "pass"
+        and matrix.get("mode") == "full"
+        and matrix.get("scope") == "all"
+    )
+    if args.attempt_kind == "final" and not final_complete:
+        next_action = "STOP_WITH_FAILURES"
+        plan["next_action"] = next_action
+        plan["status"] = "final_failed"
+        _write_json(out / "c-cross" / "repair-plan.json", plan)
+    matrix["next_action"] = next_action
     attempt = record_attempt(
         out / "c-cross",
         previous_matrix,
@@ -1443,11 +2048,17 @@ def main(argv: list[str] | None = None) -> int:
         attempt_kind=args.attempt_kind,
         trigger=args.trigger,
         changed_files=args.changed_file,
+        project_root=(root / args.project).resolve(),
     )
     matrix["attempt"] = {
         "attempt_id": attempt["attempt_id"],
         "number": attempt["attempt"],
         "result": attempt["result"],
+        "changed_file_hashes": attempt["changed_file_hashes"],
+        "progress": attempt["progress"],
+        "regression": attempt["regression"],
+        "stalled_rounds": attempt["stalled_rounds"],
+        "best_known": attempt["best_known"],
     }
     _write_json(out / "c-cross" / "checkpoints" / f"{execution_id}.json", matrix)
     _write_json(matrix_path, matrix)
@@ -1456,7 +2067,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"mapped_scenarios={matrix['total_scenarios']}")
     print(f"policy={matrix['policy']}")
     print("rust_impl_c_test=" + ",".join(f"{key}:{value}" for key, value in sorted(counts.items())))
-    return 1 if counts.get("fail") or counts.get("not_supported") else 0
+    print(f"stage_result={matrix['stage_result']}")
+    print(f"verification_result={matrix['verification_result']}")
+    print(f"next_action={matrix['next_action']}")
+    if args.attempt_kind == "final":
+        return 0 if final_complete else 1
+    return 0 if _has_complete_attempt_evidence(matrix, root) else 1
 
 
 if __name__ == "__main__":

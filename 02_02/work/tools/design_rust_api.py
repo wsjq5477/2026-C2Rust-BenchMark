@@ -341,26 +341,96 @@ def derive_implementation_requirements(c_test_model: dict[str, Any]) -> list[dic
     obligations = all_semantic_obligations(c_test_model)
     observed_symbols: set[str] = set()
     tags: set[str] = set()
-    cases = c_test_model.get("scorer_standard_cases", [])
-    if isinstance(cases, list):
-        for case in cases:
-            if not isinstance(case, dict):
-                continue
-            raw_tags = case.get("tags")
-            if isinstance(raw_tags, list):
-                tags.update(item for item in raw_tags if isinstance(item, str))
-            facts = case.get("semantic_facts")
-            symbols = facts.get("observed_c_symbols") if isinstance(facts, dict) else None
-            if isinstance(symbols, list):
-                observed_symbols.update(item for item in symbols if isinstance(item, str))
+    raw_cases = c_test_model.get("scorer_standard_cases", [])
+    cases = [case for case in raw_cases if isinstance(case, dict)] if isinstance(raw_cases, list) else []
+    for case in cases:
+        raw_tags = case.get("tags")
+        if isinstance(raw_tags, list):
+            tags.update(item for item in raw_tags if isinstance(item, str))
+        facts = case.get("semantic_facts")
+        symbols = facts.get("observed_c_symbols") if isinstance(facts, dict) else None
+        if isinstance(symbols, list):
+            observed_symbols.update(item for item in symbols if isinstance(item, str))
 
     requirements: list[dict[str, Any]] = []
 
-    def add(identifier: str, invariant: str, evidence: list[str]) -> None:
+    def case_obligations(case: dict[str, Any]) -> set[str]:
+        values = case.get("semantic_obligations", [])
+        return {item for item in values if isinstance(item, str)} if isinstance(values, list) else set()
+
+    def case_tags(case: dict[str, Any]) -> set[str]:
+        values = case.get("tags", [])
+        return {item for item in values if isinstance(item, str)} if isinstance(values, list) else set()
+
+    def case_symbols(case: dict[str, Any]) -> set[str]:
+        facts = case.get("semantic_facts")
+        if not isinstance(facts, dict):
+            return set()
+        symbols: set[str] = set()
+        for key in ["observed_c_symbols", "public_api_calls"]:
+            values = facts.get(key, [])
+            if isinstance(values, list):
+                symbols.update(item for item in values if isinstance(item, str))
+        return symbols
+
+    def scenario_name(case: dict[str, Any]) -> str:
+        for key in ["scenario_id", "case_name", "case_id"]:
+            value = case.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return ""
+
+    def suggested_files(identifier: str, symbols: list[str]) -> list[str]:
+        files = {"src/c_abi.rs"}
+        for symbol in symbols:
+            lower = symbol.lower()
+            if "kv" in lower:
+                files.add("src/kvdb.rs")
+            elif "tsl" in lower or "tsdb" in lower:
+                files.add("src/tsdb.rs")
+            else:
+                files.add("src/common.rs")
+        if any(token in identifier for token in ["sector", "reload", "gc", "storage", "control"]):
+            files.add("src/storage.rs")
+        return sorted(files)
+
+    def add(
+        identifier: str,
+        invariant: str,
+        evidence: list[str],
+        accepted: list[dict[str, Any]],
+        symbol_tokens: tuple[str, ...] = (),
+    ) -> None:
+        all_symbols = {symbol for case in accepted for symbol in case_symbols(case)}
+        filtered_symbols = {
+            symbol
+            for symbol in all_symbols
+            if any(token in symbol.lower() for token in symbol_tokens)
+        }
+        symbols = sorted(filtered_symbols or all_symbols)
+        def stable_order(case: dict[str, Any], fallback: int) -> int:
+            value = case.get("order")
+            return value if isinstance(value, int) else fallback
+
+        acceptance_scenarios = [
+            name
+            for _, name in sorted(
+                (
+                    (stable_order(case, index), scenario_name(case))
+                    for index, case in enumerate(accepted, start=1)
+                    if scenario_name(case)
+                ),
+                key=lambda item: (item[0], item[1]),
+            )
+        ]
         requirements.append({
             "id": identifier,
             "invariant": invariant,
             "derived_from": sorted(dict.fromkeys(evidence)),
+            "symbols": symbols,
+            "acceptance_scenarios": list(dict.fromkeys(acceptance_scenarios)),
+            "suggested_files": suggested_files(identifier, symbols),
+            "dependency_ids": [],
         })
 
     sector_evidence = sorted(
@@ -372,55 +442,116 @@ def derive_implementation_requirements(c_test_model: dict[str, Any]) -> list[dic
             "physical_sector_address_fidelity",
             "Externally visible record addresses are byte offsets in the configured sector geometry; collection indexes are not valid substitutes.",
             sector_evidence,
+            [
+                case
+                for case in cases
+                if any(
+                    item == "verify_addr_alignment" or item.startswith("data_shape:cross_sector")
+                    for item in case_obligations(case)
+                )
+            ],
+            ("sector", "iter", "get_obj"),
         )
     if "verify_persistence_after_reboot" in obligations:
         add(
             "reload_reconstructs_state",
             "Deinit/reinit reconstructs values, statuses, addresses, allocation cursors, and sector metadata from persistent storage.",
             ["verify_persistence_after_reboot"],
+            [case for case in cases if "verify_persistence_after_reboot" in case_obligations(case)],
+            ("init", "deinit"),
         )
     if "use_control_interface" in obligations:
         add(
             "control_updates_runtime_storage",
             "Geometry and mode controls update both the C-visible facade and the internal storage engine before subsequent operations.",
             ["use_control_interface"],
+            [case for case in cases if "use_control_interface" in case_obligations(case)],
+            ("control",),
         )
     if "gc" in tags or any("multi_kv_gc_pressure" in item for item in obligations):
         add(
             "gc_retains_latest_live_records",
             "GC and scale-up retain the latest live value, tombstone deleted values, and preserve sector-address observables.",
             [item for item in obligations if "gc" in item or "multi_kv" in item] or ["tag:gc"],
+            [
+                case
+                for case in cases
+                if "gc" in case_tags(case)
+                or any("multi_kv_gc_pressure" in item for item in case_obligations(case))
+            ],
+            ("gc", "set", "get", "del"),
         )
     if any("blob" in symbol for symbol in observed_symbols):
         add(
             "blob_handle_round_trip",
             "Objects returned by get/iterate convert to stable blob handles whose read operation copies the original bytes and reports the full saved length.",
             sorted(symbol for symbol in observed_symbols if "blob" in symbol or "to_blob" in symbol),
+            [case for case in cases if any("blob" in symbol for symbol in case_symbols(case))],
+            ("blob",),
         )
     if any("iterate" in symbol or "_iter" in symbol for symbol in observed_symbols):
         add(
             "iterator_object_fidelity",
             "Iterator objects populate every address, length, status, name and value field consumed by later facade calls.",
             sorted(symbol for symbol in observed_symbols if "iterate" in symbol or "_iter" in symbol),
+            [
+                case
+                for case in cases
+                if any("iterate" in symbol or "_iter" in symbol for symbol in case_symbols(case))
+            ],
+            ("iter", "to_blob"),
         )
     if any("set_status" in symbol or "query_count" in symbol for symbol in observed_symbols):
         add(
             "status_persistence_and_filtering",
             "Record status transitions persist and every query/iteration filter observes the same status model.",
             sorted(symbol for symbol in observed_symbols if "status" in symbol or "query_count" in symbol),
+            [
+                case
+                for case in cases
+                if any("set_status" in symbol or "query_count" in symbol for symbol in case_symbols(case))
+            ],
+            ("status", "query_count"),
         )
     if "iterator_time_payload_consistency" in obligations:
         add(
             "iterator_time_payload_consistency",
             "Each iterator callback receives a time field that agrees with the payload encoding asserted by the C callback.",
             ["iterator_time_payload_consistency"],
+            [case for case in cases if "iterator_time_payload_consistency" in case_obligations(case)],
+            ("iter", "blob"),
         )
     if "callback_reentrant_state_mutation" in obligations:
         add(
             "callback_reentrant_state_mutation",
             "Callbacks may change record status through the public facade without deadlocking or invalidating iteration state.",
             ["callback_reentrant_state_mutation"],
+            [case for case in cases if "callback_reentrant_state_mutation" in case_obligations(case)],
+            ("iter", "status"),
         )
+
+    present = {str(item["id"]) for item in requirements}
+    dependency_candidates = {
+        "reload_reconstructs_state": ["physical_sector_address_fidelity"],
+        "control_updates_runtime_storage": ["physical_sector_address_fidelity"],
+        "gc_retains_latest_live_records": [
+            "physical_sector_address_fidelity",
+            "reload_reconstructs_state",
+        ],
+        "iterator_object_fidelity": ["blob_handle_round_trip"],
+        "status_persistence_and_filtering": ["iterator_object_fidelity"],
+        "iterator_time_payload_consistency": ["iterator_object_fidelity"],
+        "callback_reentrant_state_mutation": [
+            "iterator_object_fidelity",
+            "status_persistence_and_filtering",
+        ],
+    }
+    for requirement in requirements:
+        requirement["dependency_ids"] = [
+            identifier
+            for identifier in dependency_candidates.get(str(requirement["id"]), [])
+            if identifier in present
+        ]
     return requirements
 
 
@@ -645,6 +776,7 @@ def design_api(
             "Use safe Rust boundaries for public APIs.",
             "Keep source-to-Rust evidence in stage artifacts.",
         ],
+        "implementation_requirements_schema_version": 2,
         "implementation_requirements": derive_implementation_requirements(c_test_model),
         "source_evidence": {
             "source_files": count_list(c_project_model, "source_files"),

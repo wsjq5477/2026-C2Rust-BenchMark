@@ -95,6 +95,34 @@ def final_c_cross_verified(matrix: dict[str, Any], attempts: list[dict[str, Any]
     )
 
 
+def controller_report_candidate(state: dict[str, Any]) -> bool:
+    """Return true while workflowctl owns an active final-report transaction.
+
+    Legacy runs write reports after setting ``current_stage=DONE``.  The
+    transactional controller cannot do that safely: result files must be
+    generated before ``finish`` commits the stage and changes the state to
+    DONE.  Binding the candidate state to the active REPORT run avoids that
+    ordering deadlock without letting an arbitrary REPORT state claim success.
+    The final gate remains the authority that accepts the report.
+    """
+    if state.get("current_stage") == "DONE":
+        return not (
+            state.get("controller_contract_version")
+            and state.get("final_status") == "fail"
+        )
+    active = state.get("active_stage_run")
+    return (
+        bool(state.get("controller_contract_version"))
+        and state.get("current_stage") == "REPORT_AND_VERIFY"
+        and state.get("checkpoint") == "REPORT_AND_VERIFY"
+        and state.get("next_action") == "COMPLETE_REPORT_AND_VERIFY"
+        and isinstance(active, dict)
+        and active.get("stage") == "REPORT_AND_VERIFY"
+        and isinstance(active.get("run_id"), str)
+        and bool(active.get("run_id"))
+    )
+
+
 def cross_convergence_summary(
     matrix: dict[str, Any],
     attempts: list[dict[str, Any]],
@@ -136,7 +164,7 @@ def write_report(root: Path, output: Path, issues: Path) -> None:
     convergence_lines = "\n".join(cross_convergence_summary(matrix, attempts, workbench_issues))
 
     success = (
-        state.get("current_stage") == "DONE"
+        controller_report_candidate(state)
         and state.get("build_status") == "pass"
         and state.get("test_status") == "pass"
         and placeholders.get("status") == "pass"

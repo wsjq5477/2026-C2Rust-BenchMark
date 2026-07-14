@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any
 ASSERTION_RE = re.compile(r"assertion `(?P<left>[^`]+)` failed")
 TEST_RE = re.compile(r"^---- (?P<test>[A-Za-z0-9_:]+) stdout ----$")
 PANIC_RE = re.compile(r"thread '[^']+' .*panicked at (?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+):")
+COMPILER_LOCATION_RE = re.compile(r"^\s*-->\s+(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+)", re.MULTILINE)
 COMPILE_ERROR_RE = re.compile(r"^error\[E[0-9]+\]: (?P<message>.+)$", re.MULTILINE)
 LEFT_RIGHT_RE = re.compile(r"left: (?P<left>.+)\s+right: (?P<right>.+)", re.DOTALL)
 
@@ -37,7 +39,7 @@ def find_first_failed_test(log: str) -> str:
 
 
 def find_failure_location(log: str) -> tuple[str | None, int | None]:
-    match = PANIC_RE.search(log)
+    match = PANIC_RE.search(log) or COMPILER_LOCATION_RE.search(log)
     if not match:
         return None, None
     try:
@@ -45,6 +47,26 @@ def find_failure_location(log: str) -> tuple[str | None, int | None]:
     except ValueError:
         line = None
     return match.group("file"), line
+
+
+def file_sha256(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def rust_source_scope(path: str | None) -> str | None:
+    if not isinstance(path, str) or not path:
+        return None
+    normalized = path.replace("\\", "/")
+    marker = "/flashDB_rust/src/"
+    if marker in normalized:
+        return "flashDB_rust/src/" + normalized.split(marker, 1)[1]
+    if normalized.startswith("flashDB_rust/src/"):
+        return normalized
+    if normalized.startswith("src/"):
+        return "flashDB_rust/" + normalized
+    return None
 
 
 def find_assertion(log: str) -> str | None:
@@ -68,27 +90,27 @@ def classify(log: str) -> tuple[str, bool, list[str], str]:
         return (
             "harness_suspect",
             False,
-            ["flashDB_rust/tests", "flashDB_rust/src"],
+            ["flashDB_rust/tests/**", "logs/trace/rust_test_mapping.json"],
             "resolve test integration or public API mismatch before semantic repair",
         )
     if "assertion `left == right` failed" in log or "assertion failed:" in log:
         return (
             "test_oracle_suspect",
             False,
-            ["flashDB_rust/tests", "logs/trace/rust_test_mapping.json"],
+            ["flashDB_rust/tests/**", "logs/trace/rust_test_mapping.json"],
             "verify expected value provenance before editing implementation",
         )
     if "called `Result::unwrap()` on an `Err` value" in log or "panicked at" in log:
         return (
             "harness_suspect",
             False,
-            ["flashDB_rust/tests", "flashDB_rust/src"],
+            ["flashDB_rust/tests/**", "logs/trace/rust_test_mapping.json"],
             "check setup, harness, and API integration before core semantic repair",
         )
     return (
         "insufficient_evidence",
         False,
-        ["logs/trace"],
+        ["logs/trace/**"],
         "collect a narrower failing test log and C evidence before repair",
     )
 
@@ -101,6 +123,12 @@ def build_record(root: Path, out: Path) -> dict[str, Any]:
     assertion = find_assertion(log)
     expected, actual = find_expected_actual(log)
     classification, allow_src_edit, allowed_edit_scope, next_action = classify(log)
+    source_scope = rust_source_scope(failure_file)
+    if source_scope and (COMPILE_ERROR_RE.search(log) or "panicked at" in log):
+        classification = "rust_impl_suspect"
+        allow_src_edit = True
+        allowed_edit_scope = [source_scope]
+        next_action = "repair the evidenced Rust source location, then rerun cargo and C-cross confirmation"
 
     evidence_paths = ["logs/trace/cargo-test.log"]
     for name in ["rust_test_mapping.json", "validation-matrix.json", "c_test_model.json"]:
@@ -108,6 +136,10 @@ def build_record(root: Path, out: Path) -> dict[str, Any]:
             evidence_paths.append(f"logs/trace/{name}")
 
     record: dict[str, Any] = {
+        "schema_version": 1,
+        "generator": "test_failure_triage.py",
+        "cargo_test_sha256": file_sha256(log_path),
+        "cargo_results_sha256": file_sha256(out / "cargo-results.json"),
         "failed_test": failed_test,
         "failure_kind": "assertion_mismatch" if classification == "test_oracle_suspect" else "cargo_test_failure",
         "classification": classification,
@@ -127,15 +159,19 @@ def build_record(root: Path, out: Path) -> dict[str, Any]:
 def update_state(out: Path) -> None:
     state_path = out / "workflow_state.json"
     state = load_json(state_path)
+    if state.get("controller_contract_version"):
+        # workflowctl projects this fact from cargo-results/triage artifacts at
+        # stage commit; delegated tools must not mutate controller state.
+        return
     state["test_failure_triage_required"] = True
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def write_triage(root: Path, out: Path) -> dict[str, Any]:
+def write_triage(root: Path, out: Path, *, replace: bool = False) -> dict[str, Any]:
     out.mkdir(parents=True, exist_ok=True)
     record = build_record(root, out)
     triage_path = out / "test-failure-triage.jsonl"
-    with triage_path.open("a", encoding="utf-8") as handle:
+    with triage_path.open("w" if replace else "a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, sort_keys=True) + "\n")
     update_state(out)
     return record
@@ -145,9 +181,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Classify the first cargo test failure before repair.")
     parser.add_argument("--root", default=".", help="Workbench root directory.")
     parser.add_argument("--out", required=True, help="logs/trace directory.")
+    parser.add_argument("--replace", action="store_true", help="Replace stale triage with one current record.")
     args = parser.parse_args(argv)
 
-    record = write_triage(Path(args.root), Path(args.out))
+    record = write_triage(Path(args.root), Path(args.out), replace=args.replace)
     print("TEST_FAILURE_TRIAGE: WRITTEN")
     print(f"classification={record['classification']}")
     print(f"allow_src_edit={str(record['allow_src_edit']).lower()}")

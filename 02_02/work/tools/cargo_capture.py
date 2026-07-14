@@ -37,12 +37,20 @@ def capture(project: Path, out: Path) -> dict[str, Any]:
     results["fmt_status"] = "pass" if results["fmt"]["returncode"] == 0 else "fail"
     if results["test_status"] == "fail":
         root = out.parent.parent if out.name == "trace" and out.parent.name == "logs" else out.parent
-        triage_record = test_failure_triage.write_triage(root, out)
-        results["test_failure_triage"] = {
-            "log": "test-failure-triage.jsonl",
-            "classification": triage_record["classification"],
-            "allow_src_edit": triage_record["allow_src_edit"],
-        }
+        state = test_failure_triage.load_json(out / "workflow_state.json")
+        if state.get("controller_contract_version"):
+            results["test_failure_triage"] = {
+                "status": "pending_workflowctl",
+                "log": "test-failure-triage.jsonl",
+            }
+        else:
+            triage_record = test_failure_triage.write_triage(root, out)
+            results["test_failure_triage"] = {
+                "status": "written",
+                "log": "test-failure-triage.jsonl",
+                "classification": triage_record["classification"],
+                "allow_src_edit": triage_record["allow_src_edit"],
+            }
     (out / "cargo-results.json").write_text(json.dumps(results, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return results
 
@@ -59,9 +67,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"test_status={results['test_status']}")
     if "test_failure_triage" in results:
         triage = results["test_failure_triage"]
-        print("TEST_FAILURE_TRIAGE: WRITTEN")
-        print(f"classification={triage['classification']}")
-        print(f"allow_src_edit={str(triage['allow_src_edit']).lower()}")
+        if triage.get("status") == "written":
+            print("TEST_FAILURE_TRIAGE: WRITTEN")
+            print(f"classification={triage['classification']}")
+            print(f"allow_src_edit={str(triage['allow_src_edit']).lower()}")
+        else:
+            print("TEST_FAILURE_TRIAGE: PENDING_WORKFLOWCTL")
     return 0 if results["build_status"] == "pass" and results["test_status"] == "pass" else 1
 
 

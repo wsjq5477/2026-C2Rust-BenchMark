@@ -16,11 +16,13 @@ permission:
 
 如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
 
+调度必须提供 `workflowctl begin` 生成的 task packet。你只读取 packet 中列出的 scenario IR、obligations 和 evidence paths；不得直接编辑 `workflow_state.json`、stage receipt 或 `subagent-invocations.jsonl`。
+
 编辑边界：只允许修改 `flashDB_rust/tests/**`、规定的测试 mapping 和 `logs/trace/**` 运行证据；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。平台脚本或契约问题由主控登记到 `logs/trace/c-cross/workbench-issues.jsonl`，不得自行修改工作台。
 
 ## 前置条件
 
-`VERIFY_RUST_WITH_C_TESTS` 必须已经写出全量 invocation 证据。`PASS` 与 `CONTINUE_WITH_FAILURES` 都可进入 `MIGRATE_TESTS`；后者不是最终 C-cross 结论，失败与 unresolved 必须保留到最终报告。
+`VERIFY_RUST_WITH_C_TESTS` 必须已经写出全量 invocation 证据，且 machine repair queue 已收敛或显式耗尽预算。一次 checkpoint 的 `CONTINUE_WITH_FAILURES` 不能直接进入 `MIGRATE_TESTS`；预算耗尽时失败与 unresolved 必须保留到最终报告。
 
 ## 职责范围
 
@@ -30,14 +32,14 @@ permission:
 - 生成并维护 `rust_test_mapping.json` 声明的 Rust 测试文件；
 - 维护 `logs/trace/rust_test_mapping.json`；
 - 以 `c_test_model.json.scorer_standard_cases` 为评分覆盖合同，逐项一一迁移；
-- 使用 `c_test_model.json.standard_scenarios` 作为动态 C 注册场景证据，不得忽略其中的语义事实；
+- 使用 `c_test_model.json.standard_scenarios` 及其有序 `scenario_ir` 作为动态 C 注册场景证据，不得忽略调用、控制、断言及 helper/callback 顺序；
 - 根据每个 scorer case 的 `semantic_obligations`、`semantic_facts.assertion_details`、`semantic_facts.data_shape` 和 `semantic_facts.scenario_features` 完善 Rust 测试；
 - 对 `verify_*`、`data_shape:*`、`scenario:*` obligations，必须写入能追溯 C 证据的 `assertion_evidence`；
 - 只有当真实测试已写入、`validated_obligations` 覆盖全部 `semantic_obligations` 且 `assertion_evidence` 证明关键断言时，才可把该项 mapping 更新为 `implementation_status: implemented` 和 `coverage: semantic`。
 - 先用 `migrate_tests.py` 生成动态任务映射；该工具不生成测试体，必须由你直接编写真实 Rust 测试，并将完成项更新为 `implementation_status: implemented`；
 - 运行 `placeholder_check.py`，恒真断言、待实现宏、占位标记、`#[ignore]`、缺失测试函数或缺失断言均不得通过；
 - coverage 分级：`api` 只代表调用覆盖；`assertion_semantic` 代表断言属性等价；`deep_semantic` 代表数据规模、布局和边界条件等价。不得把 `api` 级测试标记为 `semantic`。
-- 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。
+- 状态、stage receipt 和调用证据由主控通过 `workflowctl` 生成；你不得手写。
 
 ## 上下文边界
 

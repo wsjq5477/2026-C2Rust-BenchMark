@@ -51,8 +51,9 @@ def _prepare_config_alias(project_root: Path, config_headers: list[str], tmp: Pa
         else:
             target_name = source.name
         target = alias_dir / target_name
-        if not target.exists() and source.name != target_name:
+        if not target.exists():
             target.write_text(source.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
+        if source.name != target_name:
             aliases.append(target_name)
     return aliases
 
@@ -123,6 +124,92 @@ def _referenced_structs(fields: list[dict[str, Any]]) -> set[str]:
     return names
 
 
+def _split_top_level_commas(text: str) -> list[str]:
+    """Split a C parameter list without splitting nested declarators."""
+    parts: list[str] = []
+    start = 0
+    paren_depth = 0
+    bracket_depth = 0
+    brace_depth = 0
+    for index, char in enumerate(text):
+        if char == "(":
+            paren_depth += 1
+        elif char == ")":
+            paren_depth = max(0, paren_depth - 1)
+        elif char == "[":
+            bracket_depth += 1
+        elif char == "]":
+            bracket_depth = max(0, bracket_depth - 1)
+        elif char == "{":
+            brace_depth += 1
+        elif char == "}":
+            brace_depth = max(0, brace_depth - 1)
+        elif char == "," and paren_depth == bracket_depth == brace_depth == 0:
+            part = text[start:index].strip()
+            if part:
+                parts.append(part)
+            start = index + 1
+    final = text[start:].strip()
+    if final:
+        parts.append(final)
+    return parts
+
+
+def _array_extents(declarator: str, name_end: int) -> list[str]:
+    suffix = declarator[name_end:]
+    return [match.group(1).strip() for match in re.finditer(r"\[([^\]]*)\]", suffix)]
+
+
+def _pointer_target(ctype: str) -> str | None:
+    if "*" not in ctype:
+        return None
+    target = ctype.rsplit("*", 1)[0]
+    target = re.sub(r"\s+", " ", target).strip()
+    return target or None
+
+
+def _field_contract(
+    *,
+    statement: str,
+    name: str,
+    ctype: str,
+    name_end: int,
+    callback_signature: dict[str, Any] | None = None,
+    explicit_array_extents: list[str] | None = None,
+) -> dict[str, Any]:
+    extents = explicit_array_extents if explicit_array_extents is not None else _array_extents(statement, name_end)
+    compact_type = re.sub(r"\s+", " ", ctype).strip()
+    if callback_signature is not None and extents:
+        kind = "function_pointer_array"
+    elif callback_signature is not None:
+        kind = "function_pointer"
+    elif extents:
+        kind = "array"
+    elif re.match(r"^(?:struct|union)\s*\{", compact_type):
+        kind = "anonymous_union" if compact_type.startswith("union") else "anonymous_struct"
+    elif "*" in compact_type:
+        kind = "pointer"
+    elif re.match(r"^struct\s+" + IDENT + r"\b", compact_type):
+        kind = "named_struct"
+    elif re.match(r"^union\s+" + IDENT + r"\b", compact_type):
+        kind = "named_union"
+    elif re.search(r":\s*\d+\s*$", statement):
+        kind = "bitfield"
+    else:
+        kind = "scalar_or_typedef"
+    pointee = _pointer_target(compact_type) if kind in {"pointer", "array"} else None
+    return {
+        "name": name,
+        "ctype": compact_type,
+        "raw_declarator": statement,
+        "kind": kind,
+        "array_extents": extents,
+        "pointee": pointee,
+        "callback_signature": callback_signature,
+        "condition": None,
+    }
+
+
 def _find_struct_body(preprocessed: str, struct_name: str) -> str | None:
     match = re.search(r"\bstruct\s+" + re.escape(struct_name) + r"\s*\{", preprocessed)
     if not match:
@@ -162,20 +249,51 @@ def _field_from_statement(statement: str) -> dict[str, Any] | None:
     statement = re.sub(r"\s+", " ", statement.strip())
     if not statement or statement.startswith("typedef "):
         return None
-    function_pointer = re.search(r"\(\s*\*\s*(" + IDENT + r")\s*\)", statement)
+    function_pointer = re.search(
+        r"^(?P<return>.*?)\(\s*\*\s*(?P<name>" + IDENT
+        + r")(?P<arrays>(?:\s*\[[^\]]*\])*)\s*\)\s*\((?P<params>.*)\)\s*$",
+        statement,
+    )
     if function_pointer:
-        return {"name": function_pointer.group(1), "ctype": statement, "condition": None}
-    nested = re.search(r"\}\s*(" + IDENT + r")\s*(?:\[[^\]]+\])?\s*$", statement)
+        name = function_pointer.group("name")
+        raw_params = function_pointer.group("params").strip()
+        callback_signature = {
+            "return_type": function_pointer.group("return").strip(),
+            "parameters": [] if raw_params in {"", "void"} else _split_top_level_commas(raw_params),
+            "raw": statement,
+        }
+        return _field_contract(
+            statement=statement,
+            name=name,
+            ctype=statement,
+            name_end=function_pointer.end("name"),
+            callback_signature=callback_signature,
+            explicit_array_extents=[
+                match.group(1).strip()
+                for match in re.finditer(r"\[([^\]]*)\]", function_pointer.group("arrays"))
+            ],
+        )
+    nested = re.search(r"\}\s*(" + IDENT + r")\s*(?:\[[^\]]*\]\s*)*$", statement)
     if nested:
-        return {"name": nested.group(1), "ctype": statement[: nested.start() + 1].strip(), "condition": None}
-    match = re.search(r"(" + IDENT + r")\s*(?:\[[^\]]+\])?\s*(?::\s*\d+)?\s*$", statement)
+        return _field_contract(
+            statement=statement,
+            name=nested.group(1),
+            ctype=statement[: nested.start() + 1].strip(),
+            name_end=nested.end(1),
+        )
+    match = re.search(r"(" + IDENT + r")\s*(?:\[[^\]]*\]\s*)*(?::\s*\d+)?\s*$", statement)
     if not match:
         return None
     name = match.group(1)
     ctype = statement[: match.start(1)].strip()
     if not ctype:
         return None
-    return {"name": name, "ctype": ctype, "condition": None}
+    return _field_contract(
+        statement=statement,
+        name=name,
+        ctype=ctype,
+        name_end=match.end(1),
+    )
 
 
 def _parse_fields(preprocessed: str, struct_name: str) -> list[dict[str, Any]]:
@@ -204,10 +322,16 @@ def _probe_source(project_root: Path, include_dirs: list[str], fields_by_struct:
         )
         for field in fields:
             field_name = field["name"]
+            if field.get("kind") == "bitfield":
+                # Standard C does not permit offsetof/sizeof on a bit-field.
+                # Preserve its declarator contract, but leave probe values
+                # absent so downstream generators cannot pretend it is safe.
+                continue
             lines.append(
-                f'  printf("FIELD|{struct_name}|{field_name}|%zu|%zu\\n", '
+                f'  printf("FIELD|{struct_name}|{field_name}|%zu|%zu|%zu\\n", '
                 f"offsetof(struct {struct_name}, {field_name}), "
-                f"sizeof(((struct {struct_name} *)0)->{field_name}));"
+                f"sizeof(((struct {struct_name} *)0)->{field_name}), "
+                f"(size_t)__alignof__(((struct {struct_name} *)0)->{field_name}));"
             )
     lines.append("  return 0;")
     lines.append("}")
@@ -241,8 +365,12 @@ def _run_probe(
         parts = line.split("|")
         if len(parts) == 4 and parts[0] == "STRUCT":
             layouts[parts[1]] = {"sizeof": int(parts[2]), "alignof": int(parts[3])}
-        elif len(parts) == 5 and parts[0] == "FIELD":
-            field_values[(parts[1], parts[2])] = {"offset": int(parts[3]), "sizeof": int(parts[4])}
+        elif len(parts) == 6 and parts[0] == "FIELD":
+            field_values[(parts[1], parts[2])] = {
+                "offset": int(parts[3]),
+                "sizeof": int(parts[4]),
+                "alignof": int(parts[5]),
+            }
     for struct_name, fields in fields_by_struct.items():
         for field in fields:
             values = field_values.get((struct_name, field["name"]))

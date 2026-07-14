@@ -47,6 +47,55 @@ def strip_comments(text: str) -> str:
     return text
 
 
+def mask_comments_preserving_lines(text: str) -> str:
+    """Mask comments without changing offsets or physical line numbers."""
+    chars = list(text)
+    cursor = 0
+    quote: str | None = None
+    while cursor < len(chars):
+        char = chars[cursor]
+        if quote is not None:
+            if char == "\\":
+                cursor += 2
+                continue
+            if char == quote:
+                quote = None
+            cursor += 1
+            continue
+        if char in {'"', "'"}:
+            quote = char
+            cursor += 1
+            continue
+        if char == "/" and cursor + 1 < len(chars) and chars[cursor + 1] == "/":
+            while cursor < len(chars) and chars[cursor] != "\n":
+                chars[cursor] = " "
+                cursor += 1
+            continue
+        if char == "/" and cursor + 1 < len(chars) and chars[cursor + 1] == "*":
+            chars[cursor] = chars[cursor + 1] = " "
+            cursor += 2
+            while cursor < len(chars):
+                if cursor + 1 < len(chars) and chars[cursor] == "*" and chars[cursor + 1] == "/":
+                    chars[cursor] = chars[cursor + 1] = " "
+                    cursor += 2
+                    break
+                if chars[cursor] != "\n":
+                    chars[cursor] = " "
+                cursor += 1
+            continue
+        cursor += 1
+    return "".join(chars)
+
+
+def mask_c_literals_preserving_offsets(text: str) -> str:
+    """Mask quoted C literals so punctuation inside them is not parsed."""
+
+    def mask(match: re.Match[str]) -> str:
+        return "".join("\n" if char == "\n" else " " for char in match.group(0))
+
+    return re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', mask, text)
+
+
 def classify_path(path: str) -> str:
     lower = path.lower()
     if lower.startswith("tests/"):
@@ -430,7 +479,7 @@ def extract_registered_test_calls(text: str) -> list[tuple[str, int]]:
     """Return each TEST_RUN target with its physical source line."""
     calls: list[tuple[str, int]] = []
     pattern = re.compile(r"\bTEST_RUN\s*\(\s*(" + IDENT + r")\s*\)")
-    for match in pattern.finditer(strip_comments(text)):
+    for match in pattern.finditer(mask_comments_preserving_lines(text)):
         calls.append((match.group(1), text.count("\n", 0, match.start()) + 1))
     return calls
 
@@ -449,27 +498,249 @@ def _invocation_scenario_id(invocation: dict[str, Any], occurrence: int) -> str:
 
 
 def extract_function_bodies(text: str) -> dict[str, str]:
-    clean = strip_comments(text)
     # Test semantics often live in callbacks and helpers rather than in the
-    # registered test body.  Capture every local function body so the caller
-    # can later build a bounded call graph from a registered test.
-    pattern = re.compile(r"\b(?P<name>" + IDENT + r")\s*\([^;{}]*\)\s*\{")
-    bodies: dict[str, str] = {}
-    for match in pattern.finditer(clean):
-        name = match.group("name")
-        if name in CONTROL_WORDS:
+    # registered test body.  Reuse the source-aware parser so a call followed
+    # by a control block (for example a ``for (... free(x)) {`` header) cannot
+    # be mistaken for a function definition.
+    return {
+        name: str(record["body"])
+        for name, record in extract_function_body_records(text, "").items()
+    }
+
+
+def extract_function_body_records(text: str, file_name: str) -> dict[str, dict[str, Any]]:
+    """Return local function bodies with stable source offsets.
+
+    ``extract_function_bodies`` predates scenario IR and intentionally returns
+    only strings.  Keep that API intact while collecting the additional source
+    coordinates needed by ordered, reviewable scenario steps.
+    """
+    clean = mask_comments_preserving_lines(text)
+    scan_text = mask_c_literals_preserving_offsets(clean)
+    records: dict[str, dict[str, Any]] = {}
+    definition_names = sorted({
+        item["name"]
+        for item in extract_functions(text, file_name)
+        if item.get("kind") == "definition"
+    })
+    for name in definition_names:
+        pattern = re.compile(r"\b" + re.escape(name) + r"\s*\([^;{}]*\)\s*\{")
+        match = pattern.search(scan_text)
+        if match is None:
             continue
         depth = 1
         cursor = match.end()
-        while cursor < len(clean) and depth:
-            if clean[cursor] == "{":
+        while cursor < len(scan_text) and depth:
+            if scan_text[cursor] == "{":
                 depth += 1
-            elif clean[cursor] == "}":
+            elif scan_text[cursor] == "}":
                 depth -= 1
             cursor += 1
-        if depth == 0:
-            bodies[name] = clean[match.end() : cursor - 1]
-    return bodies
+        if depth != 0:
+            continue
+        body_start = match.end()
+        records[name] = {
+            "name": name,
+            "file": file_name,
+            "line": text.count("\n", 0, match.start()) + 1,
+            "body_offset": body_start,
+            "body": clean[body_start : cursor - 1],
+            "source_text": text,
+        }
+    return records
+
+
+def extract_balanced_calls(body: str) -> list[dict[str, Any]]:
+    """Extract call-like expressions in a deterministic evaluation order.
+
+    Ordering by closing parenthesis places calls nested in assertion macros
+    before the assertion itself, which captures the important observable flow
+    without pretending that C specifies argument evaluation order.
+    """
+    calls: list[dict[str, Any]] = []
+    scan_text = mask_c_literals_preserving_offsets(body)
+    for match in re.finditer(r"\b(" + IDENT + r")\s*\(", scan_text):
+        name = match.group(1)
+        if name in CONTROL_WORDS:
+            continue
+        open_paren = scan_text.find("(", match.start(1) + len(name))
+        depth = 1
+        cursor = open_paren + 1
+        while cursor < len(scan_text) and depth:
+            if scan_text[cursor] == "(":
+                depth += 1
+            elif scan_text[cursor] == ")":
+                depth -= 1
+            cursor += 1
+        if depth != 0:
+            continue
+        calls.append(
+            {
+                "name": name,
+                "args": body[open_paren + 1 : cursor - 1],
+                "start": match.start(1),
+                "end": cursor,
+            }
+        )
+    return sorted(calls, key=lambda item: (int(item["end"]), -int(item["start"]), str(item["name"])))
+
+
+def _callback_targets(
+    function_name: str,
+    raw_args: str,
+    function_records: dict[str, dict[str, Any]],
+) -> list[str]:
+    if "iter" not in function_name.lower():
+        return []
+    preferred = callback_arg_from_call(function_name, raw_args)
+    if preferred in function_records:
+        return [preferred]
+    targets: list[str] = []
+    for raw_arg in split_params(raw_args):
+        token = raw_arg.strip().lstrip("&")
+        if token in function_records and token not in targets:
+            targets.append(token)
+    return targets
+
+
+def build_scenario_ir(
+    scenario_id: str,
+    test_function: str,
+    invocation: dict[str, Any],
+    function_records: dict[str, dict[str, Any]],
+    public_symbols: set[str],
+) -> list[dict[str, Any]]:
+    """Expand a registered test into ordered call/control/assertion steps."""
+    steps: list[dict[str, Any]] = []
+    expansion_anchors: dict[tuple[str, str], str] = {}
+
+    def append_step(step: dict[str, Any]) -> None:
+        step["order"] = len(steps) + 1
+        step["id"] = f"{scenario_id}:s{len(steps) + 1:03d}"
+        steps.append(step)
+
+    append_step(
+        {
+            "kind": "invoke_test",
+            "call": test_function,
+            "call_type": "registered_test",
+            "arguments": "",
+            "source_file": invocation.get("registration_source_file", invocation.get("source_file")),
+            "source_function": "test_runner",
+            "source_line": invocation.get("source_line"),
+            "call_path": [test_function],
+            "via": {"kind": "registration", "runner": invocation.get("runner")},
+        }
+    )
+
+    def expand(function_name: str, call_path: list[str], via: dict[str, Any], stack: tuple[str, ...]) -> None:
+        if function_name in stack or len(stack) >= 12 or len(steps) >= 1000:
+            return
+        record = function_records.get(function_name)
+        if not isinstance(record, dict):
+            return
+        body = str(record.get("body", ""))
+        source_text = str(record.get("source_text", ""))
+        body_offset = int(record.get("body_offset", 0) or 0)
+        next_stack = stack + (function_name,)
+        for event in extract_balanced_calls(body):
+            if len(steps) >= 1000:
+                return
+            call = str(event["name"])
+            raw_args = re.sub(r"\s+", " ", str(event["args"])).strip()
+            is_assertion = "assert" in call.lower()
+            is_control = call_name_matches(call, "control")
+            is_helper = call in function_records and call != function_name
+            callback_targets = _callback_targets(call, str(event["args"]), function_records)
+            if is_assertion:
+                kind = "assertion"
+                call_type = "test_assertion"
+            elif is_control:
+                kind = "control"
+                call_type = "public_api" if call in public_symbols else "control_helper"
+            else:
+                kind = "call"
+                call_type = (
+                    "public_api"
+                    if call in public_symbols
+                    else "helper"
+                    if is_helper
+                    else "local_or_library"
+                )
+            absolute_offset = body_offset + int(event["start"])
+            step: dict[str, Any] = {
+                "kind": kind,
+                "call": call,
+                "call_type": call_type,
+                "arguments": raw_args,
+                "source_file": record.get("file"),
+                "source_function": function_name,
+                "source_line": source_text.count("\n", 0, absolute_offset) + 1,
+                "call_path": list(call_path),
+                "via": via,
+            }
+            if is_control:
+                args = split_params(str(event["args"]))
+                step["command"] = args[1].strip() if len(args) > 1 else ""
+            if is_assertion:
+                step["expression"] = raw_args
+            if is_helper:
+                step["expands_to"] = call
+            if callback_targets:
+                step["callback_targets"] = callback_targets
+            append_step(step)
+
+            if is_helper:
+                edge = ("helper", call)
+                if edge in expansion_anchors:
+                    step["expansion_ref"] = expansion_anchors[edge]
+                else:
+                    expansion_anchors[edge] = str(step["id"])
+                    step["expansion_anchor"] = True
+                    expand(
+                        call,
+                        call_path + [call],
+                        {"kind": "helper", "caller": function_name, "call": call},
+                        next_stack,
+                    )
+            for callback in callback_targets:
+                callback_step = {
+                    "kind": "callback_dispatch",
+                    "call": callback,
+                    "call_type": "iterator_callback",
+                    "arguments": "",
+                    "source_file": record.get("file"),
+                    "source_function": function_name,
+                    "source_line": source_text.count("\n", 0, absolute_offset) + 1,
+                    "call_path": call_path + [callback],
+                    "via": {
+                        "kind": "callback",
+                        "caller": function_name,
+                        "iterator_api": call,
+                        "callback": callback,
+                    },
+                }
+                append_step(callback_step)
+                edge = ("callback", callback)
+                if edge in expansion_anchors:
+                    callback_step["expansion_ref"] = expansion_anchors[edge]
+                else:
+                    expansion_anchors[edge] = str(callback_step["id"])
+                    callback_step["expansion_anchor"] = True
+                    expand(
+                        callback,
+                        call_path + [callback],
+                        {
+                            "kind": "callback",
+                            "caller": function_name,
+                            "iterator_api": call,
+                            "callback": callback,
+                        },
+                        next_stack,
+                    )
+
+    expand(test_function, [test_function], {"kind": "registered_test"}, ())
+    return steps
 
 
 def extract_assertion_details(body: str) -> list[dict[str, Any]]:
@@ -745,6 +1016,8 @@ def build_standard_scenarios(
     registered_invocations: list[dict[str, Any]],
     scenario_tags: dict[str, list[str]],
     test_semantics: dict[str, dict[str, Any]],
+    function_records: dict[str, dict[str, Any]] | None = None,
+    public_symbols: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     scenarios: list[dict[str, Any]] = []
     occurrences: dict[str, int] = {}
@@ -765,6 +1038,13 @@ def build_standard_scenarios(
                 "order": index,
                 "tags": tags,
                 "semantic_facts": merge_semantic_facts(related_test_names(name, test_semantics), test_semantics),
+                "scenario_ir": build_scenario_ir(
+                    scenario_id,
+                    name,
+                    invocation,
+                    function_records or {},
+                    public_symbols or set(),
+                ),
                 "c_cross": determine_c_cross_enabled(name),
             }
         )
@@ -962,6 +1242,8 @@ def build_scorer_standard_cases(
     registered_invocations: list[dict[str, Any]],
     scenario_tags: dict[str, list[str]],
     test_semantics: dict[str, dict[str, Any]],
+    function_records: dict[str, dict[str, Any]] | None = None,
+    public_symbols: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
     occurrences: dict[str, int] = {}
@@ -984,6 +1266,13 @@ def build_scorer_standard_cases(
                 "missing_c_tests": [],
                 "semantic_facts": facts,
                 "semantic_obligations": semantic_obligations_from_facts(tags, facts),
+                "scenario_ir": build_scenario_ir(
+                    scenario_id,
+                    name,
+                    invocation,
+                    function_records or {},
+                    public_symbols or set(),
+                ),
                 "tags": tags,
                 "source_file": invocation.get("source_file"),
                 "c_cross": determine_c_cross_enabled(name),
@@ -1092,6 +1381,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     registered_invocations: list[dict[str, Any]] = []
     scenario_tags: dict[str, list[str]] = {}
     test_semantics: dict[str, dict[str, Any]] = {}
+    test_function_records: dict[str, dict[str, Any]] = {}
     test_source_text: dict[str, str] = {}
     test_function_sources: dict[str, str] = {}
     for file_name in test_files:
@@ -1102,6 +1392,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         test_source_text[file_name] = text
         funcs = [item["name"] for item in extract_functions(text, file_name) if item["name"].startswith("test_")]
         bodies = extract_function_bodies(text)
+        body_records = extract_function_body_records(text, file_name)
         test_functions.extend(funcs)
         for name in funcs:
             test_function_sources.setdefault(name, file_name)
@@ -1109,6 +1400,8 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
             scenario_tags[name] = tag_test(name)
         for name, body in bodies.items():
             test_semantics[name] = extract_test_semantics(body)
+        for name, record in body_records.items():
+            test_function_records[name] = record
 
     # A helper can have any local name (not just ``test_*``).  Restrict edges
     # to functions actually defined in the test translation units so library
@@ -1154,6 +1447,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
                 "runner_order": runner_order,
                 "scenario_id": scenario_id,
                 "source_file": test_function_sources.get(name, registration_file),
+                "registration_source_file": registration_file,
                 "source_line": source_line,
             })
 
@@ -1177,8 +1471,20 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         semantics["public_api_calls"] = sorted(dict.fromkeys(f for f in called if f in public_function_set))
         semantics["private_function_calls"] = sorted(dict.fromkeys(f for f in called if f in private_function_set))
     enrich_callback_paths(test_semantics)
-    standard_scenarios = build_standard_scenarios(registered_invocations, scenario_tags, test_semantics)
-    scorer_standard_cases = build_scorer_standard_cases(registered_invocations, scenario_tags, test_semantics)
+    standard_scenarios = build_standard_scenarios(
+        registered_invocations,
+        scenario_tags,
+        test_semantics,
+        test_function_records,
+        public_function_set,
+    )
+    scorer_standard_cases = build_scorer_standard_cases(
+        registered_invocations,
+        scenario_tags,
+        test_semantics,
+        test_function_records,
+        public_function_set,
+    )
 
     c_project_model = {
         "input_digest": manifest.get("input_digest"),
@@ -1235,6 +1541,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
 
     c_test_model = {
         "input_digest": manifest.get("input_digest"),
+        "scenario_ir_schema_version": 1,
         "test_files": test_files,
         "test_functions": test_functions,
         "registered_tests": registered_tests,

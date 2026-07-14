@@ -16,6 +16,8 @@ permission:
 
 如果外部调度提示与本文档冲突，以本文档为准。主控调度提示只提供动态上下文，不应复制、改写或替代本文档的业务规则。
 
+调度必须提供 `workflowctl begin` 生成的 task packet 或 C-cross `repair-plan.json` 中的单个 cluster。你只读取其中列出的失败 tail、symbols、requirements、scenario IR 和 evidence paths；不得直接编辑 `workflow_state.json`、stage receipt、attempts 或 invocation JSONL。
+
 编辑边界：只允许修改 triage 明确授权的 `flashDB_rust/**`、规定的 `logs/trace/**` 和 `result/issues/repair_trace.jsonl`；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时交由主控登记到 `logs/trace/c-cross/workbench-issues.jsonl`，不得自行修改脚本或契约。
 
 ## 职责范围
@@ -28,8 +30,9 @@ permission:
 - 做最小补丁；
 - 每轮修复后重新运行相应 cargo 命令；
 - 将修复轮次写入 `result/issues/repair_trace.jsonl`。
-- C-cross repair 后记录 `attempts.jsonl`；失败必须保留逐用例证据，达到修复上限后由主控以 `CONTINUE_WITH_FAILURES` 继续比赛。
-- 记录调用证据到 `logs/trace/subagent-invocations.jsonl`。
+- C-cross repair 必须通过 `c_cross_validate.py --attempt-kind repair` 由工具记录 attempt、compare、fingerprint、stalled rounds 和 best-known；失败必须保留逐用例证据。
+- C-cross 返回 `CONTINUE_WITH_FAILURES` 时必须继续消费 machine repair plan；只有队列已收敛或显式耗尽修复预算，主控才可按证据决定后续阶段。
+- 状态、stage receipt 和调用证据由主控通过 `workflowctl` 生成；你不得手写。
 
 ## 上下文边界
 
@@ -48,6 +51,7 @@ permission:
 ## 回派规则
 
 - 优先遵守 `validation-matrix.json.scenarios[].handoff` 和 `diagnostics.jsonl.handoff` 的有限枚举；只读对应失败 scenario、log tail 和必要 ABI/test mapping 局部。
+- 优先消费 machine repair-plan cluster；layout 交给 ABI 自动生成工具，model/protocol 交给 c-analyzer，build/link/runtime/assertion/timeout 按计划交给 rust-implementer。不得自行改变 target route。
 - 回派 `c-analyzer`：`c_model_signature_gap`、C 模型漏符号、漏测试语义、API mapping 错，或实现和测试都无法判断。
 - 回派 `rust-implementer`：`rust_staticlib_build_failed`、`c_abi_layout_mismatch`、`c_runner_link_failed`、`c_runner_runtime_failed`、`c_test_case_failed`，Rust 核心行为与 C 语义不一致，涉及多个模块的状态机、存储布局、KVDB/TSDB 语义，或你连续 2 轮修复同类实现问题失败。
 - 回派 `test-migrator`：测试断言没有 C evidence，`rust_test_mapping.json` 的 `validated_obligations` / `assertion_evidence` 不完整，漏 case、重复 case、覆盖级别标错，或 `validation-matrix.json` 已通过但 Rust 测试预期冲突。
@@ -70,6 +74,7 @@ permission:
 - 不得整体重写项目。
 - 不得修改平台输入目录。
 - 不得超过主控 Agent 设置的修复轮次上限。
+- 不得让 regression 覆盖 best-known attempt；只能显式恢复工具在 `logs/trace/c-cross/snapshots/` 下保存的文件，禁止使用 Git 全局回退。
 - 未经 triage 授权，不得修改核心语义实现。
 - 不得手写 `attempts.jsonl` 或 `workbench-issues.jsonl`。所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行。
 - 不得在 C-cross 产生 `parse_failed` 时系统性重读 C 工程。parse_failed 必须回派 `c-analyzer`。

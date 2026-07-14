@@ -60,6 +60,11 @@ class FrameworkCheckpointTests(unittest.TestCase):
             PROJECT / "work" / "tools" / "design_rust_api.py",
             PROJECT / "work" / "tools" / "generate_rust_scaffold.py",
             PROJECT / "work" / "tools" / "c_cross_validate.py",
+            PROJECT / "work" / "tools" / "workflowctl.py",
+            PROJECT / "work" / "tools" / "task_packet.py",
+            PROJECT / "work" / "tools" / "core_impl_audit.py",
+            PROJECT / "work" / "tools" / "repair_planner.py",
+            PROJECT / "work" / "tools" / "c_cross_converge.py",
             PROJECT / "work" / "tools" / "migrate_tests.py",
             PROJECT / "work" / "tools" / "cargo_capture.py",
             PROJECT / "work" / "tools" / "test_failure_triage.py",
@@ -968,7 +973,11 @@ class FrameworkCheckpointTests(unittest.TestCase):
                 "--trigger", "core_batch",
             ])
 
-            self.assertEqual(1, exit_code)
+            # A non-final checkpoint reports execution success when every
+            # selected scenario has complete diagnostic evidence.  Semantic
+            # failure is carried by verification_result/next_action; only a
+            # non-passing final attempt returns non-zero.
+            self.assertEqual(0, exit_code)
             matrix = json.loads((trace / "validation-matrix.json").read_text(encoding="utf-8"))
             self.assertEqual("selected", matrix["scope"])
             self.assertEqual(["alpha"], matrix["selected_suites"])

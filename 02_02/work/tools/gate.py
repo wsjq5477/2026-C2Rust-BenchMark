@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
+import hashlib
 import importlib.util
 import json
 import re
@@ -11,6 +13,15 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+
+WORKFLOW_CONTRACT_PATH = Path(__file__).resolve().parents[1] / "knowledge" / "workflow-contract.json"
+try:
+    WORKFLOW_CONTRACT = json.loads(WORKFLOW_CONTRACT_PATH.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise RuntimeError(f"cannot load workflow contract {WORKFLOW_CONTRACT_PATH}: {exc}") from exc
+PACKET_LIMITS = WORKFLOW_CONTRACT.get("packet_limits", {})
+CONTRACT_STAGES = WORKFLOW_CONTRACT.get("stages", {})
 
 
 REQUIRED_INIT_STATE_KEYS = {
@@ -210,6 +221,146 @@ def check_abi_layout_contract(api_model: dict[str, Any]) -> list[str]:
                 errors.append(f"c_api_model.json abi_layouts {name}.{field_name} must include offset")
             if not isinstance(field.get("sizeof"), int) or field.get("sizeof") <= 0:
                 errors.append(f"c_api_model.json abi_layouts {name}.{field_name} must include positive sizeof")
+    return errors
+
+
+def check_deterministic_abi_field_contract(api_model: dict[str, Any]) -> list[str]:
+    """Require the richer compiler-backed field shape used by new runs."""
+    errors: list[str] = []
+    layouts = api_model.get("abi_layouts")
+    if not isinstance(layouts, list):
+        return errors
+    valid_kinds = {
+        "scalar_or_typedef", "pointer", "array", "anonymous_struct",
+        "anonymous_union", "named_struct", "named_union",
+        "function_pointer", "bitfield",
+    }
+    for layout in layouts:
+        if not isinstance(layout, dict):
+            continue
+        struct_name = str(layout.get("name") or "<unknown>")
+        fields = layout.get("fields")
+        if not isinstance(fields, list):
+            continue
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            field_name = str(field.get("name") or "<unknown>")
+            prefix = f"c_api_model.json abi_layouts {struct_name}.{field_name}"
+            if not isinstance(field.get("raw_declarator"), str) or not field.get("raw_declarator"):
+                errors.append(f"{prefix} must preserve raw_declarator")
+            if field.get("kind") not in valid_kinds:
+                errors.append(f"{prefix} has invalid/missing deterministic kind")
+            if not isinstance(field.get("array_extents"), list):
+                errors.append(f"{prefix} array_extents must be a list")
+            if "pointee" not in field or "callback_signature" not in field:
+                errors.append(f"{prefix} must preserve pointee and callback_signature keys")
+            if field.get("kind") != "bitfield" and (
+                not isinstance(field.get("alignof"), int) or field.get("alignof") <= 0
+            ):
+                errors.append(f"{prefix} must include compiler-confirmed field alignof")
+    return errors
+
+
+def check_ordered_scenario_ir(test_model: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    sequences: dict[str, list[tuple[Any, Any, Any]]] = {}
+    for collection, id_key in [("standard_scenarios", "id"), ("scorer_standard_cases", "scenario_id")]:
+        rows = test_model.get(collection)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            scenario_id = str(row.get(id_key) or "<unknown>")
+            raw_steps = row.get("scenario_ir")
+            steps = [item for item in raw_steps if isinstance(item, dict)] if isinstance(raw_steps, list) else []
+            if not steps:
+                errors.append(f"c_test_model.json {collection}.{scenario_id} must include ordered scenario_ir")
+                continue
+            orders = [item.get("order") for item in steps]
+            if orders != list(range(1, len(steps) + 1)):
+                errors.append(f"scenario_ir order must be contiguous for {scenario_id} in {collection}")
+            step_ids = [item.get("id") for item in steps]
+            if not all(isinstance(item, str) and item for item in step_ids) or len(set(step_ids)) != len(step_ids):
+                errors.append(f"scenario_ir step ids must be present and unique for {scenario_id} in {collection}")
+            if steps[0].get("kind") != "invoke_test":
+                errors.append(f"scenario_ir must begin with invoke_test for {scenario_id} in {collection}")
+            for step in steps:
+                if not isinstance(step.get("source_function"), str) or not step.get("source_function"):
+                    errors.append(f"scenario_ir step lacks source_function for {scenario_id}")
+                    break
+                source_line = step.get("source_line")
+                if source_line is not None and (not isinstance(source_line, int) or source_line <= 0):
+                    errors.append(f"scenario_ir step has invalid source_line for {scenario_id}")
+                    break
+            sequence = [(item.get("kind"), item.get("call"), item.get("call_type")) for item in steps]
+            previous = sequences.setdefault(scenario_id, sequence)
+            if previous != sequence:
+                errors.append(f"standard/scorer scenario_ir disagree for {scenario_id}")
+    return errors
+
+
+def check_structured_implementation_requirements(
+    design: dict[str, Any], test_model: dict[str, Any]
+) -> list[str]:
+    errors: list[str] = []
+    requirements = design.get("implementation_requirements")
+    if not isinstance(requirements, list) or not requirements:
+        return ["rust_api_design.json implementation_requirements must be a non-empty list"]
+    identifiers = {
+        item.get("id") for item in requirements
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    scenario_ids = {
+        item.get("scenario_id") for item in test_model.get("scorer_standard_cases", [])
+        if isinstance(item, dict) and isinstance(item.get("scenario_id"), str)
+    } if isinstance(test_model.get("scorer_standard_cases"), list) else set()
+    graph: dict[str, list[str]] = {}
+    for item in requirements:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            errors.append("implementation_requirements entries must include id")
+            continue
+        identifier = item["id"]
+        for key in ["symbols", "acceptance_scenarios", "suggested_files", "dependency_ids"]:
+            values = item.get(key)
+            if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
+                errors.append(f"implementation requirement {identifier} {key} must be a string list")
+        accepted = item.get("acceptance_scenarios")
+        if isinstance(accepted, list):
+            unknown = sorted(set(accepted) - scenario_ids)
+            if unknown:
+                errors.append(f"implementation requirement {identifier} has unknown acceptance scenarios: {', '.join(unknown)}")
+        files = item.get("suggested_files")
+        if isinstance(files, list) and any(
+            not path.startswith("src/") or ".." in Path(path).parts
+            for path in files if isinstance(path, str)
+        ):
+            errors.append(f"implementation requirement {identifier} suggested_files must stay under src/")
+        dependencies = item.get("dependency_ids")
+        graph[identifier] = [value for value in dependencies if isinstance(value, str)] if isinstance(dependencies, list) else []
+        unknown_dependencies = sorted(set(graph[identifier]) - identifiers)
+        if unknown_dependencies:
+            errors.append(f"implementation requirement {identifier} has unknown dependencies: {', '.join(unknown_dependencies)}")
+        if identifier in graph[identifier]:
+            errors.append(f"implementation requirement {identifier} cannot depend on itself")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(identifier: str) -> bool:
+        if identifier in visiting:
+            return True
+        if identifier in visited:
+            return False
+        visiting.add(identifier)
+        cyclic = any(visit(dependency) for dependency in graph.get(identifier, []) if dependency in graph)
+        visiting.remove(identifier)
+        visited.add(identifier)
+        return cyclic
+
+    if any(visit(identifier) for identifier in graph):
+        errors.append("implementation_requirements dependency_ids must form an acyclic graph")
     return errors
 
 
@@ -466,6 +617,196 @@ def load_jsonl(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:
     return rows, None
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _receipt_path_allowed(path: str, patterns: list[str]) -> bool:
+    for pattern in patterns:
+        if pattern.endswith("/**"):
+            prefix = pattern[:-3].rstrip("/")
+            if path == prefix or path.startswith(prefix + "/"):
+                return True
+        elif fnmatch.fnmatchcase(path, pattern):
+            return True
+    return False
+
+
+def _receipt_pattern_within(candidate: str, allowed_patterns: list[str]) -> bool:
+    if candidate in {"", "*", "**", "/"} or Path(candidate).is_absolute() or ".." in Path(candidate).parts:
+        return False
+    probe = candidate[:-3].rstrip("/") + "/__scope_probe__" if candidate.endswith("/**") else candidate
+    return _receipt_path_allowed(probe, allowed_patterns)
+
+
+def check_stage_receipt(root: Path, stage: str) -> list[str]:
+    """Validate controller-owned evidence when the transactional contract is active.
+
+    Older traces do not carry ``controller_contract_version`` and remain valid
+    under their original gate contract.  New traces cannot claim completion by
+    editing workflow_state.json alone: a same-root receipt, changed-file set,
+    and content hashes are required.
+    """
+    state, state_error = load_json(root / "logs" / "trace" / "workflow_state.json")
+    if state_error or not isinstance(state, dict) or not state.get("controller_contract_version"):
+        return []
+    # INIT_WORKSPACE is created directly and atomically by workflowctl init;
+    # transactional receipts apply to delegated stages after initialization.
+    if stage == "INIT_WORKSPACE":
+        return []
+
+    receipt_path = root / "logs" / "trace" / "stage-receipts" / f"{stage}.json"
+    receipt, receipt_error = load_json(receipt_path)
+    if receipt_error:
+        return [f"transactional stage receipt: {receipt_error}"]
+    assert isinstance(receipt, dict)
+    errors: list[str] = []
+    if receipt.get("contract_version") != state.get("controller_contract_version"):
+        errors.append("stage receipt contract_version must match workflow_state.json")
+    if receipt.get("stage") != stage:
+        errors.append(f"stage receipt must identify {stage}")
+    root_identity = receipt.get("root")
+    if not isinstance(root_identity, dict) or root_identity.get("canonical") != str(root.resolve()):
+        errors.append("stage receipt must come from this canonical workbench root")
+    else:
+        stat = root.stat()
+        if root_identity.get("device") != stat.st_dev or root_identity.get("inode") != stat.st_ino:
+            errors.append("stage receipt root identity does not match this worktree")
+    if receipt.get("status") not in {"ready_for_gate", "pass"}:
+        errors.append("stage receipt status must be ready_for_gate or pass")
+    if receipt.get("unexpected_changes") not in ([], None):
+        errors.append("stage receipt contains protected or out-of-scope changes")
+    run_id = receipt.get("run_id")
+    nonce_hash = receipt.get("nonce_sha256")
+    if not isinstance(run_id, str) or not run_id:
+        errors.append("stage receipt must include run_id")
+    if not isinstance(nonce_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", nonce_hash):
+        errors.append("stage receipt must include a hashed run nonce")
+
+    run_rel = receipt.get("run_file")
+    if not isinstance(run_rel, str) or not run_rel.startswith(f"logs/trace/stage-runs/{stage}/"):
+        errors.append("stage receipt must reference its controller stage-run record")
+        run = None
+    else:
+        run, run_error = load_json(root / run_rel)
+        if run_error:
+            errors.append(f"stage run record: {run_error}")
+            run = None
+        else:
+            if run.get("run_id") != run_id or run.get("stage") != stage:
+                errors.append("stage run record identity does not match receipt")
+            run_hash = receipt.get("run_file_sha256")
+            if not isinstance(run_hash, str) or _file_sha256(root / run_rel) != run_hash:
+                errors.append("stage run record hash does not match receipt")
+            run_nonce = run.get("nonce")
+            if not isinstance(run_nonce, str) or hashlib.sha256(run_nonce.encode("utf-8")).hexdigest() != nonce_hash:
+                errors.append("stage receipt nonce does not match controller stage-run record")
+            for key in ("allowed_paths", "required_outputs", "task_packet", "task_packet_sha256", "baseline_digest"):
+                if receipt.get(key) != run.get(key):
+                    errors.append(f"stage receipt {key} does not match controller stage-run record")
+
+    required = receipt.get("required_outputs")
+    hashes = receipt.get("artifact_hashes")
+    if not isinstance(required, list) or not required:
+        errors.append("stage receipt must include required_outputs")
+        required = []
+    if not isinstance(hashes, dict):
+        errors.append("stage receipt must include artifact_hashes")
+        hashes = {}
+    stage_contract = CONTRACT_STAGES.get(stage) if isinstance(CONTRACT_STAGES, dict) else None
+    contract_required = stage_contract.get("required_outputs") if isinstance(stage_contract, dict) else []
+    if isinstance(contract_required, list) and not set(contract_required).issubset(set(required)):
+        errors.append("stage receipt removed workflow-contract required outputs")
+    for rel in required:
+        if not isinstance(rel, str) or not rel or ".." in Path(rel).parts:
+            errors.append("stage receipt required_outputs must be safe relative paths")
+            continue
+        path = root / rel
+        if not path.is_file():
+            errors.append(f"stage receipt required output is missing: {rel}")
+            continue
+        # workflow_state is intentionally mutable after gate routing.  Its
+        # existence/schema is validated by the stage-specific gate itself.
+        if rel.endswith("workflow_state.json"):
+            continue
+        expected = hashes.get(rel)
+        if not isinstance(expected, str) or _file_sha256(path) != expected:
+            errors.append(f"stage receipt artifact changed after commit: {rel}")
+    changed_files = receipt.get("changed_files")
+    allowed_paths = receipt.get("allowed_paths")
+    if not isinstance(changed_files, list) or not isinstance(allowed_paths, list):
+        errors.append("stage receipt must include changed_files and allowed_paths")
+    else:
+        contract_allowed = stage_contract.get("allowed_paths") if isinstance(stage_contract, dict) else []
+        if not isinstance(contract_allowed, list) or any(
+            not isinstance(item, str) or not _receipt_pattern_within(item, contract_allowed)
+            for item in allowed_paths
+        ):
+            errors.append("stage receipt allowed_paths exceed workflow contract")
+        unsafe_changes = [
+            item
+            for item in changed_files
+            if not isinstance(item, str)
+            or not item
+            or ".." in Path(item).parts
+            or not _receipt_path_allowed(item, allowed_paths)
+        ]
+        if unsafe_changes:
+            errors.append("stage receipt changed_files exceed allowed_paths")
+        changed_hashes = receipt.get("changed_file_hashes")
+        if not isinstance(changed_hashes, dict):
+            errors.append("stage receipt must include changed_file_hashes")
+        else:
+            for item in changed_files:
+                if not isinstance(item, str):
+                    continue
+                path = root / item
+                if path.is_file() and not path.is_symlink():
+                    expected = changed_hashes.get(item)
+                    if not isinstance(expected, str) or _file_sha256(path) != expected:
+                        errors.append(f"stage receipt changed-file hash mismatch: {item}")
+    packet_rel = receipt.get("task_packet")
+    if not isinstance(packet_rel, str) or not packet_rel:
+        errors.append("stage receipt must reference a bounded task packet")
+    else:
+        packet, packet_error = load_json(root / packet_rel)
+        if packet_error:
+            errors.append(f"task packet: {packet_error}")
+        else:
+            packet_hash = receipt.get("task_packet_sha256")
+            if not isinstance(packet_hash, str) or _file_sha256(root / packet_rel) != packet_hash:
+                errors.append("task packet hash does not match controller stage-run record")
+            if packet.get("stage") != stage:
+                errors.append("task packet stage must match receipt stage")
+            packet_allowed = packet.get("allowed_modification_paths")
+            if not isinstance(packet_allowed, list) or packet_allowed != allowed_paths:
+                errors.append("task packet allowed paths must match the committed stage scope")
+            requirements = packet.get("requirements")
+            scenarios = packet.get("scenarios")
+            max_requirements = int(PACKET_LIMITS.get("max_requirements", 12))
+            max_scenarios = int(PACKET_LIMITS.get("max_scenarios", 3))
+            max_steps = int(PACKET_LIMITS.get("max_scenario_steps", 16))
+            if not isinstance(requirements, list) or len(requirements) > max_requirements:
+                errors.append(f"task packet requirements must be a bounded list of at most {max_requirements}")
+            if not isinstance(scenarios, list) or len(scenarios) > max_scenarios:
+                errors.append(f"task packet scenarios must be a bounded list of at most {max_scenarios}")
+            elif any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("scenario_ir"), list)
+                or len(item["scenario_ir"]) > max_steps
+                for item in scenarios
+            ):
+                errors.append(f"task packet scenario_ir must be present and capped at {max_steps} steps")
+            completion = packet.get("completion_contract")
+            if not isinstance(completion, dict) or completion.get("owner") != "workflowctl":
+                errors.append("task packet completion must be owned by workflowctl")
+    return errors
+
+
 def contains_cjk(text: str) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in text)
 
@@ -473,6 +814,8 @@ def contains_cjk(text: str) -> bool:
 def check_subagent_evidence(root: Path, required_agents: set[str] | None = None) -> list[str]:
     errors: list[str] = []
     trace = root / "logs" / "trace"
+    state, state_error = load_json(trace / "workflow_state.json")
+    controller_mode = not state_error and bool(state.get("controller_contract_version"))
     registry, registry_error = load_json(trace / "agent-registry.json")
     if registry_error:
         errors.append(f"agent-registry.json: {registry_error}")
@@ -508,12 +851,16 @@ def check_subagent_evidence(root: Path, required_agents: set[str] | None = None)
         errors.append(f"subagent-invocations.jsonl: {rows_error}")
     else:
         seen: set[str] = set()
+        successful_stages: dict[str, set[str]] = {name: set() for name in REQUIRED_SUBAGENTS}
         allowed_modes = {"native", "generic_subagent", "isolated_proxy", "primary_fallback"}
         c_analyzer_success_stages: set[str] = set()
         for index, row in enumerate(rows, start=1):
             agent = row.get("agent")
-            if agent in (required_agents or set(REQUIRED_SUBAGENTS)):
+            success = row.get("status") in {"pass", "success"}
+            if agent in (required_agents or set(REQUIRED_SUBAGENTS)) and success:
                 seen.add(agent)
+                if isinstance(row.get("stage"), str):
+                    successful_stages.setdefault(str(agent), set()).add(row["stage"])
             if agent == "c-analyzer" and row.get("status") in {"pass", "success"}:
                 stage = row.get("stage")
                 if isinstance(stage, str):
@@ -524,6 +871,38 @@ def check_subagent_evidence(root: Path, required_agents: set[str] | None = None)
                 errors.append(f"subagent-invocations.jsonl record {index} must include stage")
             if not isinstance(row.get("status"), str) or not row.get("status"):
                 errors.append(f"subagent-invocations.jsonl record {index} must include status")
+            if controller_mode and agent in REQUIRED_SUBAGENTS:
+                stage = row.get("stage")
+                expected_receipt_stage = "DESIGN_RUST_API" if stage == "C_ANALYSIS" else stage
+                valid_stages = {"C_ANALYSIS"} if agent == "c-analyzer" else set(REQUIRED_SUBAGENTS[agent])
+                if stage not in valid_stages:
+                    errors.append(f"subagent-invocations.jsonl record {index} has invalid stage for {agent}")
+                receipt_rel = row.get("artifact_receipt")
+                expected_prefix = f"logs/trace/stage-receipts/{expected_receipt_stage}/"
+                if (
+                    not isinstance(receipt_rel, str)
+                    or not receipt_rel.startswith(expected_prefix)
+                    or ".." in Path(receipt_rel).parts
+                ):
+                    errors.append(
+                        f"subagent-invocations.jsonl record {index} must reference an immutable {expected_prefix}<run_id>.json receipt"
+                    )
+                else:
+                    receipt_path = root / receipt_rel
+                    receipt, receipt_error = load_json(receipt_path)
+                    if receipt_error:
+                        errors.append(f"subagent invocation receipt {index}: {receipt_error}")
+                    else:
+                        if (
+                            receipt.get("status") != "pass"
+                            or receipt.get("run_id") != row.get("run_id")
+                            or receipt.get("stage") != expected_receipt_stage
+                            or receipt.get("receipt_path") != receipt_rel
+                        ):
+                            errors.append(f"subagent-invocations.jsonl record {index} receipt is not gate-passed")
+                        recorded_hash = row.get("artifact_receipt_sha256")
+                        if not isinstance(recorded_hash, str) or _file_sha256(receipt_path) != recorded_hash:
+                            errors.append(f"subagent-invocations.jsonl record {index} receipt hash mismatch")
             if row.get("mode") == "primary_fallback":
                 failures = row.get("consecutive_failures")
                 if not isinstance(failures, int) or failures < 3:
@@ -531,6 +910,31 @@ def check_subagent_evidence(root: Path, required_agents: set[str] | None = None)
                 reason = row.get("fallback_to_primary_reason")
                 if not isinstance(reason, str) or not reason.strip():
                     errors.append("primary_fallback records must include fallback_to_primary_reason")
+                abort_run_ids = row.get("fallback_abort_runs")
+                if (
+                    not isinstance(failures, int)
+                    or not isinstance(abort_run_ids, list)
+                    or len(abort_run_ids) < failures
+                    or len(set(abort_run_ids)) != len(abort_run_ids)
+                ):
+                    errors.append("primary_fallback records must reference distinct workflowctl abort runs")
+                else:
+                    abort_rows, abort_error = load_jsonl(trace / "stage-aborts.jsonl")
+                    if abort_error:
+                        errors.append(f"stage-aborts.jsonl: {abort_error}")
+                    else:
+                        valid_abort_stages = set(REQUIRED_SUBAGENTS.get(str(agent), []))
+                        matched = {
+                            item.get("run_id")
+                            for item in abort_rows or []
+                            if item.get("agent") == agent and item.get("stage") in valid_abort_stages
+                        }
+                        missing_aborts = [run_id for run_id in abort_run_ids if run_id not in matched]
+                        if missing_aborts:
+                            errors.append(
+                                "primary_fallback abort evidence is missing: "
+                                + ", ".join(str(item) for item in missing_aborts)
+                            )
         required = required_agents or set(REQUIRED_SUBAGENTS)
         missing = sorted(required - seen)
         if missing:
@@ -540,6 +944,13 @@ def check_subagent_evidence(root: Path, required_agents: set[str] | None = None)
             errors.append("c-analyzer must be recorded as one C_ANALYSIS invocation, not per C stage")
         if "c-analyzer" in seen and "C_ANALYSIS" not in c_analyzer_success_stages:
             errors.append("subagent-invocations.jsonl must include c-analyzer success record with stage C_ANALYSIS")
+        if controller_mode:
+            for agent in sorted(required - {"c-analyzer"}):
+                missing_stages = sorted(set(REQUIRED_SUBAGENTS[agent]) - successful_stages.get(agent, set()))
+                if missing_stages:
+                    errors.append(
+                        f"subagent-invocations.jsonl missing successful {agent} stages: {', '.join(missing_stages)}"
+                    )
     return errors
 
 
@@ -897,8 +1308,16 @@ def check_build_c_model(root: Path) -> list[str]:
     ):
         errors.append("c_api_model.json macro_values entries must describe expression and evaluation status")
     errors.extend(check_abi_layout_contract(api_model))
+    if state.get("controller_contract_version"):
+        errors.extend(check_deterministic_abi_field_contract(api_model))
     errors.extend(check_function_signature_contract(api_model, test_model))
-    if (root / "logs" / "trace" / "agent-registry.json").exists() or (root / "logs" / "trace" / "subagent-invocations.jsonl").exists():
+    if (
+        not state.get("controller_contract_version")
+        and (
+            (root / "logs" / "trace" / "agent-registry.json").exists()
+            or (root / "logs" / "trace" / "subagent-invocations.jsonl").exists()
+        )
+    ):
         errors.extend(check_subagent_evidence(root, {"c-analyzer"}))
 
     if not isinstance(test_model.get("test_functions"), list) or not test_model.get("test_functions"):
@@ -964,6 +1383,8 @@ def check_build_c_model(root: Path) -> list[str]:
             obligations = item.get("semantic_obligations")
             if not isinstance(obligations, list) or not obligations:
                 errors.append(f"scorer case {item.get('case_name')} must declare semantic_obligations")
+    if state.get("controller_contract_version"):
+        errors.extend(check_ordered_scenario_ir(test_model))
 
     stage_log = root / "logs" / "trace" / "03-build-c-model.md"
     if not stage_log.exists():
@@ -1079,6 +1500,8 @@ def check_design_rust_api(root: Path) -> list[str]:
             errors.append(f"c_test_model.json: {test_model_error}")
         else:
             errors.extend(check_design_test_contracts(design, test_model))
+            if state.get("controller_contract_version"):
+                errors.extend(check_structured_implementation_requirements(design, test_model))
         api_model, api_model_error = load_json(root / "logs" / "trace" / "c_api_model.json")
         if api_model_error:
             errors.append(f"c_api_model.json: {api_model_error}")
@@ -1137,6 +1560,20 @@ def check_generate_rust_scaffold(root: Path) -> list[str]:
 
     if project.exists():
         errors.extend(check_project_command(project, ["cargo", "check", "--all-targets"], "generated scaffold cargo check"))
+
+    if state.get("controller_contract_version"):
+        manifest, manifest_error = load_json(root / "logs" / "trace" / "scaffold-manifest.json")
+        if manifest_error:
+            errors.append(f"scaffold-manifest.json: {manifest_error}")
+        elif not isinstance(manifest.get("files"), (dict, list)) or not manifest.get("files"):
+            errors.append("scaffold-manifest.json must record generated file hashes")
+        layout, layout_error = load_json(
+            root / "logs" / "trace" / "c-cross" / "scaffold-layout-check.json"
+        )
+        if layout_error:
+            errors.append(f"scaffold-layout-check.json: {layout_error}")
+        elif layout.get("phase") != "layout" or layout.get("status") != "pass":
+            errors.append("compiler-confirmed scaffold ABI layout must pass before REWRITE_CORE_MODULES")
 
     stage_log = root / "logs" / "trace" / "05-generate-rust-scaffold.md"
     if not stage_log.exists():
@@ -1220,6 +1657,54 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
                 "core_rewrite_batches.jsonl must cover all rust_api_design.json implementation_requirements: "
                 + ", ".join(missing_obligations)
             )
+        if state.get("controller_contract_version"):
+            receipt, receipt_error = load_json(
+                root / "logs" / "trace" / "stage-receipts" / "REWRITE_CORE_MODULES.json"
+            )
+            if receipt_error:
+                errors.append(f"REWRITE_CORE_MODULES receipt: {receipt_error}")
+            else:
+                actual_changes = {
+                    item for item in receipt.get("changed_files", [])
+                    if isinstance(item, str) and item.startswith("flashDB_rust/src/")
+                }
+                claimed_changes = {
+                    item
+                    for batch in batches
+                    if isinstance(batch, dict)
+                    for item in batch.get("changed_files", [])
+                    if isinstance(item, str)
+                }
+                unchanged_claims = sorted(claimed_changes - actual_changes)
+                if unchanged_claims:
+                    errors.append(
+                        "core_rewrite_batches.jsonl claims files not changed from scaffold baseline: "
+                        + ", ".join(unchanged_claims)
+                    )
+    if state.get("controller_contract_version"):
+        audit_tool = Path(__file__).resolve().with_name("core_impl_audit.py")
+        spec = importlib.util.spec_from_file_location("core_impl_audit", audit_tool)
+        if spec is None or spec.loader is None:
+            errors.append("core_impl_audit.py could not be loaded")
+        else:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            audit = module.audit(
+                root=root,
+                project=project,
+                manifest_path=root / "logs" / "trace" / "scaffold-manifest.json",
+                design_path=root / "logs" / "trace" / "rust_api_design.json",
+            )
+            audit_path = root / "logs" / "trace" / "implementation-audit.json"
+            audit_path.write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            if audit.get("status") != "pass":
+                findings = audit.get("findings")
+                rendered = [
+                    f"{item.get('code')}:{item.get('evidence', {}).get('symbol') or item.get('evidence', {}).get('path') or item.get('evidence', {}).get('module') or 'unknown'}"
+                    for item in findings[:20]
+                    if isinstance(item, dict)
+                ] if isinstance(findings, list) else []
+                errors.append("core implementation audit failed: " + (", ".join(rendered) or "unknown finding"))
     if project.exists():
         errors.extend(check_project_command(project, ["cargo", "fmt", "--all", "--", "--check"], "rewritten project cargo fmt"))
         errors.extend(check_project_command(project, ["cargo", "build", "--release"], "rewritten project release build"))
@@ -1584,6 +2069,112 @@ def check_c_cross_final_evidence(root: Path) -> list[str]:
     return errors
 
 
+def check_c_cross_repair_transaction(root: Path) -> list[str]:
+    receipt, receipt_error = load_json(
+        root / "logs" / "trace" / "stage-receipts" / "VERIFY_RUST_WITH_C_TESTS.json"
+    )
+    if receipt_error:
+        return [f"VERIFY_RUST_WITH_C_TESTS receipt: {receipt_error}"]
+    run_rel = receipt.get("run_file")
+    run, run_error = load_json(root / run_rel) if isinstance(run_rel, str) else (None, "missing")
+    if run_error or not isinstance(run, dict):
+        return [f"VERIFY_RUST_WITH_C_TESTS run: {run_error}"]
+    entry_action = str(run.get("entry_action") or "")
+    controlled_actions = {
+        "REPAIR_RUST",
+        "REPAIR_RUST_WITH_C_TESTS",
+        "REPAIR_ABI_LAYOUT",
+        "REANALYZE_C_MODEL",
+        "CONFIRM_C_CROSS",
+        "RESTORE_BEST",
+        "ISOLATE_SCENARIOS",
+    }
+    if entry_action not in controlled_actions:
+        return []
+
+    errors: list[str] = []
+    before = run.get("attempt_records_before")
+    attempts, attempts_error = load_jsonl(root / "logs" / "trace" / "c-cross" / "attempts.jsonl")
+    if attempts_error:
+        return [f"attempts.jsonl: {attempts_error}"]
+    if not isinstance(before, int) or before < 0 or before > len(attempts or []):
+        return ["repair stage run has invalid attempt_records_before"]
+    new_attempts = [row for row in (attempts or [])[before:] if isinstance(row, dict)]
+
+    if entry_action == "ISOLATE_SCENARIOS":
+        isolation_before = run.get("isolation_records_before")
+        isolation_rows, isolation_error = load_jsonl(
+            root / "logs" / "trace" / "c-cross" / "isolation-results.jsonl"
+        )
+        if isolation_error:
+            return [f"isolation-results.jsonl: {isolation_error}"]
+        if (
+            not isinstance(isolation_before, int)
+            or isolation_before < 0
+            or len(isolation_rows or []) != isolation_before + 1
+        ):
+            errors.append("ISOLATE_SCENARIOS must consume exactly one pending isolation record")
+        return errors
+
+    confirmation_actions = {
+        "REPAIR_ABI_LAYOUT",
+        "REANALYZE_C_MODEL",
+        "CONFIRM_C_CROSS",
+        "RESTORE_BEST",
+    }
+    if entry_action in confirmation_actions:
+        confirmations = [row for row in new_attempts if row.get("kind") == "confirmation"]
+        if len(confirmations) != 1:
+            errors.append(f"{entry_action} must produce exactly one new full confirmation attempt")
+        if entry_action == "RESTORE_BEST":
+            changed = receipt.get("changed_files")
+            restore_receipts = [
+                path for path in changed
+                if isinstance(path, str)
+                and path.startswith("logs/trace/c-cross/snapshots/restores/")
+                and path.endswith("/receipt.json")
+            ] if isinstance(changed, list) else []
+            if len(restore_receipts) != 1:
+                errors.append("RESTORE_BEST must create one tool-owned restore receipt")
+        return errors
+
+    new_repairs = [
+        row for row in new_attempts if row.get("kind") == "repair"
+    ]
+    if len(new_repairs) != 1:
+        errors.append("REPAIR_RUST transaction must produce exactly one new machine repair attempt")
+        return errors
+
+    changed = receipt.get("changed_files")
+    actual_src = {
+        path for path in changed
+        if isinstance(path, str) and path.startswith("flashDB_rust/src/")
+    } if isinstance(changed, list) else set()
+    declared = {
+        path for path in new_repairs[0].get("changed_files", [])
+        if isinstance(path, str)
+    } if isinstance(new_repairs[0].get("changed_files"), list) else set()
+    if not actual_src:
+        errors.append("REPAIR_RUST transaction must actually change at least one Rust src file")
+    if actual_src != declared:
+        errors.append(
+            "repair attempt changed_files must exactly match receipt Rust src diff: "
+            f"actual={sorted(actual_src)}, declared={sorted(declared)}"
+        )
+    attempt_hashes = new_repairs[0].get("changed_file_hashes")
+    receipt_hashes = receipt.get("changed_file_hashes")
+    if isinstance(attempt_hashes, dict) and isinstance(receipt_hashes, dict):
+        mismatched = [
+            path for path in sorted(actual_src)
+            if attempt_hashes.get(path) != receipt_hashes.get(path)
+        ]
+        if mismatched:
+            errors.append("repair attempt hashes do not match committed files: " + ", ".join(mismatched))
+    else:
+        errors.append("repair attempt and receipt must include changed-file hashes")
+    return errors
+
+
 def check_verify_rust_with_c_tests(root: Path) -> list[str]:
     errors = check_common_after_scaffold(root)
     required_stages = [
@@ -1601,10 +2192,26 @@ def check_verify_rust_with_c_tests(root: Path) -> list[str]:
     if state is None:
         return errors
     errors.extend(check_c_cross_intermediate_evidence(root))
+    errors.extend(check_c_cross_repair_transaction(root))
     if not (root / "logs" / "trace" / "c-cross" / "layout-check.log").exists():
         errors.append("missing logs/trace/c-cross/layout-check.log")
     if not (root / "logs" / "trace" / "06-5-verify-rust-with-c-tests.md").exists():
         errors.append("missing logs/trace/06-5-verify-rust-with-c-tests.md")
+    if state.get("controller_contract_version") and isinstance(
+        load_json(root / "logs" / "trace" / "validation-matrix.json")[0], dict
+    ):
+        matrix = load_json(root / "logs" / "trace" / "validation-matrix.json")[0] or {}
+        scenarios = matrix.get("scenarios")
+        non_pass = [
+            row for row in scenarios
+            if isinstance(row, dict) and row.get("rust_impl_c_test") != "pass"
+        ] if isinstance(scenarios, list) else []
+        if non_pass:
+            repair_plan, repair_error = load_json(root / "logs" / "trace" / "c-cross" / "repair-plan.json")
+            if repair_error:
+                errors.append(f"repair-plan.json: {repair_error}")
+            elif not isinstance(repair_plan.get("clusters"), list) or not repair_plan.get("clusters"):
+                errors.append("non-pass C-cross evidence requires a non-empty machine repair plan")
     errors.extend(check_no_c_sources_in_src(root))
     return errors
 
@@ -1794,6 +2401,8 @@ def check_migrate_tests(root: Path) -> list[str]:
     errors.extend(state_errors)
     if state is None:
         return errors
+    if state.get("controller_contract_version") and state.get("c_cross_functional_status") == "repair_required":
+        errors.append("C-cross repair queue must converge or exhaust its explicit budget before MIGRATE_TESTS")
 
     errors.extend(check_dynamic_test_mapping(root))
     errors.extend(check_test_placeholders(root))
@@ -1870,6 +2479,64 @@ def check_test_failure_triage(root: Path, state: dict[str, Any]) -> list[str]:
             errors.append(f"test-failure-triage.jsonl record {index} must include boolean allow_src_edit")
         if classification == "test_oracle_suspect" and row.get("allow_src_edit"):
             errors.append("test_oracle_suspect triage records must not allow src edits")
+        if row.get("allow_src_edit") is False and any(
+            isinstance(scope, str) and scope.rstrip("/").startswith("flashDB_rust/src")
+            for scope in (allowed_edit_scope if isinstance(allowed_edit_scope, list) else [])
+        ):
+            errors.append(
+                f"test-failure-triage.jsonl record {index} forbids src edits but includes src in allowed_edit_scope"
+            )
+
+    if state.get("controller_contract_version") and rows:
+        if len(rows) != 1:
+            errors.append("controller-owned test triage must contain exactly one current record")
+        tool_path = Path(__file__).resolve().with_name("test_failure_triage.py")
+        spec = importlib.util.spec_from_file_location("test_failure_triage", tool_path)
+        if spec is None or spec.loader is None:
+            errors.append("test_failure_triage.py could not be loaded")
+        else:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            expected_triage = module.build_record(root, root / "logs" / "trace")
+            if rows[-1] != expected_triage:
+                errors.append("controller-owned test triage does not match current cargo evidence")
+
+        receipt, receipt_error = load_json(
+            root / "logs" / "trace" / "stage-receipts" / "BUILD_TEST_REPAIR.json"
+        )
+        if receipt_error:
+            errors.append(f"BUILD_TEST_REPAIR receipt: {receipt_error}")
+        else:
+            changed_files = receipt.get("changed_files")
+            repair_changes = [
+                path
+                for path in changed_files if isinstance(path, str)
+                if path.startswith("flashDB_rust/") or path == "logs/trace/rust_test_mapping.json"
+            ] if isinstance(changed_files, list) else []
+            packet_rel = receipt.get("task_packet")
+            packet, packet_error = load_json(root / packet_rel) if isinstance(packet_rel, str) else (None, "missing")
+            authorization = packet.get("triage_authorization") if isinstance(packet, dict) else None
+            if packet_error and repair_changes:
+                errors.append(f"BUILD_TEST_REPAIR task packet: {packet_error}")
+            scopes = [
+                scope for scope in authorization.get("allowed_edit_scope", [])
+                if isinstance(scope, str)
+            ] if isinstance(authorization, dict) and isinstance(authorization.get("allowed_edit_scope"), list) else []
+            if not isinstance(authorization, dict) and repair_changes:
+                errors.append("BUILD_TEST_REPAIR edits require begin-time triage authorization")
+            if not isinstance(authorization, dict) or authorization.get("allow_src_edit") is not True:
+                forbidden_src = [path for path in repair_changes if path.startswith("flashDB_rust/src/")]
+                if forbidden_src:
+                    errors.append(
+                        "BUILD_TEST_REPAIR changed Rust src despite allow_src_edit=false: "
+                        + ", ".join(forbidden_src)
+                    )
+            outside_scope = [path for path in repair_changes if not _receipt_path_allowed(path, scopes)]
+            if outside_scope:
+                errors.append(
+                    "BUILD_TEST_REPAIR changes exceed latest triage scope: "
+                    + ", ".join(outside_scope)
+                )
     return errors
 
 
@@ -1963,6 +2630,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{stage}: FAIL")
         print(f"unsupported stage for this checkpoint: {stage}")
         return 2
+    if errors:
+        print(f"{stage}: FAIL")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+
+    errors.extend(check_stage_receipt(root, stage))
+
     if errors:
         print(f"{stage}: FAIL")
         for error in errors:
