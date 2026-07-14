@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -114,6 +115,39 @@ class WorkflowControllerContractTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(WORKFLOWCTL.WorkflowError, "exact files, not glob"):
                 WORKFLOWCTL.cmd_begin(args)
+
+    def test_rewrite_repair_reuses_original_scaffold_baseline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self._init(root)
+            baseline = {"flashDB_rust/src/common.rs": "scaffold-hash"}
+            origin_path = root / "logs" / "trace" / "stage-runs" / "REWRITE_CORE_MODULES" / "origin.json"
+            write_json(origin_path, {
+                "stage": "REWRITE_CORE_MODULES",
+                "root": WORKFLOWCTL._root_identity(root),
+                "baseline": baseline,
+            })
+            state_path = root / "logs" / "trace" / "workflow_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state.update({
+                "current_stage": "REWRITE_CORE_MODULES",
+                "checkpoint": "REWRITE_CORE_MODULES",
+                "next_action": "REPAIR_REWRITE_CORE_MODULES",
+                "retry_baseline_run": {
+                    "run_file": origin_path.relative_to(root).as_posix(),
+                    "run_sha256": WORKFLOWCTL._sha256(origin_path),
+                },
+            })
+            write_json(state_path, state)
+            args = argparse.Namespace(
+                root=str(root), stage="REWRITE_CORE_MODULES", agent="rust-implementer",
+                allow_path=[], require_output=[], resume=False,
+            )
+            with mock.patch.object(WORKFLOWCTL, "_invoke_task_packet", return_value=None):
+                self.assertEqual(0, WORKFLOWCTL.cmd_begin(args))
+            active = json.loads(state_path.read_text(encoding="utf-8"))["active_stage_run"]
+            run = json.loads((root / active["run_file"]).read_text(encoding="utf-8"))
+            self.assertEqual(baseline, run["baseline"])
 
     def test_finish_rejects_protected_or_out_of_scope_changes_before_gate(self):
         with tempfile.TemporaryDirectory() as directory:

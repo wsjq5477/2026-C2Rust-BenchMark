@@ -55,6 +55,7 @@ python3 work/tools/workflowctl.py --root . record-agent --agent <ROLE> --stage <
 - subagent 只可修改 packet 的 `allowed_paths`，不得修改 `work/**`、`INSTRUCTION.md`、`.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。
 - 控制器在委派前保存平台 C 的完整 hash 快照，并在每个 `finish` 复核；发现新增、删除或内容变化立即拒绝提交。
 - C-cross runner 只能由 `work/tools/c_cross_validate.py` 启动；临时文件只允许在 `logs/trace/c-cross/**`。
+- 不运行任何 Git 命令，不创建、清理或写入 `/tmp/**`，也不以 `cp` 备份或回退 `flashDB_rust/`。`REPAIR_REWRITE_CORE_MODULES` 直接按 `status.next_command` 重新 begin，控制器会自动复用首次 REWRITE 的脚手架基线；不得重新生成 scaffold。
 - 只有 `workflowctl finish` 能调用阶段 gate。文档中的 `python3 work/tools/gate.py --stage ...` 仅是字面契约，不是代理命令。
 
 ## 动态修复

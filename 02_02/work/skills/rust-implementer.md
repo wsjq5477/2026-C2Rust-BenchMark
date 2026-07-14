@@ -45,6 +45,8 @@ python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out log
 
 `REWRITE_CORE_MODULES` 必须通过 implementation audit：与 baseline 相同、只删 marker/改空白、constant-only neutral body 和 placeholder module 都不算实现。batch changed_files 必须与 workflow receipt 的实际 diff 一致。
 
+若 `workflowctl finish` 返回 `REPAIR_REWRITE_CORE_MODULES`，只需按 `status.next_command` 重新 `begin` 当前阶段。控制器会沿用首次 REWRITE 的脚手架基线计算真实源码 diff；不得为了重建基线运行 Git 命令、复制到 `/tmp`、使用 `cp` 备份源码，或再次执行 `generate_rust_scaffold.py`。
+
 `VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。工具按 build/layout/link/full 分层执行并解析 runner 的逐测试输出；全量 invocation 必须都有真实结果或 unresolved 证据。实现期间可按动态发现的 suite 使用 `--suite <suite>`，不得硬编码 suite 名或用例总数。checkpoint/repair 写出完整证据后返回 0，`CONTINUE_WITH_FAILURES` 必须消费 repair plan，按 target agent、scenario IDs、symbols、requirements、selected suites 和 verification command 定向修复，直到全通过或预算耗尽。crash/timeout 的 not_run 必须消费 isolation queue；regression 时不得覆盖 best-known。只有 final 非全通过返回非零。平台问题由工具登记到 `logs/trace/c-cross/workbench-issues.jsonl`。
 
 ## 上下文边界
@@ -102,5 +104,6 @@ python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out log
 - 不让最终 Rust 项目链接或编译 FlashDB C 实现。
 - 不写 `todo!()`、`unimplemented!()`。
 - 不写最终 `STATUS: SUCCESS`。
+- 不运行任何 Git 命令，不创建、清理或写入 `/tmp/**`，不以 `cp` 或重新生成 scaffold 的方式备份、回退或重建 `flashDB_rust/`。
 - 不手写 `attempts.jsonl` 或 `workbench-issues.jsonl`。所有 repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 执行。
 - 不在 `VERIFY_RUST_WITH_C_TESTS` 或 `repairer` 阶段系统性重读 C 工程解决 parse_failed 问题。parse_failed 必须回派 `c-analyzer`。

@@ -66,6 +66,7 @@ python3 work/tools/workflowctl.py --root . status
 4. gate 通过后，主控用 `workflowctl record-agent` 引用已通过的 stage receipt 记录调用；不得手写 JSONL。
 5. 只服从 `status` 输出的 `next_action`、`expected_stage` 和可直接复制的 `next_command`。`REPAIR_ABI_LAYOUT`、`REANALYZE_C_MODEL`、`ISOLATE_SCENARIOS`、`REPAIR_RUST` 等 machine action 可直接作为 `begin --stage` 参数，控制器会映射到正确阶段。自然语言“完成”、subagent 最终回复和单独一次 cargo build 都不能推进阶段。
 6. `--resume` 只能重试当前阶段，不能跳到任意后续阶段。工具保存的 best-known 源码快照只能由收敛控制器显式恢复，禁止 `git reset`、`git checkout` 或覆盖用户工作树。
+7. 代理不得运行任何 Git 命令，也不得创建、清理或写入 `/tmp/**`。阶段重试的源码基线由 `workflowctl` 自动保留；不得用 `cp` 备份、手工回退 `flashDB_rust/` 或重新运行 scaffold generator 来伪造新的基线。
 
 旧 trace 没有 `controller_contract_version` 时 gate 仍可读取；所有新运行必须使用上述合同。
 
@@ -178,6 +179,7 @@ python3 work/tools/workflowctl.py --root . record-agent --agent c-analyzer --sta
    `core_rewrite_batches.jsonl` 每行必须是合法 JSON，并包含 `stage=REWRITE_CORE_MODULES`、`status=complete|pass`、非空 `changed_files` 和非空 `obligations`；changed files 只能位于 `flashDB_rust/src/`。
 5. 运行 `core_impl_audit.py` 生成 `logs/trace/implementation-audit.json`。任一 required FFI body 与 scaffold baseline 相同、仅删除 marker/改空白、仍为恒定 neutral return，或核心模块仍是 `module_available() -> true`，都必须失败。
 6. 由 `workflowctl finish` 对账真实源码 diff、batch 中的 changed_files 和产物 hash，再运行 gate。gate 还会执行 `cargo fmt --all -- --check` 与 `cargo build --release`，任一失败都不得推进。
+   若返回 `REPAIR_REWRITE_CORE_MODULES`，直接执行 `status.next_command` 并重新 begin；控制器会复用首次 REWRITE 的脚手架基线，禁止 Git、`/tmp` 备份、`cp` 回退或再次生成 scaffold。
 7. 只有本阶段可按需读取 C 源码局部窗口。读取前必须说明要验证的模型缺口或实现疑点；超过 400 行的 C/Rust 文件禁止全文读取，必须先用 `rg` 定位，再读取命中点附近窗口，单次窗口不超过 120 行。
 
 ### VERIFY_RUST_WITH_C_TESTS

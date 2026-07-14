@@ -1678,7 +1678,7 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
                 unchanged_claims = sorted(claimed_changes - actual_changes)
                 if unchanged_claims:
                     errors.append(
-                        "core_rewrite_batches.jsonl claims files not changed from scaffold baseline: "
+                        "core_rewrite_batches.jsonl claims files absent from the controller REWRITE baseline: "
                         + ", ".join(unchanged_claims)
                     )
     if state.get("controller_contract_version"):

@@ -452,6 +452,7 @@ def stage_profile(
     common_prohibitions = [
         "Do not edit work/**, INSTRUCTION.md, .opencode/**, design_doc/**, evaluation tests, or platform C input.",
         "Do not copy or link the C implementation into the final Rust crate.",
+        "Do not use git, /tmp backups, cp-based source snapshots, or scaffold regeneration to reset a stage; workflowctl owns retry baselines.",
         "Do not claim a scenario passes without machine-generated evidence.",
         "Do not read entire trace models when this bounded packet contains the required evidence.",
     ]
@@ -493,6 +494,9 @@ def stage_profile(
                 f"cargo fmt --manifest-path {cargo} -- --check",
                 f"cargo build --release --manifest-path {cargo}",
                 f"python3 work/tools/core_impl_audit.py --root . --project {rust_project} --manifest logs/trace/scaffold-manifest.json --design logs/trace/rust_api_design.json --output logs/trace/implementation-audit.json",
+            ],
+            "command_notes": [
+                "If workflowctl routes back to REPAIR_REWRITE_CORE_MODULES, begin the routed stage directly. It reuses the original scaffold baseline automatically; do not reset, copy, or regenerate flashDB_rust.",
             ],
         },
         "VERIFY_RUST_WITH_C_TESTS": {

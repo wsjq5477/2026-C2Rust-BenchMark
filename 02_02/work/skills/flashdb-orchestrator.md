@@ -31,6 +31,8 @@ permission:
 
 自然语言“完成”、subagent 回复、单次 cargo build 或手工 state 修改都不能推进阶段。`--resume` 只能重试当前阶段。
 
+`REPAIR_REWRITE_CORE_MODULES` 直接按 `status.next_command` 重新 begin，控制器会自动复用首次 REWRITE 的脚手架基线。不得运行任何 Git 命令，不得创建、清理或写入 `/tmp/**`，也不得用 `cp` 备份或回退 `flashDB_rust/`、重新生成 scaffold。
+
 ## subagent 调度规则
 
 主控只做调度、状态推进、gate 判定和最终报告，不亲自执行重阶段。每个重阶段必须优先拉起对应 subagent：

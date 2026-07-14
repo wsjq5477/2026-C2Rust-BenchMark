@@ -494,7 +494,16 @@ def cmd_begin(args: argparse.Namespace) -> int:
     monitored = list(dict.fromkeys(["**", *PROTECTED_PATHS]))
     current_snapshot = _snapshot(root, monitored)
     retry_origin = state.get("retry_baseline_run")
-    if str(state.get("next_action") or "").startswith("RETRY_") and isinstance(retry_origin, dict):
+    entry_action = str(state.get("next_action") or "")
+    # A failed core-rewrite gate may require another implementation pass. Its
+    # receipt must still describe the delta from the original scaffold, not
+    # from the already-edited tree visible to the repair agent. Other repair
+    # stages deliberately retain per-attempt snapshots.
+    reuse_rewrite_baseline = (
+        stage == "REWRITE_CORE_MODULES"
+        and entry_action.startswith(("RETRY_REWRITE_CORE_MODULES", "REPAIR_REWRITE_CORE_MODULES"))
+    )
+    if (entry_action.startswith("RETRY_") or reuse_rewrite_baseline) and isinstance(retry_origin, dict):
         origin_file = root / str(retry_origin.get("run_file") or "")
         if (
             not origin_file.is_file()
@@ -1063,6 +1072,18 @@ def cmd_finish(args: argparse.Namespace) -> int:
         }
         receipt["after_digest"] = _snapshot_digest(_snapshot(root, patterns))
     next_action = _next_after(stage, state, root, gate_ok)
+    if (
+        stage == "REWRITE_CORE_MODULES"
+        and not gate_ok
+        and next_action == "REPAIR_REWRITE_CORE_MODULES"
+    ):
+        # Retain the original scaffold-era baseline for the repair run. Agents
+        # must not reconstruct it with git, /tmp backups, or a second scaffold
+        # generation.
+        state["retry_baseline_run"] = {
+            "run_file": run_file.relative_to(root).as_posix(),
+            "run_sha256": _sha256(run_file),
+        }
     receipt["status"] = "pass" if gate_ok else "failed"
     receipt["gate_exit_code"] = completed_gate.returncode
     receipt["gate_output_tail"] = "\n".join(completed_gate.stdout.splitlines()[-40:])
