@@ -839,7 +839,19 @@ def check_stage_receipt(root: Path, stage: str) -> list[str]:
                     if not isinstance(expected, str) or _file_sha256(path) != expected:
                         errors.append(f"stage receipt changed-file hash mismatch: {item}")
     packet_rel = receipt.get("task_packet")
-    if not isinstance(packet_rel, str) or not packet_rel:
+    # REWRITE's parent transaction is controller-only.  Its two static
+    # workers each carry an exact bounded packet and are validated by the
+    # rewrite-specific gate below; requiring a broad parent packet would
+    # create a third, unconstrained implementation route.
+    controller_only_rewrite = (
+        stage == "REWRITE_CORE_MODULES"
+        and isinstance(run, dict)
+        and run.get("task_packet") is None
+        and receipt.get("task_packet") is None
+    )
+    if controller_only_rewrite:
+        pass
+    elif not isinstance(packet_rel, str) or not packet_rel:
         errors.append("stage receipt must reference a bounded task packet")
     else:
         packet, packet_error = load_json(root / packet_rel)

@@ -1690,7 +1690,22 @@ def cmd_finish(args: argparse.Namespace) -> int:
             if (root / rel).is_file()
         }
         receipt["after_digest"] = _snapshot_digest(_snapshot(root, patterns))
-    next_action = _next_after(stage, state, root, gate_ok)
+    rewrite_ready_for_recheck = (
+        stage == "REWRITE_CORE_MODULES"
+        and rewrite.get("phase") == "READY"
+        and rewrite.get("status") == "ready_for_finish"
+        and not rewrite.get("active_worker")
+    ) if stage == "REWRITE_CORE_MODULES" else False
+    next_action = (
+        "RECHECK_REWRITE_CORE_MODULES"
+        if (
+            not gate_ok
+            and rewrite_ready_for_recheck
+            and "stage receipt must reference a bounded task packet" in completed_gate.stdout
+        )
+        else _next_after(stage, state, root, gate_ok)
+    )
+    rewrite_retry_origin: dict[str, Any] | None = None
     if (
         stage == "REWRITE_CORE_MODULES"
         and not gate_ok
@@ -1699,10 +1714,19 @@ def cmd_finish(args: argparse.Namespace) -> int:
         # Retain the original scaffold-era baseline for the repair run. Agents
         # must not reconstruct it with git, /tmp backups, or a second scaffold
         # generation.
-        state["retry_baseline_run"] = {
-            "run_file": run_file.relative_to(root).as_posix(),
-            "run_sha256": _sha256(run_file),
-        }
+        # Keep the first scaffold-era transaction as the origin across every
+        # repair.  Replacing it with the latest failed repair run makes the
+        # already-implemented owner files appear unchanged and invalidates
+        # their cumulative worker receipts.
+        origin = run.get("baseline_origin")
+        rewrite_retry_origin = (
+            dict(origin)
+            if isinstance(origin, dict)
+            else {
+                "run_file": run_file.relative_to(root).as_posix(),
+                "run_sha256": _sha256(run_file),
+            }
+        )
     receipt["status"] = "pass" if gate_ok else "failed"
     receipt["gate_exit_code"] = completed_gate.returncode
     receipt["gate_output_tail"] = "\n".join(completed_gate.stdout.splitlines()[-40:])
@@ -1711,6 +1735,8 @@ def cmd_finish(args: argparse.Namespace) -> int:
     _atomic_json(immutable_receipt_path, receipt)
 
     state = _load_state(root)
+    if rewrite_retry_origin is not None:
+        state["retry_baseline_run"] = rewrite_retry_origin
     state["last_gate"] = {
         "stage": stage,
         "status": "pass" if gate_ok else "fail",
@@ -1738,6 +1764,82 @@ def cmd_finish(args: argparse.Namespace) -> int:
     print(f"latest_receipt={receipt_path.relative_to(root).as_posix()}")
     print(f"next_action={next_action}")
     return completed_gate.returncode
+
+
+def cmd_recheck_rewrite(args: argparse.Namespace) -> int:
+    """Re-run a controller-only REWRITE gate without dispatching workers."""
+    root = Path(args.root).resolve()
+    state = _load_state(root)
+    if state.get("active_stage_run"):
+        raise WorkflowError("RECHECK_REWRITE_CORE_MODULES requires no active stage run")
+    if state.get("next_action") != "RECHECK_REWRITE_CORE_MODULES":
+        raise WorkflowError("RECHECK_REWRITE_CORE_MODULES is not the current controller action")
+
+    receipt_path = root / "logs" / "trace" / "stage-receipts" / "REWRITE_CORE_MODULES.json"
+    receipt = _json(receipt_path)
+    if receipt.get("stage") != "REWRITE_CORE_MODULES" or receipt.get("status") != "failed":
+        raise WorkflowError("RECHECK_REWRITE_CORE_MODULES requires the latest failed REWRITE receipt")
+    rewrite = _load_rewrite_state(root)
+    if (
+        rewrite.get("phase") != "READY"
+        or rewrite.get("status") != "ready_for_finish"
+        or rewrite.get("active_worker")
+        or rewrite.get("parent_run_id") != receipt.get("run_id")
+    ):
+        raise WorkflowError("RECHECK_REWRITE_CORE_MODULES requires completed workers from the failed parent")
+
+    # The canonical receipt is the active gate candidate.  The immutable
+    # per-run receipt remains failed, preserving the original audit trail.
+    receipt["status"] = "ready_for_gate"
+    receipt["recheck_count"] = int(receipt.get("recheck_count", 0) or 0) + 1
+    _atomic_json(receipt_path, receipt)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(root / "work" / "tools" / "gate.py"),
+            "--stage",
+            "REWRITE_CORE_MODULES",
+            "--root",
+            str(root),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    gate_ok = completed.returncode == 0
+    next_action = _next_after("REWRITE_CORE_MODULES", state, root, gate_ok)
+    receipt["status"] = "pass" if gate_ok else "failed"
+    receipt["gate_exit_code"] = completed.returncode
+    receipt["gate_output_tail"] = "\n".join(completed.stdout.splitlines()[-40:])
+    receipt["next_action"] = next_action
+    _atomic_json(receipt_path, receipt)
+
+    record = {
+        "schema_version": 1,
+        "stage": "REWRITE_CORE_MODULES",
+        "receipt": receipt_path.relative_to(root).as_posix(),
+        "recheck_count": receipt["recheck_count"],
+        "status": "pass" if gate_ok else "failed",
+        "gate_exit_code": completed.returncode,
+        "gate_output_tail": receipt["gate_output_tail"],
+    }
+    record_path = (
+        root / "logs" / "trace" / "rewrite-gate-rechecks"
+        / f"{_now_ns()}-recheck.json"
+    )
+    _atomic_json(record_path, record)
+    state["last_gate"] = {
+        "stage": "REWRITE_CORE_MODULES",
+        "status": "pass" if gate_ok else "fail",
+        "receipt": receipt_path.relative_to(root).as_posix(),
+    }
+    state["next_action"] = next_action
+    _atomic_json(_state_path(root), state)
+    print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
+    print("WORKFLOWCTL: REWRITE_GATE_RECHECKED")
+    print(f"record={record_path.relative_to(root).as_posix()}")
+    print(f"next_action={next_action}")
+    return completed.returncode
 
 
 def cmd_abort(args: argparse.Namespace) -> int:
@@ -2015,6 +2117,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Brief bounded handoff reason, required for missing_core_capability.",
     )
     rewrite_finish.set_defaults(handler=cmd_finish_rewrite_worker)
+
+    rewrite_recheck = subparsers.add_parser(
+        "recheck-rewrite",
+        help="Re-run a failed controller-only REWRITE gate without new workers.",
+    )
+    rewrite_recheck.set_defaults(handler=cmd_recheck_rewrite)
 
     abort = subparsers.add_parser("abort", help="Abort an active stage without declaring completion.")
     abort.add_argument("--run-id", required=True)

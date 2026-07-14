@@ -205,11 +205,11 @@ python3 work/tools/workflowctl.py --root . record-agent --agent c-analyzer --sta
 5. 运行 `python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json` 生成动态任务映射；该工具不得创建或覆盖 Rust 测试文件。
 6. 以 `c_test_model.json.scorer_standard_cases` 动态推导评分覆盖合同和数量，逐项一一迁移；不得硬编码 suite、case 名或总数，`standard_scenarios` 只作为动态 C 证据来源。
 7. 根据每项 `semantic_obligations` 和 `semantic_facts` 直接完成真实 Rust 测试，不生成 `todo!()`、恒真断言或其他可收集的占位测试。
-8. 只有 `validated_obligations` 覆盖全部 `semantic_obligations`，且 `assertion_evidence` 证明关键 `verify_*`、`data_shape:*`、`scenario:*` 义务，才可把对应 mapping 更新为 `implementation_status: implemented` 和 `coverage: semantic`。
+8. 只有 `validated_obligations` 覆盖全部 `semantic_obligations`，且 `assertion_evidence` 证明关键 `verify_*`、`data_shape:*`、`scenario:*` 义务，才可把对应 mapping 更新为 `implementation_status: implemented` 和 `coverage: semantic`；每个 C `public_api_calls` 必须有能在 Rust 测试体中定位的 `api_evidence`，有 C `data_shape` 或断言时分别必须有可定位的 `data_evidence`、`assertion_evidence`。
 9. 生成 `flashDB_rust/tests/kvdb_tests.rs`、`flashDB_rust/tests/tsdb_tests.rs`、`flashDB_rust/tests/equivalence_tests.rs`。
 10. 写入中文 `logs/trace/07-migrate-tests.md`。
 11. 由 `workflowctl finish` 记录 `rust_test_mapping`，代理不得编辑 `workflow_state.json`。
-12. 运行 `python3 work/tools/placeholder_check.py --root . --tests flashDB_rust/tests --mapping logs/trace/rust_test_mapping.json --output logs/trace/test-placeholder-check.json`，再运行 `python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json`。
+12. 运行 `python3 work/tools/placeholder_check.py --root . --tests flashDB_rust/tests --mapping logs/trace/rust_test_mapping.json --output logs/trace/test-placeholder-check.json`，再运行 `python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json`；后者动态输出 `c_only`、`logic_mismatch`、`rust_only`，前两者必须为空，Rust 扩展测试仅记 warning。
 13. 调用 `workflowctl finish`，由控制器内部等价运行 `python3 work/tools/gate.py --stage MIGRATE_TESTS`；评分 case 集合不一致、pending、unmapped、重复、占位实现、semantic 义务未验证或测试断言过浅时必须失败并由主控回派 `test-migrator`。
 
 ### BUILD_TEST_REPAIR

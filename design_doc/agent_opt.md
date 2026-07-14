@@ -8,6 +8,7 @@
 
 - [x] GPT 的初始化证据能明确说明输入基线、运行身份、agent registry、下一阶段和 Rust 项目尚未生成；旧版 GLM 日志信息不足。
 - [x] `02_02/fdb_test_blob/kvdata.bin` 是用户主动删除的运行数据，不属于 Agent 问题，不得恢复。
+- [ ] `02_02/.opencode/` 已改为运行时忽略目录，但本轮 stage-run baseline 中的 `skills/flashdb-migration/SKILL.md` 摘要与权威 `work/skills/flashdb-migration/SKILL.md` 不同；仓库内没有可验证的运行前同步证据，后续可能继续使用陈旧的运行时 skill。
 
 ### 修复记录
 
@@ -18,10 +19,11 @@
 
 - OpenCode/GLM 本轮生成 216 个输入文件的基线，日志包含基线摘要和 `INIT_WORKSPACE gate: PASS`。
 - `flashDB_rust` 未预生成；阶段状态正确指向 `READ_C_PROJECT`。
+- 2026-07-14 本轮阶段 1--5 的每个 stage-run baseline 都记录了运行时 `.opencode/**`；其中 migration skill SHA256 为 `330712...79d7`，而 `work/skills` 权威版本为 `a6dab1...90de`。该目录仍被本地保留且忽略，本轮未发生同步或修复。
 
 ### 当前状态
 
-已解决。没有发现需要继续修改初始化调度的功能性问题。
+初始化的输入证据已解决。运行时 skill 同步仍是待优化项：应由用户的 OpenCode 启动/安装步骤在运行前从权威源生成 `.opencode/`，并在 INIT 记录 source digest；本次仅记录问题，不修改运行目录。
 
 ## READ_C_PROJECT
 
@@ -146,12 +148,16 @@
 - [x] 旧版 REWRITE 父阶段没有 generic task packet，但 gate 曾错误强制要求父阶段 packet，导致控制器与 gate 契约冲突。
 - [x] 旧版 REWRITE 失败后容易通过 `init --force` 全量重来，重复执行 C 分析、脚手架、IMPLEMENT_CORE 和 WIRE_FACADE，造成约 75% 时间消耗在重复劳动。
 - [ ] 上述 REWRITE 修复尚未经过当前新版本 OpenCode/GLM 的阶段 6 完整复跑验证。
+- [x] 本轮复跑证明 parent receipt 的 generic task-packet 校验实际仍未豁免：第一次 REWRITE 的 IMPLEMENT_CORE 和 WIRE_FACADE 都完成后，gate 仍以 `stage receipt must reference a bounded task packet` 判失败。
+- [x] repair REWRITE 以修复启动时的源码作为新 baseline，却仍要求最新 worker receipt/batch 覆盖相对该 baseline 的完整 owner diff；已实现的源码在该 baseline 中没有变化，导致 repair worker 记录空 `changed_files`，又被 gate 判失败并重复派发。
 
 ### 修复记录
 
 - frozen signature 使用语法归一化比较，忽略空白和 Rust 合法的末尾参数逗号；已增加 trailing-comma 回归测试，不再依赖 `#[rustfmt::skip]` 维持文本格式。
 - task packet 改为按 requirement、scenario 和 scenario step 数量做结构化边界，不再用 24576-byte 硬上限；本轮阶段 5 的 32678-byte packet 已正常提交。
-- REWRITE 父事务明确为 controller-only，不生成 generic broad packet；`IMPLEMENT_CORE` 和 `WIRE_FACADE` 各自由 `next-rewrite-worker` 生成精确 ownership packet。
+- REWRITE 父事务保持 controller-only、无 generic broad packet；`gate.py` 对该父 receipt 明确豁免 generic packet 要求，同时继续逐一验证两个 worker 的精确 packet、receipt 和 bounded check。
+- 新增 `RECHECK_REWRITE_CORE_MODULES`：当两个 worker 已 `READY` 而仅 parent gate 失败时，主控执行 `workflowctl recheck-rewrite` 重检既有证据，不创建新 parent 或 worker。
+- 连续 REPAIR 保留最初 scaffold-era run 的 baseline origin；后续失败不再把 origin 覆盖为已改写源码的 repair run，累计 owner diff、worker receipt 和 batch 将使用同一基线。
 - REWRITE gate/worker 失败时保留首次 scaffold-era baseline，并在当前源码上释放新的定向 worker；禁止重新生成 scaffold、Git 回退或通过 `/tmp`/复制备份恢复。
 - worker receipt 绑定 parent run、role、revision、changed files、hash 和 bounded check，facade 必须基于最新 core revision。
 
@@ -159,11 +165,31 @@
 
 - 旧版本运行累计约 187 分钟的 subagent 时间，其中 frozen signature、脚手架覆盖和控制器契约问题导致约 3 次完整重跑；该数据作为优化前基线保留。
 - 当前代码级回归测试已覆盖 cargo fmt 尾逗号等价性，控制器代码已实现父事务/worker packet 分离及 retry baseline 复用。
-- 当前新版本尚未执行完阶段 6，因此 IMPLEMENT_CORE/WIRE_FACADE 是否一次收敛、是否仍发生完整重跑，需要下一次阶段暂停时核验。
+- 2026-07-14 本轮首次 REWRITE：IMPLEMENT_CORE（约 22 分钟）和 WIRE_FACADE（约 28 分钟）均完成，但 parent gate 因错误要求 parent task packet 失败；首次 repair 又重派两名 worker，二者均无源码增量，随后因 cumulative owner diff / 空 `changed_files` 校验失败。第三次 repair 已再次启动 IMPLEMENT_CORE。
 
 ### 当前状态
 
-历史控制器与签名格式缺陷已修复；端到端复跑验证待阶段 6 完成。若仍出现要求 `init --force`、重跑 scaffold 或父阶段 packet 缺失，应视为回归。
+parent receipt packet 豁免、gate-only recheck 和 repair baseline origin 已修复，并新增回归覆盖。当前正在运行的旧 controller transaction 不会自动获得新语义；停止其重复 repair 后，应由 OpenCode 从新的 controller action 继续，避免再消耗 IMPLEMENT_CORE/WIRE_FACADE 子代理时间。
+
+## MIGRATE_TESTS
+
+### 问题
+
+- [x] 旧版 `test_consistency_check.py` 只检查 mapping、义务标记和断言数量，不能像评分方案 B 一样明确报告 C 用例缺失、API/数据/断言逻辑不一致和 Rust 扩展测试。
+
+### 修复记录
+
+- 一致性检查现在从本轮 `scorer_standard_cases` 动态推导 C 覆盖集合，输出 `c_only`、`logic_mismatch`、`rust_only`；不使用固定 case 名或总数。
+- 每个映射项必须为 C `public_api_calls` 写入能在 Rust 测试体中定位的 `api_evidence`；有 C `data_shape` 或断言时分别必须提供 `data_evidence`、`assertion_evidence`。缺失或无法在测试体定位时归为 `logic_mismatch`。
+- `c_only` 与 `logic_mismatch` 仍由阶段 7 gate 阻断并回派 `test-migrator`；未映射的 Rust 扩展测试只记录 `rust_only` warning，不计为评分失败。
+
+### 复跑结果
+
+- 新增回归覆盖动态 C-only、API/数据/断言证据缺口和 Rust-only warning；完整工作台测试通过。
+
+### 当前状态
+
+阶段 7 已具备评分方案 B 所需的动态用例存在性和源码证据对比。它不替代阶段 6 的原始 C runner 行为验证；两者分别验证 Rust 测试迁移和 Rust 实现行为。
 
 ## 本轮阶段 1–5 总结
 

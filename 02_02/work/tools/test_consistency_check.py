@@ -66,6 +66,36 @@ def assertion_evidence_obligations(scenario: dict[str, Any]) -> set[str]:
     return obligations
 
 
+def evidence_entries(scenario: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    value = scenario.get(key, [])
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def evidence_matches_body(entries: list[dict[str, Any]], **expected: str) -> bool:
+    for entry in entries:
+        if any(entry.get(key) != value for key, value in expected.items()):
+            continue
+        expression = entry.get("rust_expression")
+        body = entry.get("_body")
+        if isinstance(expression, str) and expression.strip() and isinstance(body, str) and expression in body:
+            return True
+    return False
+
+
+def rust_test_functions(root: Path, mapping: dict[str, Any]) -> set[str]:
+    files = mapping.get("source_to_rust", {})
+    paths = files.values() if isinstance(files, dict) else []
+    found: set[str] = set()
+    for relative in paths:
+        if not isinstance(relative, str):
+            continue
+        path = root / relative.removeprefix("./")
+        if not path.is_file():
+            continue
+        found.update(re.findall(r"#\s*\[\s*test\s*\]\s*fn\s+([A-Za-z_][A-Za-z0-9_]*)", path.read_text(encoding="utf-8", errors="ignore")))
+    return found
+
+
 def add_issue(issues: list[dict[str, Any]], code: str, scenario_id: str, message: str) -> None:
     issues.append({"code": code, "scenario_id": scenario_id, "message": message})
 
@@ -88,6 +118,23 @@ def analyze_consistency(root: Path) -> dict[str, Any]:
     if not isinstance(scenarios, list):
         add_issue(issues, "invalid_mapping", "<mapping>", "rust_test_mapping.json scenarios must be a list")
         scenarios = []
+
+    mapped_case_ids = {
+        item.get("scorer_case_id")
+        for item in scenarios
+        if isinstance(item, dict) and isinstance(item.get("scorer_case_id"), str)
+    }
+    c_only = sorted(case_id for case_id in case_by_id if case_id not in mapped_case_ids)
+    for case_id in c_only:
+        add_issue(issues, "c_only", case_id, "C scorer case has no Rust test mapping")
+
+    rust_only_mappings = sorted(
+        str(item.get("id", "<unknown>"))
+        for item in scenarios
+        if isinstance(item, dict) and item.get("scorer_case_id") not in case_by_id
+    )
+    for scenario_id in rust_only_mappings:
+        add_issue(issues, "rust_only_mapping", scenario_id, "Rust mapping has no C scorer case")
 
     for scenario in scenarios:
         if not isinstance(scenario, dict):
@@ -133,6 +180,39 @@ def analyze_consistency(root: Path) -> dict[str, Any]:
 
         case = case_by_id.get(scenario.get("scorer_case_id"))
         semantic_facts = case.get("semantic_facts") if isinstance(case, dict) else {}
+        api_evidence = evidence_entries(scenario, "api_evidence")
+        data_evidence = evidence_entries(scenario, "data_evidence")
+        assertion_evidence = evidence_entries(scenario, "assertion_evidence")
+        for entries in (api_evidence, data_evidence, assertion_evidence):
+            for entry in entries:
+                entry["_body"] = body
+
+        c_calls = semantic_facts.get("public_api_calls", []) if isinstance(semantic_facts, dict) else []
+        for c_api in [item for item in c_calls if isinstance(item, str)]:
+            if not evidence_matches_body(api_evidence, c_api=c_api):
+                add_issue(
+                    issues,
+                    "logic_mismatch_api",
+                    scenario_id,
+                    f"C API {c_api} lacks source-backed Rust API evidence",
+                )
+        data_shape = semantic_facts.get("data_shape") if isinstance(semantic_facts, dict) else None
+        if data_shape and not any(evidence_matches_body([entry]) for entry in data_evidence):
+            add_issue(
+                issues,
+                "logic_mismatch_data",
+                scenario_id,
+                "C test data shape lacks source-backed Rust data evidence",
+            )
+        if isinstance(semantic_facts, dict) and semantic_facts.get("assertion_count", 0) and not any(
+            evidence_matches_body([entry]) for entry in assertion_evidence
+        ):
+            add_issue(
+                issues,
+                "logic_mismatch_assertion",
+                scenario_id,
+                "C assertions lack source-backed Rust assertion evidence",
+            )
         c_assertion_count = semantic_facts.get("assertion_count") if isinstance(semantic_facts, dict) else 0
         if isinstance(c_assertion_count, int) and c_assertion_count > 0:
             minimum = max(1, math.ceil(c_assertion_count * 0.5))
@@ -176,6 +256,16 @@ def analyze_consistency(root: Path) -> dict[str, Any]:
             }
         )
 
+    mapped_rust_tests = {
+        item.get("rust_test")
+        for item in scenarios
+        if isinstance(item, dict) and isinstance(item.get("rust_test"), str)
+    }
+    rust_only = sorted(rust_test_functions(root, mapping) - mapped_rust_tests)
+    logic_mismatch = [
+        item for item in issues
+        if isinstance(item, dict) and str(item.get("code", "")).startswith("logic_mismatch_")
+    ]
     return {
         "stage": "TEST_CONSISTENCY_CHECK",
         "status": "pass" if not issues else "fail",
@@ -185,6 +275,9 @@ def analyze_consistency(root: Path) -> dict[str, Any]:
         "passed_scenarios": sum(item["status"] == "pass" for item in scenario_results),
         "failed_scenarios": sum(item["status"] == "fail" for item in scenario_results),
         "scenarios": scenario_results,
+        "c_only": c_only,
+        "rust_only": rust_only,
+        "logic_mismatch": logic_mismatch,
     }
 
 

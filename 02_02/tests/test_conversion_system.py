@@ -3584,6 +3584,54 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             self.assertIn("missing_direct_verify_obligation", issue_codes)
             self.assertIn("shallow_assertion_dominance", issue_codes)
 
+    def test_test_consistency_check_reports_dynamic_case_and_source_evidence_gaps(self):
+        checker = load_tool("test_consistency_check.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trace = root / "logs" / "trace"
+            tests_dir = root / "flashDB_rust" / "tests"
+            trace.mkdir(parents=True)
+            tests_dir.mkdir(parents=True)
+            (trace / "c_test_model.json").write_text(json.dumps({
+                "scorer_standard_cases": [
+                    {
+                        "case_id": "1", "scenario_id": "test_alpha", "suite": "kvdb",
+                        "semantic_facts": {
+                            "public_api_calls": ["fdb_kv_set"],
+                            "data_shape": {"key": "alpha"},
+                            "assertion_count": 1,
+                        },
+                        "semantic_obligations": ["calls:fdb_kv_set"],
+                    },
+                    {
+                        "case_id": "2", "scenario_id": "test_missing", "suite": "kvdb",
+                        "semantic_facts": {}, "semantic_obligations": ["init"],
+                    },
+                ]
+            }), encoding="utf-8")
+            (trace / "rust_test_mapping.json").write_text(json.dumps({
+                "source_to_rust": {"kvdb": "flashDB_rust/tests/kvdb_tests.rs"},
+                "scenarios": [{
+                    "id": "test_alpha", "scorer_case_id": "1", "coverage": "semantic",
+                    "semantic_obligations": ["calls:fdb_kv_set"],
+                    "validated_obligations": ["calls:fdb_kv_set"],
+                    "api_evidence": [], "data_evidence": [], "assertion_evidence": [],
+                    "rust_file": "flashDB_rust/tests/kvdb_tests.rs", "rust_test": "alpha",
+                }]
+            }), encoding="utf-8")
+            (tests_dir / "kvdb_tests.rs").write_text(
+                "#[test]\nfn alpha() { assert_eq!(1, 1); }\n"
+                "#[test]\nfn extension_case() { assert_eq!(2, 2); }\n",
+                encoding="utf-8",
+            )
+            report = checker.analyze_consistency(root)
+            issue_codes = {issue["code"] for issue in report["issues"]}
+            self.assertIn("c_only", issue_codes)
+            self.assertIn("logic_mismatch_api", issue_codes)
+            self.assertIn("logic_mismatch_data", issue_codes)
+            self.assertIn("logic_mismatch_assertion", issue_codes)
+            self.assertEqual(["extension_case"], report["rust_only"])
+
     def test_gate_migrate_tests_runs_test_consistency_check(self):
         gate = PROJECT / "work" / "tools" / "gate.py"
         with tempfile.TemporaryDirectory() as td:

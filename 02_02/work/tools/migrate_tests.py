@@ -208,6 +208,8 @@ def generate_tests(test_model: dict[str, Any], design: dict[str, Any], project: 
                 "semantic_obligations": scenario.get("semantic_obligations", []),
                 "validated_obligations": [],
                 "assertion_evidence": [],
+                "api_evidence": [],
+                "data_evidence": [],
                 "rust_file": rust_file,
                 "rust_test": f"{rust_prefix}_{safe_rust_ident(str(scenario['id']))}",
                 "implementation_status": "pending",

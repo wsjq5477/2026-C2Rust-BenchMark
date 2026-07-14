@@ -152,6 +152,45 @@ class WorkflowControllerContractTests(unittest.TestCase):
             run = json.loads((root / active["run_file"]).read_text(encoding="utf-8"))
             self.assertEqual(baseline, run["baseline"])
 
+    def test_controller_only_rewrite_receipt_does_not_require_parent_packet(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self._init(root)
+            run_path = root / "logs" / "trace" / "stage-runs" / "REWRITE_CORE_MODULES" / "fixture.json"
+            nonce = "1" * 32
+            run = {
+                "run_id": "fixture-rewrite",
+                "nonce": nonce,
+                "stage": "REWRITE_CORE_MODULES",
+                "task_packet": None,
+                "task_packet_sha256": None,
+                "allowed_paths": ["flashDB_rust/**"],
+                "required_outputs": ["logs/trace/implementation-audit.json"],
+                "baseline_digest": "fixture",
+            }
+            write_json(run_path, run)
+            write_json(root / "logs" / "trace" / "stage-receipts" / "REWRITE_CORE_MODULES.json", {
+                "contract_version": 1,
+                "stage": "REWRITE_CORE_MODULES",
+                "status": "ready_for_gate",
+                "root": WORKFLOWCTL._root_identity(root),
+                "run_id": "fixture-rewrite",
+                "nonce_sha256": WORKFLOWCTL.hashlib.sha256(nonce.encode()).hexdigest(),
+                "run_file": run_path.relative_to(root).as_posix(),
+                "run_file_sha256": WORKFLOWCTL._sha256(run_path),
+                "task_packet": None,
+                "task_packet_sha256": None,
+                "allowed_paths": run["allowed_paths"],
+                "required_outputs": run["required_outputs"],
+                "artifact_hashes": {},
+                "changed_files": [],
+                "changed_file_hashes": {},
+                "baseline_digest": "fixture",
+                "unexpected_changes": [],
+            })
+            errors = GATE.check_stage_receipt(root, "REWRITE_CORE_MODULES")
+            self.assertNotIn("stage receipt must reference a bounded task packet", errors)
+
     def test_finish_rejects_protected_or_out_of_scope_changes_before_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -708,6 +747,101 @@ class StaticRewriteControllerTests(unittest.TestCase):
         return json.loads(
             (root / "logs" / "trace" / "workflow_state.json").read_text(encoding="utf-8")
         )["active_stage_run"]
+
+    def test_recheck_rewrite_reuses_ready_workers_without_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self._prepare(root)
+            parent = self._begin_parent(root)
+            state_path = root / "logs" / "trace" / "workflow_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["active_stage_run"] = None
+            state["next_action"] = "RECHECK_REWRITE_CORE_MODULES"
+            write_json(state_path, state)
+            write_json(root / "logs" / "trace" / "rewrite-state.json", {
+                "parent_run_id": parent["run_id"],
+                "phase": "READY",
+                "status": "ready_for_finish",
+                "active_worker": None,
+            })
+            run_path = root / parent["run_file"]
+            run = json.loads(run_path.read_text(encoding="utf-8"))
+            write_json(root / "logs" / "trace" / "stage-receipts" / "REWRITE_CORE_MODULES.json", {
+                "stage": "REWRITE_CORE_MODULES",
+                "status": "failed",
+                "run_id": parent["run_id"],
+                "task_packet": None,
+                "task_packet_sha256": None,
+                "run_file": parent["run_file"],
+                "run_file_sha256": WORKFLOWCTL._sha256(run_path),
+                "allowed_paths": run["allowed_paths"],
+                "required_outputs": run["required_outputs"],
+                "baseline_digest": run["baseline_digest"],
+            })
+            completed = argparse.Namespace(returncode=0, stdout="REWRITE_CORE_MODULES: PASS\n")
+            with mock.patch.object(WORKFLOWCTL.subprocess, "run", return_value=completed):
+                self.assertEqual(0, WORKFLOWCTL.cmd_recheck_rewrite(argparse.Namespace(root=str(root))))
+            self.assertFalse(list((root / "logs" / "trace" / "rewrite-worker-runs").rglob("*.json")))
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual("VERIFY_RUST_WITH_C_TESTS", state["next_action"])
+            receipt = json.loads(
+                (root / "logs" / "trace" / "stage-receipts" / "REWRITE_CORE_MODULES.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("pass", receipt["status"])
+
+    def test_failed_rewrite_persists_the_first_baseline_for_repair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self._prepare(root)
+            parent = self._begin_parent(root)
+            run_path = root / parent["run_file"]
+            for relative in [
+                "logs/trace/implementation-audit.json",
+                "logs/trace/core_rewrite_batches.jsonl",
+                "logs/trace/06-rewrite-core-modules.md",
+            ]:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}\n", encoding="utf-8")
+            write_json(root / "logs" / "trace" / "rewrite-state.json", {
+                "parent_run_id": parent["run_id"],
+                "phase": "READY",
+                "status": "ready_for_finish",
+                "active_worker": None,
+            })
+            failed = argparse.Namespace(returncode=1, stdout="REWRITE_CORE_MODULES: FAIL\n- fixture\n")
+            with mock.patch.object(WORKFLOWCTL.subprocess, "run", return_value=failed):
+                self.assertEqual(
+                    1,
+                    WORKFLOWCTL.cmd_finish(
+                        argparse.Namespace(root=str(root), run_id=parent["run_id"], nonce=parent["nonce"])
+                    ),
+                )
+            state = json.loads(
+                (root / "logs" / "trace" / "workflow_state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("REPAIR_REWRITE_CORE_MODULES", state["next_action"])
+            self.assertEqual(
+                parent["run_file"], state["retry_baseline_run"]["run_file"]
+            )
+            with mock.patch.object(WORKFLOWCTL, "_prepare_static_rewrite", return_value=None):
+                self.assertEqual(
+                    0,
+                    WORKFLOWCTL.cmd_begin(
+                        argparse.Namespace(
+                            root=str(root), stage="REWRITE_CORE_MODULES", agent="rust-implementer",
+                            allow_path=[], require_output=[], resume=False,
+                        )
+                    ),
+                )
+            repaired = json.loads(
+                (root / json.loads(
+                    (root / "logs" / "trace" / "workflow_state.json").read_text(encoding="utf-8")
+                )["active_stage_run"]["run_file"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                json.loads(run_path.read_text(encoding="utf-8"))["baseline"], repaired["baseline"]
+            )
 
     def _begin_worker(self, root: Path, *, packet_padding_bytes: int = 0) -> dict:
         def fake_packet(_root, _stage, action=None, rewrite_role=None):
