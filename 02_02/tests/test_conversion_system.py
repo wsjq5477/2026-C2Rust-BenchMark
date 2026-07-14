@@ -1943,6 +1943,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             (root / "logs" / "trace" / "02-read-c-project.md").write_text("# read\n", encoding="utf-8")
             (root / "logs" / "trace" / "input_manifest.json").write_text(
                 json.dumps({
+                    "input_digest": "fixture-digest",
                     "source_root": "/tmp/fake/FlashDB",
                     "src_dir": "src",
                     "tests_dir": "tests",
@@ -1965,6 +1966,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             self.assertIn("c_project_model.json", missing.stdout)
 
             (root / "logs" / "trace" / "c_project_model.json").write_text(json.dumps({
+                "input_digest": "fixture-digest",
                 "modules": {"kvdb": ["src/fdb_kvdb.c"], "tsdb": ["src/fdb_tsdb.c"], "tests": ["tests/fdb_kvdb_tc.c"]},
                 "include_graph": {"inc/flashdb.h": ["fdb_def.h"]},
                 "source_files": ["src/fdb_kvdb.c", "src/fdb_tsdb.c"],
@@ -1973,6 +1975,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 "build_files": ["tests/Makefile"],
             }), encoding="utf-8")
             (root / "logs" / "trace" / "c_api_model.json").write_text(json.dumps({
+                "input_digest": "fixture-digest",
                 "public_functions": ["fdb_kvdb_init", "fdb_tsdb_init"],
                 "kvdb_symbols": ["fdb_kvdb_init"],
                 "tsdb_symbols": ["fdb_tsdb_init"],
@@ -1984,6 +1987,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 "enum_values": ["FDB_NO_ERR"],
             }), encoding="utf-8")
             (root / "logs" / "trace" / "c_test_model.json").write_text(json.dumps({
+                "input_digest": "fixture-digest",
                 "test_files": ["tests/fdb_kvdb_tc.c"],
                 "test_functions": ["test_fdb_gc"],
                 "registered_tests": ["test_fdb_gc"],
@@ -2023,6 +2027,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             self.assertIn("c_api_model.json abi_layouts must be a non-empty list", missing_abi.stdout)
 
             (root / "logs" / "trace" / "c_api_model.json").write_text(json.dumps({
+                "input_digest": "fixture-digest",
                 "public_functions": ["fdb_kvdb_init", "fdb_tsdb_init"],
                 "kvdb_symbols": ["fdb_kvdb_init"],
                 "tsdb_symbols": ["fdb_tsdb_init"],
@@ -2054,6 +2059,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             self.assertIn("c_api_model.json function_signatures must cover required symbol fdb_kvdb_init", passed.stdout)
 
             (root / "logs" / "trace" / "c_api_model.json").write_text(json.dumps({
+                "input_digest": "fixture-digest",
                 "public_functions": ["fdb_kvdb_init", "fdb_tsdb_init"],
                 "kvdb_symbols": ["fdb_kvdb_init"],
                 "tsdb_symbols": ["fdb_tsdb_init"],
@@ -2191,6 +2197,11 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
         requirements = {item["id"] for item in design["implementation_requirements"]}
         self.assertIn("iterator_time_payload_consistency", requirements)
         self.assertIn("callback_reentrant_state_mutation", requirements)
+        self.assertTrue(all(
+            "src/ffi/c_abi.rs" in item["suggested_files"]
+            and "src/c_abi.rs" not in item["suggested_files"]
+            for item in design["implementation_requirements"]
+        ))
         macro_values = models["c_api_model"]["macro_values"]
         self.assertTrue(macro_values)
         self.assertTrue(all("raw_expression" in item for item in macro_values.values()))
@@ -2266,8 +2277,11 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             (trace / "workflow_state.json").write_text(json.dumps(state), encoding="utf-8")
             for name in ["01-init-workspace.md", "02-read-c-project.md", "03-build-c-model.md"]:
                 (trace / name).write_text("# 阶段\n", encoding="utf-8")
-            for name in ["input_manifest.json", "c_project_model.json", "c_api_model.json", "c_test_model.json"]:
+            for name in ["c_project_model.json", "c_api_model.json", "c_test_model.json"]:
                 (trace / name).write_text("{}", encoding="utf-8")
+            (trace / "input_manifest.json").write_text(
+                json.dumps({"input_digest": "fixture-digest"}), encoding="utf-8"
+            )
 
             missing = subprocess.run(
                 [sys.executable, str(gate), "--stage", "DESIGN_RUST_API", "--root", str(root)],
@@ -2292,6 +2306,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 ]
             }), encoding="utf-8")
             valid_design = {
+                "input_digest": "fixture-digest",
                 "crate_name": "flashdb_rust",
                 "modules": ["error", "flash", "kvdb", "tsdb"],
                 "core_types": ["FlashStorage", "MemFlash", "FileFlash", "FdbError", "KvDb", "TsDb", "TslRecord"],
@@ -2304,6 +2319,14 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 "c_to_rust_symbol_map": {"fdb_kvdb_init": "KvDb::open", "fdb_tsdb_init": "TsDb::open"},
             }
             (trace / "rust_api_design.json").write_text(json.dumps(valid_design), encoding="utf-8")
+            (trace / "ffi_manifest.json").write_text(json.dumps({
+                "schema_version": 1,
+                "stage": "DESIGN_RUST_API",
+                "input_digest": "fixture-digest",
+                "required_ffi_apis": ["fdb_kvdb_init", "fdb_tsdb_init"],
+                "observation_apis": [],
+                "ffi_mappings": [],
+            }), encoding="utf-8")
             (trace / "04-design-rust-api.md").write_text("# Rust API 设计\n\n本阶段只设计 API，不生成 Rust 项目。\n", encoding="utf-8")
             missing_facade = subprocess.run(
                 [sys.executable, str(gate), "--stage", "DESIGN_RUST_API", "--root", str(root)],
@@ -3351,7 +3374,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             self.assertEqual("assertion_mismatch", triage[0]["failure_kind"])
             self.assertEqual("test_oracle_suspect", triage[0]["classification"])
             self.assertFalse(triage[0]["allow_src_edit"])
-            self.assertIn("flashDB_rust/tests", triage[0]["allowed_edit_scope"])
+            self.assertIn("flashDB_rust/tests/**", triage[0]["allowed_edit_scope"])
             state = json.loads((trace / "workflow_state.json").read_text(encoding="utf-8"))
             self.assertTrue(state["test_failure_triage_required"])
 

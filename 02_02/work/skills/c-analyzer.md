@@ -32,8 +32,10 @@ permission:
 - 维护 `c_api_model.json.typedef_map`、`enum_map`、`unresolved_signatures` 和 `unresolved_types`。C runner、scorer case 或 layout checker 依赖的关键路径不得 unresolved；非关键扩展符号如果 unresolved，必须记录 `symbol`、`reason`、`source` 和后续去向。
 - 在 `c_test_model.json.registered_test_invocations` 中保留 `TEST_RUN(...)` 的动态注册顺序、来源 runner 和测试函数名；不得固定测试数量或 scorer case 数量。
 - 每个 registered/scorer scenario 必须包含有序 `scenario_ir`，显式保留 call/control/assert 步骤及 helper/callback 展开顺序，不能只给无序 symbol 集合。
-- 基于 C 模型和测试模型生成 `logs/trace/rust_api_design.json`，其中 `c_abi_facade.structs` 必须来自 `c_api_model.json.abi_layouts`，`c_abi_facade.functions` 必须来自 `c_api_model.json.function_signatures`，`c_abi_facade.c_type_map` 必须说明 C->Rust FFI 类型映射和 unresolved 类型。
-- 写入中文阶段日志：`02-read-c-project.md`、`03-build-c-model.md`、`04-design-rust-api.md`。
+- 基于 C 模型和测试模型生成 `logs/trace/rust_api_design.json` 与同输入摘要的 `logs/trace/ffi_manifest.json`，其中 `c_abi_facade.structs` 必须来自 `c_api_model.json.abi_layouts`，`c_abi_facade.functions` 必须来自 `c_api_model.json.function_signatures`，`c_abi_facade.c_type_map` 必须说明 C->Rust FFI 类型映射和 unresolved 类型。
+- 阶段日志 `02-read-c-project.md`、`03-build-c-model.md`、`04-design-rust-api.md` 由 `workflowctl finish` 根据机器产物自动生成；不得手工用自然语言覆盖机器统计。
+- 每个动态注册测试必须解析到 definition 和 `test_semantics`，`unresolved_registered_tests` 必须为空；语义事实中的 API 调用和断言必须在对应 `scenario_ir` 中有步骤证据。
+- `BUILD_C_MODEL` task packet、三个 C 模型和 Rust API 设计必须携带同一个非空 `input_digest`。
 - 阶段状态、回执和调用证据由主控通过 `workflowctl` 生成；你不得手写。
 
 ## 执行要求

@@ -381,7 +381,7 @@ def derive_implementation_requirements(c_test_model: dict[str, Any]) -> list[dic
         return ""
 
     def suggested_files(identifier: str, symbols: list[str]) -> list[str]:
-        files = {"src/c_abi.rs"}
+        files = {"src/ffi/c_abi.rs"}
         for symbol in symbols:
             lower = symbol.lower()
             if "kv" in lower:
@@ -822,6 +822,9 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(f, dict) and f.get("safe_role", "").startswith("observation_")
     ])
     ffi_manifest = {
+        "schema_version": 1,
+        "stage": "DESIGN_RUST_API",
+        "input_digest": design.get("input_digest"),
         "required_ffi_apis": required_ffi_apis,
         "observation_apis": observation_apis,
         "ffi_mappings": [

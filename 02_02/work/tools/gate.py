@@ -264,11 +264,57 @@ def check_deterministic_abi_field_contract(api_model: dict[str, Any]) -> list[st
 
 def check_ordered_scenario_ir(test_model: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    if test_model.get("scenario_ir_schema_version") != 1:
+        errors.append("c_test_model.json scenario_ir_schema_version must be 1")
+    registered = test_model.get("registered_tests")
+    semantics = test_model.get("test_semantics")
+    registered_names = {
+        item for item in registered if isinstance(item, str)
+    } if isinstance(registered, list) else set()
+    semantic_names = set(semantics) if isinstance(semantics, dict) else set()
+    missing_semantics = sorted(registered_names - semantic_names)
+    if missing_semantics:
+        errors.append(
+            "c_test_model.json registered tests lack extracted semantics: "
+            + ", ".join(missing_semantics)
+        )
+    unresolved = test_model.get("unresolved_registered_tests")
+    if not isinstance(unresolved, list):
+        errors.append("c_test_model.json unresolved_registered_tests must be a list")
+    elif unresolved:
+        names = sorted({
+            str(item.get("test_function") or "<unknown>")
+            for item in unresolved if isinstance(item, dict)
+        })
+        errors.append(
+            "c_test_model.json has unresolved registered tests: " + ", ".join(names)
+        )
+
+    invocations = test_model.get("registered_test_invocations")
+    invocation_ids = [
+        item.get("scenario_id")
+        for item in invocations
+        if isinstance(item, dict) and isinstance(item.get("scenario_id"), str)
+    ] if isinstance(invocations, list) else []
+    if not isinstance(invocations, list) or len(invocation_ids) != len(invocations):
+        errors.append("c_test_model.json registered invocations must have scenario_id")
+    elif len(set(invocation_ids)) != len(invocation_ids):
+        errors.append("c_test_model.json registered invocation scenario_id values must be unique")
+
     sequences: dict[str, list[tuple[Any, Any, Any]]] = {}
     for collection, id_key in [("standard_scenarios", "id"), ("scorer_standard_cases", "scenario_id")]:
         rows = test_model.get(collection)
         if not isinstance(rows, list):
             continue
+        row_ids = [
+            row.get(id_key)
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get(id_key), str)
+        ]
+        if invocation_ids and (len(row_ids) != len(invocation_ids) or set(row_ids) != set(invocation_ids)):
+            errors.append(
+                f"c_test_model.json {collection} must match registered invocations one-to-one"
+            )
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -294,6 +340,29 @@ def check_ordered_scenario_ir(test_model: dict[str, Any]) -> list[str]:
                 if source_line is not None and (not isinstance(source_line, int) or source_line <= 0):
                     errors.append(f"scenario_ir step has invalid source_line for {scenario_id}")
                     break
+            facts = row.get("semantic_facts")
+            if isinstance(facts, dict):
+                assertion_count = facts.get("assertion_count")
+                if isinstance(assertion_count, int) and assertion_count > 0 and not any(
+                    step.get("kind") == "assertion" for step in steps
+                ):
+                    errors.append(f"scenario_ir lacks assertion evidence for {scenario_id}")
+                public_calls = facts.get("public_api_calls")
+                if isinstance(public_calls, list):
+                    ir_public_calls = {
+                        step.get("call")
+                        for step in steps
+                        if step.get("call_type") == "public_api" and isinstance(step.get("call"), str)
+                    }
+                    missing_calls = sorted({
+                        call for call in public_calls
+                        if isinstance(call, str) and call not in ir_public_calls
+                    })
+                    if missing_calls:
+                        errors.append(
+                            f"scenario_ir lacks public API evidence for {scenario_id}: "
+                            + ", ".join(missing_calls)
+                        )
             sequence = [(item.get("kind"), item.get("call"), item.get("call_type")) for item in steps]
             previous = sequences.setdefault(scenario_id, sequence)
             if previous != sequence:
@@ -1455,10 +1524,17 @@ def check_build_c_model(root: Path) -> list[str]:
     if not api_model.get("tsdb_symbols"):
         errors.append("c_api_model.json tsdb_symbols must be non-empty")
     manifest, manifest_error = load_json(root / "logs" / "trace" / "input_manifest.json")
-    if not manifest_error:
+    if manifest_error:
+        errors.append(f"input_manifest.json: {manifest_error}")
+    else:
         digest = manifest.get("input_digest")
+        if not isinstance(digest, str) or not digest:
+            errors.append("input_manifest.json input_digest must be a non-empty string")
         for name, model in [("c_project_model.json", project_model), ("c_api_model.json", api_model), ("c_test_model.json", test_model)]:
-            if "input_digest" in model and (not isinstance(digest, str) or not digest or model.get("input_digest") != digest):
+            model_digest = model.get("input_digest")
+            if not isinstance(model_digest, str) or not model_digest:
+                errors.append(f"{name} input_digest must be a non-empty string")
+            elif model_digest != digest:
                 errors.append(f"{name} input_digest must match input_manifest.json")
     macro_values = api_model.get("macro_values")
     if macro_values is not None and (not isinstance(macro_values, dict) or not macro_values):
@@ -1600,7 +1676,12 @@ def check_design_rust_api(root: Path) -> list[str]:
         if design.get("crate_name") != "flashdb_rust":
             errors.append("rust_api_design.json crate_name must be flashdb_rust")
         manifest, manifest_error = load_json(root / "logs" / "trace" / "input_manifest.json")
-        if "input_digest" in design and (manifest_error or design.get("input_digest") != manifest.get("input_digest")):
+        design_digest = design.get("input_digest")
+        if not isinstance(design_digest, str) or not design_digest:
+            errors.append("rust_api_design.json input_digest must be a non-empty string")
+        elif manifest_error:
+            errors.append(f"input_manifest.json: {manifest_error}")
+        elif design_digest != manifest.get("input_digest"):
             errors.append("rust_api_design.json input_digest must match input_manifest.json")
 
         modules = design.get("modules")
@@ -1670,6 +1751,26 @@ def check_design_rust_api(root: Path) -> list[str]:
             errors.append(f"c_api_model.json: {api_model_error}")
         else:
             errors.extend(check_c_abi_facade_contract(design, api_model))
+
+        ffi_manifest, ffi_manifest_error = load_json(root / "logs" / "trace" / "ffi_manifest.json")
+        if ffi_manifest_error:
+            errors.append(f"ffi_manifest.json: {ffi_manifest_error}")
+        else:
+            facade = design.get("c_abi_facade") if isinstance(design.get("c_abi_facade"), dict) else {}
+            functions = facade.get("functions") if isinstance(facade.get("functions"), list) else []
+            expected_apis = sorted({
+                item.get("c_symbol")
+                for item in functions
+                if isinstance(item, dict) and isinstance(item.get("c_symbol"), str) and item.get("c_symbol")
+            })
+            if ffi_manifest.get("schema_version") != 1:
+                errors.append("ffi_manifest.json schema_version must be 1")
+            if ffi_manifest.get("stage") != "DESIGN_RUST_API":
+                errors.append("ffi_manifest.json stage must be DESIGN_RUST_API")
+            if ffi_manifest.get("input_digest") != design.get("input_digest"):
+                errors.append("ffi_manifest.json input_digest must match rust_api_design.json")
+            if ffi_manifest.get("required_ffi_apis") != expected_apis:
+                errors.append("ffi_manifest.json required_ffi_apis must match rust_api_design.json c_abi_facade.functions")
 
     stage_log = root / "logs" / "trace" / "04-design-rust-api.md"
     try:

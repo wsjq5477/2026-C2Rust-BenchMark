@@ -143,16 +143,16 @@ python3 work/tools/workflowctl.py --root . record-agent --agent c-analyzer --sta
 1. 优先调用 `c-analyzer` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/c-analyzer.md` 后执行；连续 3 次失败后才允许主控 fallback。`READ_C_PROJECT`、`BUILD_C_MODEL`、`DESIGN_RUST_API` 必须作为 `C_ANALYSIS 阶段族` 由一次 `c-analyzer` 任务连续执行。
 2. `workflowctl init/begin` 已在代理运行前生成 `logs/trace/input-source-baseline.json`；选择同一个 `$FLASHDB_SOURCE`，只读取目录结构和文件清单，不修改平台输入。后续每次 `finish` 都会对新增、删除和 hash 变化做全量复核。
 3. 运行 `python3 work/tools/scan_c_project.py --source "$FLASHDB_SOURCE" --output logs/trace/input_manifest.json`。
-4. 写入中文 `logs/trace/02-read-c-project.md`。
-5. 调用 `workflowctl finish`，由控制器记录 `input_path` 和 `input_manifest` 并内部等价运行 `python3 work/tools/gate.py --stage READ_C_PROJECT`。
+4. 调用 `workflowctl finish`，由控制器根据 manifest 自动生成中文 `logs/trace/02-read-c-project.md`，记录 `input_digest`、文件计数和只读校验结果；然后记录 `input_path` 和 `input_manifest` 并内部等价运行 `python3 work/tools/gate.py --stage READ_C_PROJECT`。
 
 ### BUILD_C_MODEL
 
 1. 继续由同一次 `c-analyzer` subagent 执行，读取 `work/skills/flashdb-migration/SKILL.md` 中 `BUILD_C_MODEL` 规则。如果 `READ_C_PROJECT` 已通过后从本阶段恢复，主控只能一次拉起 `c-analyzer`，从 `BUILD_C_MODEL` 继续执行剩余 C 分析阶段。
 2. 运行 `python3 work/tools/build_c_model.py --manifest logs/trace/input_manifest.json --output-dir logs/trace`。
 3. 生成 `logs/trace/c_project_model.json`、`logs/trace/c_api_model.json`、`logs/trace/c_test_model.json`。
-4. 写入中文 `logs/trace/03-build-c-model.md`。
-5. 调用 `workflowctl finish`，由控制器更新状态并内部等价运行 `python3 work/tools/gate.py --stage BUILD_C_MODEL`。
+4. 每个动态注册测试必须解析到 definition 和 `test_semantics`；`unresolved_registered_tests` 必须为空。若语义事实包含 API 调用或断言，对应 `scenario_ir` 必须有同类步骤证据。
+5. 所有模型必须携带与 `input_manifest.json` 严格相等的非空 `input_digest`；缺失字段不得通过 gate。
+6. 调用 `workflowctl finish`，由控制器自动生成中文 `logs/trace/03-build-c-model.md`，明确记录唯一注册测试数、注册调用数、unresolved 数和 invoke-only 场景；然后更新状态并内部等价运行 `python3 work/tools/gate.py --stage BUILD_C_MODEL`。
 
 ### DESIGN_RUST_API
 

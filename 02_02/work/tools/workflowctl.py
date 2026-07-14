@@ -363,7 +363,21 @@ def cmd_init(args: argparse.Namespace) -> int:
     _atomic_json(root / "logs" / "trace" / "agent-registry.json", {"subagents": DEFAULT_AGENTS})
     (root / "logs" / "trace" / "subagent-invocations.jsonl").touch(exist_ok=True)
     stage_log = root / "logs" / "trace" / "01-init-workspace.md"
-    stage_log.write_text("# 初始化工作区\n\n- 状态、目录和代理注册表由 workflowctl 创建。\n", encoding="utf-8")
+    baseline_rel = state.get("input_source_baseline")
+    baseline_path = root / baseline_rel if isinstance(baseline_rel, str) else None
+    baseline = _json(baseline_path) if baseline_path is not None and baseline_path.is_file() else {}
+    baseline_files = baseline.get("files") if isinstance(baseline.get("files"), dict) else {}
+    stage_log.write_text(
+        "# INIT_WORKSPACE 阶段日志\n\n"
+        "- 生成者：workflowctl\n"
+        "- workflow_state.json：已生成\n"
+        "- agent-registry.json：已生成（4 个 subagent）\n"
+        f"- 输入基线文件：{len(baseline_files)}\n"
+        f"- 输入基线 SHA256：`{state.get('input_source_baseline_sha256')}`\n"
+        "- flashDB_rust：未生成\n"
+        "- 下一阶段：READ_C_PROJECT\n",
+        encoding="utf-8",
+    )
     gate = root / "work" / "tools" / "gate.py"
     if gate.is_file():
         checked = subprocess.run(
@@ -377,6 +391,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         state = _load_state(root)
         state["last_gate"] = {"stage": "INIT_WORKSPACE", "status": "pass", "receipt": None}
         _atomic_json(state_path, state)
+        with stage_log.open("a", encoding="utf-8") as handle:
+            handle.write("- INIT_WORKSPACE gate：PASS\n")
     print("WORKFLOWCTL: INITIALIZED")
     print("next_action=READ_C_PROJECT")
     return 0
@@ -1266,6 +1282,69 @@ def _artifact_hashes(root: Path, required: list[str]) -> tuple[dict[str, str], l
     return hashes, missing
 
 
+def _write_stage_summary(root: Path, stage: str) -> None:
+    """Write deterministic human-readable summaries from machine artifacts."""
+    trace = root / "logs" / "trace"
+    if stage == "READ_C_PROJECT":
+        manifest = _json(trace / "input_manifest.json")
+        counts = manifest.get("counts") if isinstance(manifest.get("counts"), dict) else {}
+        text = (
+            "# READ_C_PROJECT 阶段日志\n\n"
+            "- 生成者：workflowctl（根据 input_manifest.json 自动汇总）\n"
+            f"- input_digest：`{manifest.get('input_digest')}`\n"
+            f"- 核心源码：{counts.get('core_sources', 0)}\n"
+            f"- 头文件：{counts.get('headers', 0)}\n"
+            f"- 测试源码：{counts.get('test_sources', 0)}\n"
+            f"- 构建文件：{counts.get('build_files', 0)}\n"
+            "- 输入模式：只读；完整性由输入基线和 stage receipt 校验。\n"
+        )
+        (trace / "02-read-c-project.md").write_text(text, encoding="utf-8")
+    elif stage == "BUILD_C_MODEL":
+        api = _json(trace / "c_api_model.json")
+        tests = _json(trace / "c_test_model.json")
+        scenarios = tests.get("standard_scenarios") if isinstance(tests.get("standard_scenarios"), list) else []
+        invoke_only = sorted(
+            str(item.get("id") or "<unknown>")
+            for item in scenarios if isinstance(item, dict)
+            and isinstance(item.get("scenario_ir"), list)
+            and len(item["scenario_ir"]) == 1
+            and isinstance(item["scenario_ir"][0], dict)
+            and item["scenario_ir"][0].get("kind") == "invoke_test"
+        )
+        unresolved = tests.get("unresolved_registered_tests")
+        unresolved_count = len(unresolved) if isinstance(unresolved, list) else -1
+        text = (
+            "# BUILD_C_MODEL 阶段日志\n\n"
+            "- 生成者：workflowctl（根据 C 模型自动汇总）\n"
+            f"- input_digest：`{tests.get('input_digest')}`\n"
+            f"- 公共函数签名：{len(api.get('function_signatures', {}))}\n"
+            f"- ABI 布局：{len(api.get('abi_layouts', []))}\n"
+            f"- 唯一注册测试：{len(tests.get('registered_tests', []))}\n"
+            f"- 注册调用：{len(tests.get('registered_test_invocations', []))}\n"
+            f"- 标准场景：{len(scenarios)}\n"
+            f"- unresolved_registered_tests：{unresolved_count}\n"
+            f"- invoke-only 场景：{', '.join(invoke_only) if invoke_only else '无'}\n"
+        )
+        (trace / "03-build-c-model.md").write_text(text, encoding="utf-8")
+    elif stage == "DESIGN_RUST_API":
+        design = _json(trace / "rust_api_design.json")
+        facade = design.get("c_abi_facade") if isinstance(design.get("c_abi_facade"), dict) else {}
+        type_map = facade.get("c_type_map") if isinstance(facade.get("c_type_map"), dict) else {}
+        text = (
+            "# DESIGN_RUST_API 阶段日志\n\n"
+            "- 生成者：workflowctl（根据 rust_api_design.json 自动汇总）\n"
+            f"- input_digest：`{design.get('input_digest')}`\n"
+            f"- crate：`{design.get('crate_name')}`\n"
+            f"- 模块：{len(design.get('modules', []))}\n"
+            f"- C ABI facade 函数：{len(facade.get('functions', []))}\n"
+            f"- C ABI facade 结构体：{len(facade.get('structs', []))}\n"
+            f"- unresolved C 类型：{len(type_map.get('unresolved', []))}\n"
+            f"- implementation requirements：{len(design.get('implementation_requirements', []))}\n"
+            "- Rust 源码：本阶段不生成。\n"
+        )
+        (trace / "04-design-rust-api.md").write_text(text, encoding="utf-8")
+
+
 def _verify_input_immutable(root: Path) -> None:
     state = _load_state(root)
     baseline_rel = state.get("input_source_baseline")
@@ -1414,6 +1493,23 @@ def cmd_finish(args: argparse.Namespace) -> int:
         ):
             raise WorkflowError("controller-generated task packet was modified")
         packet_doc = _json(packet_path)
+        if stage in {"BUILD_C_MODEL", "DESIGN_RUST_API"}:
+            manifest_path = root / "logs" / "trace" / "input_manifest.json"
+            if not manifest_path.is_file() or manifest_path.is_symlink():
+                raise WorkflowError("controller task packet requires input_manifest.json")
+            manifest_digest = _json(manifest_path).get("input_digest")
+            if not isinstance(manifest_digest, str) or not manifest_digest:
+                raise WorkflowError("input_manifest.json has no usable input_digest")
+            if packet_doc.get("input_digest") != manifest_digest:
+                raise WorkflowError("task packet input_digest does not match input_manifest.json")
+            source_artifacts = packet_doc.get("source_artifacts")
+            manifest_artifact = source_artifacts.get("input_manifest") if isinstance(source_artifacts, dict) else None
+            if (
+                not isinstance(manifest_artifact, dict)
+                or manifest_artifact.get("path") != "logs/trace/input_manifest.json"
+                or manifest_artifact.get("sha256") != _sha256(manifest_path)
+            ):
+                raise WorkflowError("task packet input manifest identity is missing or stale")
         packet_allowed = packet_doc.get("allowed_modification_paths")
         requested_allowed = run.get("requested_allow_paths")
         expected_allowed = list(dict.fromkeys(
@@ -1482,6 +1578,17 @@ def cmd_finish(args: argparse.Namespace) -> int:
         raise WorkflowError("stage modified controller-owned metadata: " + ", ".join(controller_changes))
 
     required = [item for item in run.get("required_outputs", []) if isinstance(item, str)]
+    automatic_log = {
+        "READ_C_PROJECT": "logs/trace/02-read-c-project.md",
+        "BUILD_C_MODEL": "logs/trace/03-build-c-model.md",
+        "DESIGN_RUST_API": "logs/trace/04-design-rust-api.md",
+    }.get(stage)
+    prerequisites = [item for item in required if item != automatic_log]
+    _, prerequisite_missing = _artifact_hashes(root, prerequisites)
+    if prerequisite_missing:
+        raise WorkflowError("stage is missing required outputs: " + ", ".join(prerequisite_missing))
+    if automatic_log is not None:
+        _write_stage_summary(root, stage)
     artifact_hashes, missing = _artifact_hashes(root, required)
     if missing:
         raise WorkflowError("stage is missing required outputs: " + ", ".join(missing))

@@ -863,6 +863,18 @@ def main(argv: list[str] | None = None) -> int:
         max_scenarios=args.max_scenarios,
         max_steps=args.max_steps,
     )
+    manifest_path = root / "logs" / "trace" / "input_manifest.json"
+    manifest_digest: str | None = None
+    if manifest_path.is_file():
+        manifest = load_json(manifest_path)
+        raw_digest = manifest.get("input_digest")
+        if not isinstance(raw_digest, str) or not raw_digest:
+            parser.error("input_manifest.json must contain a non-empty input_digest")
+        manifest_digest = raw_digest
+        packet_digest = packet.get("input_digest")
+        if packet_digest is not None and packet_digest != manifest_digest:
+            parser.error("task packet model input_digest does not match input_manifest.json")
+        packet["input_digest"] = manifest_digest
     if args.rewrite_role:
         if stage != "REWRITE_CORE_MODULES":
             parser.error("--rewrite-role is only valid for REWRITE_CORE_MODULES")
@@ -900,6 +912,10 @@ def main(argv: list[str] | None = None) -> int:
         }
     else:
         packet["source_artifacts"] = {
+            "input_manifest": {
+                "path": manifest_path.relative_to(root).as_posix(),
+                "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+            } if manifest_path.is_file() else None,
             "design": design_path.as_posix() if design_path.is_file() else None,
             "test_model": test_model_path.as_posix() if test_model_path.is_file() else None,
             "repair_plan": repair_path.as_posix() if repair_path else None,

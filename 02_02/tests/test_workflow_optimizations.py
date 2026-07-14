@@ -316,7 +316,7 @@ class WorkflowControllerContractTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 WORKFLOWCTL.cmd_status(argparse.Namespace(root=str(root), json=False))
             self.assertIn("begin --stage REPAIR_ABI_LAYOUT", output.getvalue())
-            self.assertIn("--agent rust-implementer", output.getvalue())
+            self.assertIn("--agent controller", output.getvalue())
 
             state["next_action"] = "COMPLETE_VERIFY_RUST_WITH_C_TESTS"
             state["active_stage_run"] = {
@@ -1075,6 +1075,68 @@ class RepairAndAttemptRoutingTests(unittest.TestCase):
 
 
 class ScenarioIrAndTaskPacketTests(unittest.TestCase):
+    def test_function_definition_replaces_earlier_prototype(self):
+        source = """
+static void test_case(void);
+static void test_case(void) {
+    fdb_kvdb_deinit(0);
+    TEST_ASSERT_TRUE(1);
+}
+"""
+        functions = C_MODEL.extract_functions(source, "tests/demo.c")
+        record = next(item for item in functions if item["name"] == "test_case")
+        self.assertEqual("definition", record["kind"])
+        bodies = C_MODEL.extract_function_body_records(source, "tests/demo.c")
+        self.assertIn("test_case", bodies)
+        facts = C_MODEL.extract_test_semantics(bodies["test_case"]["body"])
+        self.assertIn("fdb_kvdb_deinit", facts["called_functions"])
+        self.assertEqual(1, facts["assertion_count"])
+
+    def test_later_prototype_does_not_replace_definition_or_parse_control_call(self):
+        source = """
+static void test_case(void) {
+    for (; ready(); free(ptr)) { }
+}
+static void test_case(void);
+"""
+        functions = C_MODEL.extract_functions(source, "tests/demo.c")
+        record = next(item for item in functions if item["name"] == "test_case")
+        self.assertEqual("definition", record["kind"])
+        self.assertNotIn("free", {item["name"] for item in functions})
+
+    def test_gate_rejects_unresolved_or_semantically_inconsistent_scenario_ir(self):
+        model = {
+            "scenario_ir_schema_version": 1,
+            "registered_tests": ["test_case"],
+            "registered_test_invocations": [{"scenario_id": "test_case"}],
+            "unresolved_registered_tests": [],
+            "test_semantics": {"test_case": {}},
+            "standard_scenarios": [{
+                "id": "test_case",
+                "semantic_facts": {"assertion_count": 1, "public_api_calls": ["fdb_api"]},
+                "scenario_ir": [{
+                    "id": "test_case:s001", "order": 1, "kind": "invoke_test",
+                    "call": "test_case", "call_type": "registered_test",
+                    "source_function": "test_runner", "source_line": 1,
+                }],
+            }],
+            "scorer_standard_cases": [{
+                "scenario_id": "test_case",
+                "semantic_facts": {"assertion_count": 1, "public_api_calls": ["fdb_api"]},
+                "scenario_ir": [{
+                    "id": "test_case:s001", "order": 1, "kind": "invoke_test",
+                    "call": "test_case", "call_type": "registered_test",
+                    "source_function": "test_runner", "source_line": 1,
+                }],
+            }],
+        }
+        errors = GATE.check_ordered_scenario_ir(model)
+        self.assertTrue(any("lacks assertion evidence" in error for error in errors))
+        self.assertTrue(any("lacks public API evidence" in error for error in errors))
+        model["unresolved_registered_tests"] = [{"test_function": "test_case"}]
+        errors = GATE.check_ordered_scenario_ir(model)
+        self.assertTrue(any("unresolved registered tests" in error for error in errors))
+
     def test_scenario_ir_preserves_helper_callback_public_api_and_assertion_order(self):
         source = """
 static void iter_cb(void *ctx) {
@@ -1203,7 +1265,7 @@ void test_demo(void) {
         self.assertIn("REQ-EXTRA", packet["selection"]["omitted_requirement_ids"])
         self.assertIn("scenario_tsl", packet["selection"]["omitted_scenario_ids"])
         self.assertEqual(
-            ["flashDB_rust/src/kvdb.rs", "logs/trace/**"],
+            ["flashDB_rust/src/kvdb.rs", *TASK_PACKET.VERIFY_TRACE_OUTPUTS],
             packet["allowed_modification_paths"],
         )
         repair_command = packet["verification_commands"][-1]
@@ -1219,10 +1281,13 @@ void test_demo(void) {
         self.assertEqual(WORKFLOWCTL.STAGE_REQUIRED_OUTPUTS, {
             stage: value["required_outputs"] for stage, value in contract["stages"].items()
         })
+        self.assertIn("logs/trace/ffi_manifest.json", contract["stages"]["DESIGN_RUST_API"]["allowed_paths"])
+        self.assertIn("logs/trace/ffi_manifest.json", contract["stages"]["DESIGN_RUST_API"]["required_outputs"])
         for stage, stage_contract in contract["stages"].items():
             packet = TASK_PACKET.build_task_packet(stage, {}, {})
-            self.assertEqual(stage_contract["allowed_paths"], packet["allowed_modification_paths"])
-            self.assertEqual(stage_contract["required_outputs"], packet["evidence_paths"])
+            profile = TASK_PACKET.stage_profile(stage, "flashDB_rust", contract)
+            self.assertEqual(profile["allowed_paths"], packet["allowed_modification_paths"])
+            self.assertEqual(profile["evidence_paths"], packet["evidence_paths"])
 
     def test_task_packet_contract_defaults_bound_scenarios_and_steps(self):
         test_model = {
@@ -1250,7 +1315,7 @@ void test_demo(void) {
     def test_verify_without_repair_plan_uses_checkpoint_contract(self):
         packet = TASK_PACKET.build_task_packet("VERIFY_RUST_WITH_C_TESTS", {}, {})
         self.assertEqual(
-            ["flashDB_rust/src/**", "logs/trace/**"],
+            ["flashDB_rust/src/**", *TASK_PACKET.VERIFY_TRACE_OUTPUTS],
             packet["allowed_modification_paths"],
         )
         command = packet["verification_commands"][-1]
@@ -1267,10 +1332,9 @@ void test_demo(void) {
 
     def test_report_task_packet_allows_only_final_report_outputs(self):
         packet = TASK_PACKET.build_task_packet("REPORT_AND_VERIFY", {}, {})
-        self.assertEqual(
-            ["logs/trace/**", "result/**"],
-            packet["allowed_modification_paths"],
-        )
+        contract = TASK_PACKET.load_workflow_contract()
+        profile = TASK_PACKET.stage_profile("REPORT_AND_VERIFY", "flashDB_rust", contract)
+        self.assertEqual(profile["allowed_paths"], packet["allowed_modification_paths"])
         self.assertEqual("workflowctl", packet["completion_contract"]["owner"])
         commands = "\n".join(packet["verification_commands"])
         self.assertIn("--attempt-kind final", commands)

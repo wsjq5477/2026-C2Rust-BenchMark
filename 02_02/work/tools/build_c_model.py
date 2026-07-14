@@ -411,8 +411,7 @@ def extract_functions(text: str, file_name: str) -> list[dict[str, str]]:
         r"(?P<signature>\b(?:static\s+)?(?:inline\s+)?(?:const\s+)?(?:struct\s+)?" + IDENT
         + r"(?:\s*[*]\s*|\s+)+(?P<name>" + IDENT + r")\s*\([^;{}]*\)\s*(?P<end>[;{]))"
     )
-    functions: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    functions: dict[tuple[str, str], dict[str, str]] = {}
     for match in pattern.finditer(one_line):
         name = match.group("name")
         if name in CONTROL_WORDS:
@@ -420,11 +419,11 @@ def extract_functions(text: str, file_name: str) -> list[dict[str, str]]:
         kind = "definition" if match.group("end") == "{" else "prototype"
         linkage = "internal" if re.search(r"\bstatic\b", match.group("signature")) else "external"
         key = (file_name, name)
-        if key in seen:
-            continue
-        seen.add(key)
-        functions.append({"name": name, "file": file_name, "kind": kind, "linkage": linkage})
-    return sorted(functions, key=lambda item: (item["file"], item["name"]))
+        candidate = {"name": name, "file": file_name, "kind": kind, "linkage": linkage}
+        current = functions.get(key)
+        if current is None or (current.get("kind") == "prototype" and kind == "definition"):
+            functions[key] = candidate
+    return sorted(functions.values(), key=lambda item: (item["file"], item["name"]))
 
 
 def annotate_compiler_confirmed_typedefs(
@@ -1453,6 +1452,23 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
 
     test_functions = sorted(dict.fromkeys(test_functions))
     registered_tests = sorted(dict.fromkeys(registered_tests))
+    unresolved_registered_tests: list[dict[str, Any]] = []
+    for invocation in registered_invocations:
+        name = _invocation_test_function(invocation)
+        if name in test_function_records and name in test_semantics:
+            continue
+        unresolved_registered_tests.append({
+            "test_function": name,
+            "scenario_id": invocation.get("scenario_id"),
+            "runner": invocation.get("runner"),
+            "registration_source_file": invocation.get("registration_source_file"),
+            "source_line": invocation.get("source_line"),
+            "reason": (
+                "definition_not_found"
+                if name not in test_function_records
+                else "test_semantics_not_extracted"
+            ),
+        })
     kvdb_tests = sorted([name for name in registered_tests if "kvdb" in tag_test(name)])
     tsdb_tests = sorted([name for name in registered_tests if "tsdb" in tag_test(name)])
     public_function_set = set(public_functions)
@@ -1546,6 +1562,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         "test_functions": test_functions,
         "registered_tests": registered_tests,
         "registered_test_invocations": registered_invocations,
+        "unresolved_registered_tests": unresolved_registered_tests,
         "standard_scenarios": standard_scenarios,
         "scorer_standard_cases": scorer_standard_cases,
         "test_semantics": test_semantics,

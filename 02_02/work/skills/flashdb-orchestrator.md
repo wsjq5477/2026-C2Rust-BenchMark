@@ -192,7 +192,9 @@ python3 work/tools/build_c_model.py --manifest logs/trace/input_manifest.json --
 - `logs/trace/c_project_model.json`
 - `logs/trace/c_api_model.json`
 - `logs/trace/c_test_model.json`
-- `logs/trace/03-build-c-model.md`
+- `logs/trace/03-build-c-model.md`（由 `workflowctl finish` 自动生成，代理不得手写覆盖）
+
+`unresolved_registered_tests` 非空、注册测试缺少 definition/语义，或 semantic facts 与 scenario IR 不一致时，BUILD_C_MODEL gate 必须失败。三个模型和 task packet 的 `input_digest` 必须与 input manifest 严格一致。
 
 ### DESIGN_RUST_API
 
@@ -209,6 +211,7 @@ python3 work/tools/design_rust_api.py --project-model logs/trace/c_project_model
 写入：
 
 - `logs/trace/rust_api_design.json`
+- `logs/trace/ffi_manifest.json`
 - 中文 `logs/trace/04-design-rust-api.md`
 
 ## GENERATE_RUST_SCAFFOLD
@@ -246,7 +249,9 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 2. worker 执行 packet 给出的 `finish-rewrite-worker`；控制器核验真实 diff 并运行有界 core check。失败时重新释放同角色新 session，通过后进入 facade。
 3. 再次执行 `next-rewrite-worker`，释放 `WIRE_FACADE` packet。该 worker 只写 `facade_owned_paths`，且不得改变冻结签名。
 4. facade check 失败按所有权重试；缺 core 能力时 worker 返回 `missing_core_capability` 和不超过 1000 bytes 的简短 reason，控制器把该 handoff 放入新 CORE packet，并使旧 facade 回执失效。不得建立第三种 integration repair agent。
-5. rewrite 状态为 `READY` 后，执行状态输出中的父阶段 `finish`；控制器生成 `06-rewrite-core-modules.md`、`core_rewrite_batches.jsonl`、implementation audit、check 日志和 worker 回执并运行 gate。
+5. rewrite 状态为 `READY` 后，执行状态输出中的父阶段 `finish`；控制器生成 `logs/trace/06-rewrite-core-modules.md`、`core_rewrite_batches.jsonl`、implementation audit、check 日志和 worker 回执并运行 gate。
+
+父阶段 `finish` 内部执行的字面检查点命令为 `python3 work/tools/gate.py --stage REWRITE_CORE_MODULES`；worker 不得手工运行它冒充阶段完成。
 
 四类路径 `core_owned_paths`、`facade_owned_paths`、`frozen_contract_paths`、`shared_readonly_paths` 全部由 scaffold manifest 推导，主控不得按模块名硬编码或临时扩大写范围。所有失败都在当前源码上向前修复；禁止 Git、`/tmp`、`cp` 源码备份/回退和重新生成 scaffold。
 

@@ -68,10 +68,12 @@
     "DESIGN_RUST_API": {
       "allowed_paths": [
         "logs/trace/rust_api_design.json",
+        "logs/trace/ffi_manifest.json",
         "logs/trace/04-design-rust-api.md"
       ],
       "required_outputs": [
         "logs/trace/rust_api_design.json",
+        "logs/trace/ffi_manifest.json",
         "logs/trace/04-design-rust-api.md"
       ]
     },
