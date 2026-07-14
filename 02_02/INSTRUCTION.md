@@ -1,267 +1,101 @@
-# FlashDB C-to-Rust opencode 工作台执行说明
+# FlashDB C-to-Rust 转换工作台
 
-本文件是自动评测系统加载参赛作品的唯一入口。参赛作品的目标是让 opencode 在运行时读取平台提供的 FlashDB C 工程，逐阶段生成 `flashDB_rust/`，而不是提交预置 Rust 实现。
+本项目不是预置 Rust 答案。执行者必须读取平台提供的 FlashDB C 工程，在当前工作区生成 `flashDB_rust/`，并以原始 C 测试的真实运行结果验证迁移。
 
-## 固定路径
+## 入口与边界
 
-- 作品根目录：本文件所在目录，评测环境通常为 `/app/code/02_02`
-- 平台 C 输入：`/app/code/judge-assets/02_02_c_to_rust/code/FlashDB`
-- 最终 Rust 输出：作品根目录下的 `flashDB_rust`
-- 主控 Agent：`work/skills/flashdb-orchestrator.md`
-- subagent Markdown：`work/skills/c-analyzer.md`、`work/skills/rust-implementer.md`、`work/skills/test-migrator.md`、`work/skills/repairer.md`
-- opencode 原生目录：由评分平台按赛题规则从 `work/skills` 自动复制，参赛工程只维护 `work/skills` 权威源
-- 状态与证据：`logs/trace`
-- subagent 注册证据：`logs/trace/agent-registry.json`
-- subagent 调用证据：`logs/trace/subagent-invocations.jsonl`
-- 最终报告：`result/output.md` 和 `result/issues/00-summary.md`
+- 作品根目录：本文件所在目录。
+- 平台 C 输入优先级：
+  1. `/app/code/judge-assets/02_02_c_to_rust/code/FlashDB`
+  2. `judge-assets/code/FlashDB`
+  3. `../judge-assets/code/FlashDB`
+- Rust 输出：`flashDB_rust/`。
+- 主执行说明：[work/skills/flashdb-orchestrator.md](work/skills/flashdb-orchestrator.md)。
+- 机器证据：`logs/trace/`；最终报告：`result/output.md` 与 `result/issues/00-summary.md`。
 
-## opencode 原生执行入口
+默认由一个 primary Agent 完成整个迁移。可选 subagent 只用于短、边界明确的辅助任务；它们不是阶段完成或修改 Rust 的前置条件。
 
-work 目录仍为权威源。主控和 subagent Markdown 都按赛题约定保存到 `work/skills/`，subagent 路径形如 `work/skills/{subagent}.md`。若评测环境在启动 opencode 前已经把这些 Markdown 复制到 opencode 原生目录，并且如果启动前已经选择 flashdb-orchestrator 作为 primary agent，则由该 primary agent 执行本文件。
+禁止修改平台 C 输入、预置或复制 `flashDB_rust/`、把 C 源码放入 Rust `src/`、删除测试、弱化断言、伪造通过或把未运行的 C 测试标为通过。
 
-opencode 不能在会话中把当前 primary agent 自切换为另一个 primary agent。因此，如果当前会话已经由默认 Build agent 启动，不要求它运行中切换到 `@flashdb-orchestrator`。默认 Build agent 按普通 Markdown fallback 执行也满足本检查点：完整读取 `work/skills/flashdb-orchestrator.md` 并按其中要求执行。但主控执行重阶段时必须优先拉起对应 subagent；如果平台原生 subagent 注册异常，主控仍必须拉起一个通用 subagent 作为隔离任务代理，让该代理先读取 `work/skills/{subagent}.md` 后执行。只有同一 subagent 连续 3 次失败并写入 `subagent-invocations.jsonl` 后，主控才允许 fallback 自行执行。
+## 四阶段流程
 
-主控传给 subagent 的提示词必须是短调度单，只允许包含动态上下文：作品根目录、当前 checkpoint、目标阶段族、`$FLASHDB_SOURCE`、必须先读取 `work/skills/{subagent}.md`、需要读取的 trace/state 文件、停止条件和回写证据路径。如果调度提示与 subagent Markdown 冲突，以 subagent Markdown 为准。禁止在调度提示中复制或改写 subagent 的业务细节，禁止写入固定 API 清单、固定源码文件清单或实现策略。
+### 1. ANALYZE
 
-所有运行时代理的调度提示必须明确编辑边界：只允许修改当前职责内的 `flashDB_rust/**`、`logs/trace/**` 和规定的 `result/issues/**` 运行产物；不得修改 `work/**`，不得修改 `INSTRUCTION.md`，不得修改 `.opencode/**`、`design_doc/**`、评测测试或平台 C 输入。发现工作台脚本或契约问题时由主控追加一条结构化记录到 `logs/trace/c-cross/workbench-issues.jsonl`，并继续可执行比赛流程。
-
-`logs/trace` 是机器证据仓库，不是默认上下文输入。除 `workflow_state.json`、短阶段日志和必要错误 tail 外，subagent 默认不得全文读取 `c_api_model.json`、`c_test_model.json`、`rust_api_design.json`、`validation-matrix.json`、总设计文档或历史报告；需要模型事实时只能读取与当前阶段直接相关的局部片段。
-
-`READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API` 是 `C_ANALYSIS 阶段族`。主控必须一次拉起 `c-analyzer`，让它从当前 checkpoint 继续执行剩余 C 分析阶段；不得为 READ_C_PROJECT、BUILD_C_MODEL、DESIGN_RUST_API 分别新起 subagent。
-
-## 当前开发检查点
-
-当前实现并验证完整检查点：`BOOTSTRAP + INIT_WORKSPACE + READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API + GENERATE_RUST_SCAFFOLD + REWRITE_CORE_MODULES + VERIFY_RUST_WITH_C_TESTS + MIGRATE_TESTS + BUILD_TEST_REPAIR + REPORT_AND_VERIFY`。
-
-opencode 必须执行主控 Agent 文档中的完整流程。若会话启动时已经选中 `@flashdb-orchestrator` primary agent，则由它执行；否则由默认 Build agent 完整读取 `work/skills/flashdb-orchestrator.md` 后执行。
-
-只有控制器绑定的活跃 `REPORT_AND_VERIFY` 事务可生成 `STATUS: SUCCESS` 候选报告；最终 gate 失败时该状态不得作为成功结论保留。任何更早阶段都不得写入 `STATUS: SUCCESS`。
-
-## 机器控制合同（强制）
-
-阶段状态、调用证据和完成判定由 `work/tools/workflowctl.py` 独占维护。主控与 subagent 都不得手写 `workflow_state.json`、阶段回执或 `subagent-invocations.jsonl`。下文若仍出现“更新状态”或“记录调用”，其含义一律是调用本工具，不是直接编辑 JSON。
-
-阶段顺序、允许路径、required outputs、保护路径和 task packet 上限只有一个权威源：`work/knowledge/workflow-contract.json`。代理不得通过 `--allow-path` 动态扩权。
-
-新运行先执行：
+创建运行目录：
 
 ```bash
-python3 work/tools/workflowctl.py --root . init
+mkdir -p logs/trace result/issues
+: > logs/interaction.md
 ```
 
-每个后续阶段都使用同一协议：
+选择第一个存在的 `$FLASHDB_SOURCE`，只读扫描并生成动态事实：
 
 ```bash
-python3 work/tools/workflowctl.py --root . begin --stage <STAGE> --agent <ROLE>
-# 保存 stdout 中的 run_id 和 nonce；只执行 task_packet 指定范围内的工作
-python3 work/tools/workflowctl.py --root . finish --run-id <RUN_ID> --nonce <NONCE>
-python3 work/tools/workflowctl.py --root . status
-```
-
-约束如下：
-
-1. `begin` 生成最小化动态 task packet、允许路径和基线 hash；调度 subagent 时只传 task packet 路径、run_id、根目录和停止条件，不复制大模型文件。
-2. subagent 只提交职责范围内的源码/测试/阶段日志；不得直接编辑工作流状态、声明 gate 通过或写调用记录。C_ANALYSIS 这类同一 session 多阶段任务可调用 `workflowctl finish/begin` 继续，但状态仍只能由工具生成。
-3. 主控收到 subagent 回复后必须检查作品根目录中的 receipt 和 `workflowctl status`；若该 session 尚未调用 `finish`，主控必须执行。`finish` 会检查 root identity、required outputs、真实 changed files、保护路径和内容 hash，再运行 gate；缺文件、写到隔离 worktree、虚报改动或越界编辑都会失败。
-4. gate 通过后，主控用 `workflowctl record-agent` 引用已通过的 stage receipt 记录调用；不得手写 JSONL。
-5. 只服从 `status` 输出的 `next_action`、`expected_stage` 和可直接复制的 `next_command`。`REPAIR_ABI_LAYOUT`、`REANALYZE_C_MODEL`、`ISOLATE_SCENARIOS`、`REPAIR_RUST` 等 machine action 可直接作为 `begin --stage` 参数，控制器会映射到正确阶段。自然语言“完成”、subagent 最终回复和单独一次 cargo build 都不能推进阶段。
-6. `--resume` 只能重试当前阶段，不能跳到任意后续阶段。工具保存的 best-known 源码快照只能由收敛控制器显式恢复，禁止 `git reset`、`git checkout` 或覆盖用户工作树。
-7. 代理不得运行任何 Git 命令，也不得创建、清理或写入 `/tmp/**`。阶段重试的源码基线由 `workflowctl` 自动保留；不得用 `cp` 备份、手工回退 `flashDB_rust/` 或重新运行 scaffold generator 来伪造新的基线。
-
-旧 trace 没有 `controller_contract_version` 时 gate 仍可读取；所有新运行必须使用上述合同。
-
-## 环境准备
-
-1. 确认 `python3`、`cargo`、`rustfmt` 可执行。
-2. 不依赖网络、API Key、Docker 或人工输入。
-3. 不得修改平台提供的源码或测试。
-4. 不得预置、复制或冒充 `flashDB_rust`；`flashDB_rust` 必须在 `GENERATE_RUST_SCAFFOLD` 阶段由 opencode 生成。已有项目时 `workflowctl init` 必须拒绝；只有明确要放弃当前实现、开始全新运行时才允许 `init --force`，不得由 subagent 手动删除项目绕过保护。
-
-## subagent 分工
-
-- `c-analyzer`：执行 `READ_C_PROJECT + BUILD_C_MODEL + DESIGN_RUST_API`，拥有 C 事实建模和 Rust API 设计解释权，不写 Rust 源码。
-- `rust-implementer`：执行 `GENERATE_RUST_SCAFFOLD`、`REWRITE_CORE_MODULES`、`VERIFY_RUST_WITH_C_TESTS`，三个阶段可分别拉起独立 session，按文件系统产物恢复上下文；仅 `REWRITE_CORE_MODULES` 可在说明缺口后局部回看 C 源码，不得重写 C 模型或 API 设计。
-- `test-migrator`：执行 `MIGRATE_TESTS`，只负责 Rust 测试和 `rust_test_mapping.json`。`VERIFY_RUST_WITH_C_TESTS` 已通过后，Rust 测试失败默认先怀疑测试迁移或 harness。
-- `repairer`：执行 `BUILD_TEST_REPAIR` 的 triage 和最小修复。小修自行完成；系统性 C 模型、Rust 实现或测试迁移问题必须回派 `c-analyzer`、`rust-implementer` 或 `test-migrator`。
-
-## 工具命令参考（禁止脱离控制器逐条执行）
-
-以下字面命令用于说明 `workflowctl finish` 内部 gate 和 task packet 可能调用的工具，保留给检查契约；主控不得照此代码块绕过 `begin/finish` 手工逐条推进。实际只执行当前 task packet 列出的业务命令，并由 `workflowctl` 调用 gate：
-
-```bash
-python3 work/tools/workflowctl.py --root . init
-python3 work/tools/gate.py --stage INIT_WORKSPACE
 python3 work/tools/scan_c_project.py --source "$FLASHDB_SOURCE" --output logs/trace/input_manifest.json
-python3 work/tools/gate.py --stage READ_C_PROJECT
 python3 work/tools/build_c_model.py --manifest logs/trace/input_manifest.json --output-dir logs/trace
-python3 work/tools/gate.py --stage BUILD_C_MODEL
-python3 work/tools/design_rust_api.py --project-model logs/trace/c_project_model.json --api-model logs/trace/c_api_model.json --test-model logs/trace/c_test_model.json --output logs/trace/rust_api_design.json
-python3 work/tools/gate.py --stage DESIGN_RUST_API
+python3 work/tools/design_rust_api.py \
+  --project-model logs/trace/c_project_model.json \
+  --api-model logs/trace/c_api_model.json \
+  --test-model logs/trace/c_test_model.json \
+  --output logs/trace/rust_api_design.json
+python3 work/tools/gate.py --stage ANALYZE --root .
+```
+
+补齐中文阶段日志 `02-read-c-project.md`、`03-build-c-model.md`、`04-design-rust-api.md`。所有文件、符号、ABI 事实和测试场景从当前输入提取，不得写死本地样例。
+
+### 2. IMPLEMENT
+
+根据设计生成骨架，然后由主执行者实现 Rust 行为：
+
+```bash
 python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust
 python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --scaffold-layout-only
-python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
-python3 work/tools/core_impl_audit.py --root . --project flashDB_rust --manifest logs/trace/scaffold-manifest.json --design logs/trace/rust_api_design.json --output logs/trace/implementation-audit.json
-python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
-python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace
-python3 work/tools/gate.py --stage VERIFY_RUST_WITH_C_TESTS
-python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json
-python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json
-python3 work/tools/gate.py --stage MIGRATE_TESTS
-python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace
-python3 work/tools/test_failure_triage.py --root . --out logs/trace  # only required when cargo test failed
-python3 work/tools/gate.py --stage BUILD_TEST_REPAIR
-python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json
-python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json
-python3 work/tools/report_writer.py --root . --output result/output.md --issues result/issues/00-summary.md
-python3 work/tools/gate.py --stage REPORT_AND_VERIFY
 ```
 
-其中 `$FLASHDB_SOURCE` 必须按以下优先级选择第一个存在的目录：
+实现时优先满足 C-Cross 可观察语义。不要为了复刻不可观察的 C 内部结构而引入完整存储引擎；只有当前输入事实和失败证据要求时，才扩展实现复杂度。写入 `05-generate-rust-scaffold.md` 与 `06-rewrite-core-modules.md`。
 
-1. `/app/code/judge-assets/02_02_c_to_rust/code/FlashDB`
-2. `judge-assets/code/FlashDB`
-3. `../judge-assets/code/FlashDB`
+### 3. VERIFY_AND_REPAIR
 
-## 阶段执行要求
-
-### INIT_WORKSPACE
-
-1. 确认主控已明确归档或删除旧运行产物，作品根目录下不存在预置 `flashDB_rust`。
-2. 运行 `python3 work/tools/workflowctl.py --root . init`。该工具删除旧的工具自有运行目录后重新创建 `result/`、`logs/` 与 trace 骨架；`logs/interaction.md` 只生成空文件，不得写入标题、模板、阶段记录或自动执行内容，同时原子创建完整状态、agent registry、空 invocation 文件和中文阶段日志。
-3. `workflowctl init` 会在 gate 工具存在时内部等价运行 `python3 work/tools/gate.py --stage INIT_WORKSPACE`；主控不得重复手工推进，只按 `workflowctl status` 的 `next_action` 前进。
-
-每次 subagent 调用结束且 `workflowctl finish` 已通过 gate 后，用 `workflowctl record-agent` 引用 receipt 追加证据。禁止直接向 JSONL 写一行。实际命令形如：
+使用唯一的 C-Cross 入口构建 Rust staticlib、编译/链接原 C runner 并实际运行：
 
 ```bash
-python3 work/tools/workflowctl.py --root . record-agent --agent c-analyzer --stage C_ANALYSIS --mode native --status pass --run-id <RUN_ID> --receipt <FINISH_STDOUT中的不可变RECEIPT_PATH>
+python3 work/tools/c_cross_validate.py \
+  --root . --project flashDB_rust --out logs/trace \
+  --mode full --attempt-kind checkpoint --trigger implementation
+python3 work/tools/gate.py --stage VERIFY_AND_REPAIR --root .
 ```
 
-`agent` 只能是注册的角色名；`mode` 只能是 `native`、`generic_subagent`、`isolated_proxy` 或 `primary_fallback`；`status` 必须非空。`c-analyzer` 成功记录只能用单一 `stage=C_ANALYSIS`，不能按三个子阶段拆行。若使用 `primary_fallback`，同一行还必须写入 `consecutive_failures >= 3` 和非空 `fallback_to_primary_reason`。
+如有失败，只读取 `logs/trace/c-cross/failure-summary.json` 中列出的失败场景、日志和必要的 Rust/C 局部窗口。做最小修复后重跑同一条命令，并把本次修改的 Rust 源文件作为 `--changed-file` 传给 repair 运行。不得手工执行 runner，也不得使用 `/tmp/**` 作为 runner 目录。
 
-### READ_C_PROJECT
+只有全量场景通过后，才运行最终确认：
 
-1. 优先调用 `c-analyzer` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/c-analyzer.md` 后执行；连续 3 次失败后才允许主控 fallback。`READ_C_PROJECT`、`BUILD_C_MODEL`、`DESIGN_RUST_API` 必须作为 `C_ANALYSIS 阶段族` 由一次 `c-analyzer` 任务连续执行。
-2. `workflowctl init/begin` 已在代理运行前生成 `logs/trace/input-source-baseline.json`；选择同一个 `$FLASHDB_SOURCE`，只读取目录结构和文件清单，不修改平台输入。后续每次 `finish` 都会对新增、删除和 hash 变化做全量复核。
-3. 运行 `python3 work/tools/scan_c_project.py --source "$FLASHDB_SOURCE" --output logs/trace/input_manifest.json`。
-4. 调用 `workflowctl finish`，由控制器根据 manifest 自动生成中文 `logs/trace/02-read-c-project.md`，记录 `input_digest`、文件计数和只读校验结果；然后记录 `input_path` 和 `input_manifest` 并内部等价运行 `python3 work/tools/gate.py --stage READ_C_PROJECT`。
+```bash
+python3 work/tools/c_cross_validate.py \
+  --root . --project flashDB_rust --out logs/trace \
+  --mode full --attempt-kind final --trigger final_verification
+```
 
-### BUILD_C_MODEL
+失败必须如实保留；它不阻止最终报告生成。
 
-1. 继续由同一次 `c-analyzer` subagent 执行，读取 `work/skills/flashdb-migration/SKILL.md` 中 `BUILD_C_MODEL` 规则。如果 `READ_C_PROJECT` 已通过后从本阶段恢复，主控只能一次拉起 `c-analyzer`，从 `BUILD_C_MODEL` 继续执行剩余 C 分析阶段。
-2. 运行 `python3 work/tools/build_c_model.py --manifest logs/trace/input_manifest.json --output-dir logs/trace`。
-3. 生成 `logs/trace/c_project_model.json`、`logs/trace/c_api_model.json`、`logs/trace/c_test_model.json`。
-4. 每个动态注册测试必须解析到 definition 和 `test_semantics`；`unresolved_registered_tests` 必须为空。若语义事实包含 API 调用或断言，对应 `scenario_ir` 必须有同类步骤证据。
-5. 所有模型必须携带与 `input_manifest.json` 严格相等的非空 `input_digest`；缺失字段不得通过 gate。
-6. 调用 `workflowctl finish`，由控制器自动生成中文 `logs/trace/03-build-c-model.md`，明确记录唯一注册测试数、注册调用数、unresolved 数和 invoke-only 场景；然后更新状态并内部等价运行 `python3 work/tools/gate.py --stage BUILD_C_MODEL`。
+### 4. TEST_AND_REPORT
 
-### DESIGN_RUST_API
+从动态 C 测试模型迁移 Rust 测试并验证：
 
-1. 继续由同一次 `c-analyzer` subagent 执行，读取 `work/skills/flashdb-migration/SKILL.md` 中 `DESIGN_RUST_API` 规则。
-2. 运行 `python3 work/tools/design_rust_api.py --project-model logs/trace/c_project_model.json --api-model logs/trace/c_api_model.json --test-model logs/trace/c_test_model.json --output logs/trace/rust_api_design.json`。
-3. 写入中文 `logs/trace/04-design-rust-api.md`，记录核心 API、扩展兼容、未映射符号和未生成源码边界。
-4. 调用 `workflowctl finish`，由控制器更新状态并内部等价运行 `python3 work/tools/gate.py --stage DESIGN_RUST_API`。
+```bash
+python3 work/tools/migrate_tests.py \
+  --test-model logs/trace/c_test_model.json \
+  --design logs/trace/rust_api_design.json \
+  --project flashDB_rust \
+  --mapping logs/trace/rust_test_mapping.json
+python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace || true
+python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json
+```
 
-### GENERATE_RUST_SCAFFOLD
+补齐 `07-migrate-tests.md`、`08-build-test-repair.md`、`final-verification.md` 与 `09-report-and-verify.md`。运行报告生成，再做最终验证：
 
-1. 优先调用 `rust-implementer` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/rust-implementer.md` 后执行；连续 3 次失败后才允许主控 fallback。本阶段结束后该 subagent session 可退出，下一阶段不得依赖本阶段对话历史。
-2. 读取 `logs/trace/rust_api_design.json` 中生成脚手架所需的局部设计事实；不得读取 C 源码。
-3. 运行 `python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust`。
-   若工具报告 existing project 与 scaffold manifest 不一致，必须停止并保留当前实现；不得覆盖、删除或重新生成项目。只有主控明确启动全新 `init --force` 才可清理旧项目。
-4. 工具必须同时生成 `logs/trace/scaffold-manifest.json`，记录生成文件、FFI body baseline、stub symbols 和 placeholder module hash。
-   `storage.rs` 必须生成通用 Sidecar registry 骨架；C 输入使用 POSIX file mode 只记录为输入事实，不得据此强制 Rust 首轮重写真实文件、sector、CRC 或 GC 后端。
-5. 立即运行 `python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --scaffold-layout-only`，写入 `logs/trace/c-cross/scaffold-layout-check.json`；layout 未一次通过时先修复生成工具事实，不把错误 ABI 留给模型猜。
-6. 写入中文 `logs/trace/05-generate-rust-scaffold.md`，由 `workflowctl finish` 更新状态、核验回执并运行 gate。
+```bash
+python3 work/tools/report_writer.py --root . --output result/output.md --issues result/issues/00-summary.md
+python3 work/tools/gate.py --stage FINAL --root .
+```
 
-### REWRITE_CORE_MODULES
-
-1. 主控先 `workflowctl begin --stage REWRITE_CORE_MODULES`，再执行状态返回的 `next-rewrite-worker`。控制器按 `implementation_requirements` 的依赖顺序每批最多选择 3 项；每批固定执行 `IMPLEMENT_CORE → WIRE_FACADE → targeted C-Cross`，每个角色必须使用全新的 `rust-implementer` session。
-2. 每个 worker 只读取当前 requirement batch 的 task packet。`IMPLEMENT_CORE` 只写 manifest 的 `core_owned_paths`；`WIRE_FACADE` 只写 `facade_owned_paths` 并连接当前场景需要的 facade，最后一批必须消除全部剩余 FFI stub。其余 owner 文件均只读。
-3. worker 不自行分 batch、选择下一批或写验证证据。完成后只执行 packet 中的 `finish-rewrite-worker`；控制器生成真实 diff、`core_rewrite_batches.jsonl`、`rewrite-c-cross/<batch>/attempt-*.json`、检查日志和回执。
-4. `IMPLEMENT_CORE` 通过 `cargo fmt --check + cargo check --all-targets` 后才释放同批 `WIRE_FACADE`；facade build 通过后，控制器对该批 acceptance scenarios 运行真实 targeted C-Cross。通过才进入下一批；失败回到同批 CORE，默认最多 2 次。预算耗尽记为 `failed_final` 并继续其余批次，失败不得改写为通过；最终一批额外运行 `core_impl_audit`。
-5. facade 自身错误只重试 `WIRE_FACADE`；缺少内部能力时以 `--status missing_core_capability --reason '<缺失能力>'` 返回 `IMPLEMENT_CORE`。core 产生新 revision 后旧 facade 回执失效，再以新 session 重做 facade。所有修复都在当前源码上向前修改，禁止源码回滚、Git、`/tmp` 备份、`cp` 回退或再次生成 scaffold。
-6. 所有批次达到 `pass` 或 `failed_final` 后，主控执行状态给出的父阶段 `workflowctl finish`。gate 必须核验 ownership、冻结签名、最新 revision、每批 targeted C-Cross 证据、机器 diff/check 回执及最终 implementation audit。
-7. 不链接 C 源码，不写 `todo!()`、`unimplemented!()`。只有 `IMPLEMENT_CORE` 可在 packet 事实不足时按需读取 C 源码局部窗口；读取前必须说明缺口，超过 400 行的文件先用 `rg` 定位，单次窗口不超过 120 行。`WIRE_FACADE` 不得系统性读取 C 工程。
-
-### VERIFY_RUST_WITH_C_TESTS
-
-1. 由新的 `rust-implementer` subagent session 执行；本阶段是 Rust 源码迁移完成条件，不属于测试迁移阶段，不继承 `REWRITE_CORE_MODULES` 的对话历史。
-2. 默认只读取 `flashDB_rust/`、验证命令输出、失败 tail 和必要的 layout/API 局部片段；不得全文读取 `logs/trace/c_test_model.json`、`c_api_model.json`、`rust_api_design.json` 或 C 源码。
-3. 运行 `python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind checkpoint --trigger core_complete`。局部实现期间可根据模型动态发现的 suite 重复传入 `--suite <suite>` 做检查点，不得硬编码 suite 名或用例总数。
-4. `c_cross_validate.py` 必须编译 Rust `staticlib`，再编译并运行动态发现的原始 C 测试 runner 链接到 Rust C ABI facade，并解析 runner 的 `Running:` / `FAIL` 输出形成逐测试结果。
-5. 写入 `logs/trace/c-cross/cross-compile.log`、`cross-test.log`、`case-results.jsonl`、`attempts.jsonl`、`workbench-issues.jsonl` 和 `logs/trace/validation-matrix.json`。
-6. 中间 C-cross 是诊断检查点：全量 runner invocation 必须都有结果和证据；阶段结果为 `PASS` 或 `CONTINUE_WITH_FAILURES`。checkpoint/repair 只要证据完整就返回 0；只有 final 非全通过才返回非零。
-7. 写入中文 `logs/trace/06-5-verify-rust-with-c-tests.md`。
-8. 非全通过时必须消费 `logs/trace/c-cross/repair-plan.json`：控制器按 `REPAIR_ABI_LAYOUT`（`--abi-only` 确定性再生成）、`REANALYZE_C_MODEL`、`ISOLATE_SCENARIOS` 或 `REPAIR_RUST` machine route 生成单 cluster task packet，执行 targeted repair、比较 progress/regression、再做 full confirmation；默认预算 8 轮。不得在有 pending repair queue 时进入 `MIGRATE_TESTS`。
-9. crash/timeout 后必须执行工具生成的逐 scenario isolation queue，不能把 runner 崩溃后的全部场景永久记为 `not_run`。回归 attempt 不得覆盖 best-known；只能恢复工具在 `logs/trace/c-cross/snapshots/` 内保存的快照。
-10. 由 `workflowctl finish` 更新 functional status、repair rounds 和 `next_action` 并运行 gate。
-11. 本阶段只允许把临时 C harness 证据写入 `logs/trace/c-cross/`，不得把 C 源码放进 `flashDB_rust/src/`，不得让最终 Rust 项目依赖 FlashDB C 实现。
-12. 若验证失败显示 C 模型或 API 设计缺口，必须回派 `c-analyzer`，不得在本阶段系统性重读 C 工程。
-
-### MIGRATE_TESTS
-
-1. 必须在 `VERIFY_RUST_WITH_C_TESTS` 写出完整证据并消费 repair queue 后执行；全通过可直接进入，未全通过只有在显式修复预算耗尽且保留 best-known/真实部分成绩后才能进入。单次 `CONTINUE_WITH_FAILURES` 不再允许直接跳过修复。
-2. 优先调用 `test-migrator` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/test-migrator.md` 后执行；连续 3 次失败后才允许主控 fallback。
-3. 读取 `work/skills/test-migrator.md` 和 `work/skills/flashdb-test-migration/SKILL.md`。
-4. 读取 `logs/trace/validation-matrix.json` 的结论或相关局部片段；不得全文读取无关 trace 大 JSON。Rust 源码已由 C 原始测试证据验证，Rust 测试失败默认先怀疑测试迁移或 harness。
-5. 运行 `python3 work/tools/migrate_tests.py --test-model logs/trace/c_test_model.json --design logs/trace/rust_api_design.json --project flashDB_rust --mapping logs/trace/rust_test_mapping.json` 生成动态任务映射；该工具不得创建或覆盖 Rust 测试文件。
-6. 以 `c_test_model.json.scorer_standard_cases` 动态推导评分覆盖合同和数量，逐项一一迁移；不得硬编码 suite、case 名或总数，`standard_scenarios` 只作为动态 C 证据来源。
-7. 根据每项 `semantic_obligations` 和 `semantic_facts` 直接完成真实 Rust 测试，不生成 `todo!()`、恒真断言或其他可收集的占位测试。
-8. 只有 `validated_obligations` 覆盖全部 `semantic_obligations`，且 `assertion_evidence` 证明关键 `verify_*`、`data_shape:*`、`scenario:*` 义务，才可把对应 mapping 更新为 `implementation_status: implemented` 和 `coverage: semantic`；每个 C `public_api_calls` 必须有能在 Rust 测试体中定位的 `api_evidence`，有 C `data_shape` 或断言时分别必须有可定位的 `data_evidence`、`assertion_evidence`。
-9. 生成 `flashDB_rust/tests/kvdb_tests.rs`、`flashDB_rust/tests/tsdb_tests.rs`、`flashDB_rust/tests/equivalence_tests.rs`。
-10. 写入中文 `logs/trace/07-migrate-tests.md`。
-11. 由 `workflowctl finish` 记录 `rust_test_mapping`，代理不得编辑 `workflow_state.json`。
-12. 运行 `python3 work/tools/placeholder_check.py --root . --tests flashDB_rust/tests --mapping logs/trace/rust_test_mapping.json --output logs/trace/test-placeholder-check.json`，再运行 `python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json`；后者动态输出 `c_only`、`logic_mismatch`、`rust_only`，前两者必须为空，Rust 扩展测试仅记 warning。
-13. 调用 `workflowctl finish`，由控制器内部等价运行 `python3 work/tools/gate.py --stage MIGRATE_TESTS`；评分 case 集合不一致、pending、unmapped、重复、占位实现、semantic 义务未验证或测试断言过浅时必须失败并由主控回派 `test-migrator`。
-
-### BUILD_TEST_REPAIR
-
-1. 优先调用 `repairer` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/repairer.md` 后执行；连续 3 次失败后才允许主控 fallback。
-2. 运行 `python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace`。
-3. 如果 `cargo test` 失败，必须先运行 `python3 work/tools/test_failure_triage.py --root . --out logs/trace`；`cargo_capture.py` 也会在 test 失败时自动生成同一 triage 记录。
-4. `test_failure_triage.py` 只写入 `logs/trace/test-failure-triage.jsonl`；`workflow_state.json.test_failure_triage_required` 由 `workflowctl finish` 从机器产物投影。
-5. `repairer` 只在 triage 允许的 `allowed_edit_scope` 内按最小补丁修复，最多 8 轮；系统性问题必须回派 `c-analyzer`、`rust-implementer` 或 `test-migrator`。
-6. 若 `validation-matrix.json` 已通过而 Rust 测试失败，默认优先分类为 `test_oracle_suspect` 或 `harness_suspect`；只有完整 C evidence 支持测试预期时，才允许改 Rust 源码。
-7. 写入中文 `logs/trace/08-build-test-repair.md`，只记录命令、产物、结果和失败摘要，不写成长篇过程复盘。
-8. `workflowctl finish` 如实投影 `build_status`、`test_status`、修复轮次和未解决问题，代理不得把失败改写为通过。
-9. 控制器内部等价运行 `python3 work/tools/gate.py --stage BUILD_TEST_REPAIR`。未通过且预算未耗尽时继续修复；预算耗尽后保留失败证据并强制进入 `REPORT_AND_VERIFY`，不得阻止比赛产物生成。
-
-### REPORT_AND_VERIFY
-
-1. 在所有 Rust 修复和测试完成后，最后一次运行 `python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind final --trigger final_verification`。这是最终全量 C-cross，不得带 `--suite`；所有场景通过才可报告 C-cross PASS，失败时仍必须输出最终报告和真实部分成绩。
-2. 运行 `python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json`。
-3. 运行 `python3 work/tools/test_consistency_check.py --root . --out logs/trace/test-consistency.json`。
-4. 写入中文 `logs/trace/final-verification.md` 和 `logs/trace/09-report-and-verify.md`。
-5. 在活跃 REPORT 事务内运行 `python3 work/tools/report_writer.py --root . --output result/output.md --issues result/issues/00-summary.md`。报告工具只把控制器绑定的活跃事务视为候选完成态；前置 subagent 不维护这两个文件。
-6. 无论前置检查是否全部通过，都必须先生成 `result/output.md` 和 `result/issues/00-summary.md`，再调用 `workflowctl finish`；由控制器把 `current_stage` 提交为 `DONE` 并内部等价运行 `python3 work/tools/gate.py --stage REPORT_AND_VERIFY`。
-7. gate 通过后进入 `next_action=DONE, final_status=pass`；若 C-cross 或测试修复预算已耗尽但仍失败，则进入 `next_action=DONE_WITH_FAILURES, final_status=fail`，保留真实报告和非零退出码，不得在 REPORT 内死循环。
-
-## 完成判定
-
-完整任务只在以下条件全部满足时通过：
-
-- `logs/trace/workflow_state.json` 存在且 `current_stage == DONE`；
-- 01 到 09 的中文阶段日志都存在；
-- `logs/trace/input_manifest.json`、`c_project_model.json`、`c_api_model.json`、`c_test_model.json` 存在；
-- `logs/trace/rust_api_design.json` 存在；
-- `logs/trace/agent-registry.json` 存在；
-- `logs/trace/subagent-invocations.jsonl` 存在且记录主要阶段 subagent 或连续失败后的 fallback 证据；
-- `logs/trace/validation-matrix.json` 存在；
-- `flashDB_rust/Cargo.toml`、`flashDB_rust/src/`、`flashDB_rust/tests/` 存在；
-- `logs/trace/rust_test_mapping.json` 存在；
-- `logs/trace/cargo-build.log`、`logs/trace/cargo-test.log` 存在且对应状态通过；
-- `logs/trace/unsafe-ratio.json` 存在且 unsafe 比例低于 10%；
-- `logs/trace/final-verification.md` 存在；
-- `logs/trace/09-report-and-verify.md` 存在；
-- `result/output.md` 包含 `STATUS: SUCCESS`；
-- `result/issues/00-summary.md` 存在；
-- `python3 work/tools/gate.py --stage REPORT_AND_VERIFY` 退出码为 0。
-
-## 禁止事项
-
-- 不得修改平台 FlashDB 输入目录。
-- 不得把中间检查点写成最终成功。
-- 不得删除测试或弱化断言。
-- 不得把测试改成恒真。
-- 不得在最终 Rust 项目中链接或编译 C 源码。
-- 不得超过 unsafe 比例限制。
-- 不得手写 `attempts.jsonl` 或 `workbench-issues.jsonl`。repair attempt 必须通过 `python3 work/tools/c_cross_validate.py --attempt-kind repair --changed-file <path>` 记录；平台问题由主控工具生成。
+最终 gate 通过时，`result/output.md` 必须为 `STATUS: SUCCESS`。任何真实 C-Cross、Rust 测试或一致性失败都必须为 `STATUS: FAILED`，但报告仍必须存在。

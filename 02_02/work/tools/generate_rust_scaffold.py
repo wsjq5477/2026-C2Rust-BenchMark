@@ -824,7 +824,7 @@ def assert_safe_scaffold_overwrite(
     if manifest_path is None or not manifest_path.is_file():
         raise ValueError(
             "refusing to overwrite existing flashDB_rust without scaffold-manifest.json; "
-            "start an intentional clean run with workflowctl init --force"
+            "start an intentional clean run after archiving the existing project"
         )
     manifest = load_json(manifest_path)
     if manifest.get("schema_version") != SCAFFOLD_SCHEMA_VERSION:

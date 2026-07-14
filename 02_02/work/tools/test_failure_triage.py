@@ -156,24 +156,12 @@ def build_record(root: Path, out: Path) -> dict[str, Any]:
     return record
 
 
-def update_state(out: Path) -> None:
-    state_path = out / "workflow_state.json"
-    state = load_json(state_path)
-    if state.get("controller_contract_version"):
-        # workflowctl projects this fact from cargo-results/triage artifacts at
-        # stage commit; delegated tools must not mutate controller state.
-        return
-    state["test_failure_triage_required"] = True
-    state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
 def write_triage(root: Path, out: Path, *, replace: bool = False) -> dict[str, Any]:
     out.mkdir(parents=True, exist_ok=True)
     record = build_record(root, out)
     triage_path = out / "test-failure-triage.jsonl"
     with triage_path.open("w" if replace else "a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, sort_keys=True) + "\n")
-    update_state(out)
     return record
 
 

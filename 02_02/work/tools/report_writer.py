@@ -95,34 +95,6 @@ def final_c_cross_verified(matrix: dict[str, Any], attempts: list[dict[str, Any]
     )
 
 
-def controller_report_candidate(state: dict[str, Any]) -> bool:
-    """Return true while workflowctl owns an active final-report transaction.
-
-    Legacy runs write reports after setting ``current_stage=DONE``.  The
-    transactional controller cannot do that safely: result files must be
-    generated before ``finish`` commits the stage and changes the state to
-    DONE.  Binding the candidate state to the active REPORT run avoids that
-    ordering deadlock without letting an arbitrary REPORT state claim success.
-    The final gate remains the authority that accepts the report.
-    """
-    if state.get("current_stage") == "DONE":
-        return not (
-            state.get("controller_contract_version")
-            and state.get("final_status") == "fail"
-        )
-    active = state.get("active_stage_run")
-    return (
-        bool(state.get("controller_contract_version"))
-        and state.get("current_stage") == "REPORT_AND_VERIFY"
-        and state.get("checkpoint") == "REPORT_AND_VERIFY"
-        and state.get("next_action") == "COMPLETE_REPORT_AND_VERIFY"
-        and isinstance(active, dict)
-        and active.get("stage") == "REPORT_AND_VERIFY"
-        and isinstance(active.get("run_id"), str)
-        and bool(active.get("run_id"))
-    )
-
-
 def cross_convergence_summary(
     matrix: dict[str, Any],
     attempts: list[dict[str, Any]],
@@ -148,7 +120,6 @@ def cross_convergence_summary(
 
 def write_report(root: Path, output: Path, issues: Path) -> None:
     trace = root / "logs" / "trace"
-    state = load_json(trace / "workflow_state.json")
     cargo = load_json(trace / "cargo-results.json")
     ratio = load_json(trace / "unsafe-ratio.json")
     design = load_json(trace / "rust_api_design.json")
@@ -164,9 +135,8 @@ def write_report(root: Path, output: Path, issues: Path) -> None:
     convergence_lines = "\n".join(cross_convergence_summary(matrix, attempts, workbench_issues))
 
     success = (
-        controller_report_candidate(state)
-        and state.get("build_status") == "pass"
-        and state.get("test_status") == "pass"
+        cargo.get("build_status") == "pass"
+        and cargo.get("test_status") == "pass"
         and placeholders.get("status") == "pass"
         and consistency.get("status") == "pass"
         and float(ratio.get("unsafe_ratio", 1.0)) <= 0.10
@@ -188,8 +158,8 @@ STATUS: {status}
 
 ## Build and Test
 
-- build_status: `{state.get('build_status', 'unknown')}`
-- test_status: `{state.get('test_status', 'unknown')}`
+- build_status: `{cargo.get('build_status', 'unknown')}`
+- test_status: `{cargo.get('test_status', 'unknown')}`
 - cargo_build_returncode: `{cargo.get('build', {}).get('returncode', 'unknown')}`
 - cargo_test_returncode: `{cargo.get('test', {}).get('returncode', 'unknown')}`
 
@@ -231,8 +201,14 @@ STATUS: {status}
     )
 
     issues.parent.mkdir(parents=True, exist_ok=True)
-    blocked = state.get("blocked_issues", [])
-    issue_lines = "\n".join(f"- {item}" for item in blocked) if blocked else "- None"
+    failures = [
+        item for item in matrix.get("scenarios", [])
+        if isinstance(item, dict) and item.get("rust_impl_c_test") != "pass"
+    ] if isinstance(matrix.get("scenarios"), list) else []
+    issue_lines = "\n".join(
+        f"- {item.get('scenario_id')}: {item.get('reason', item.get('diagnosis', 'failed'))}"
+        for item in failures
+    ) if failures else "- None"
     issues.write_text(
         f"""# 00 - Summary
 

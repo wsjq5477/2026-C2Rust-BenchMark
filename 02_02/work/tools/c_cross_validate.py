@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -1489,25 +1488,42 @@ def _verification_results(scenarios: list[dict[str, Any]]) -> tuple[str, str]:
     return "CONTINUE_WITH_FAILURES", "failed"
 
 
-def _load_repair_planner() -> Any:
-    module_path = Path(__file__).resolve().with_name("repair_planner.py")
-    spec = importlib.util.spec_from_file_location("c_cross_repair_planner", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load repair planner: {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _write_current_repair_plan(
+def _write_failure_summary(
     matrix: dict[str, Any],
     c_cross: Path,
-    *,
-    project: str,
-    out: str,
 ) -> dict[str, Any]:
-    planner = _load_repair_planner()
-    return planner.write_repair_plan(matrix, c_cross, project=project, out=out)
+    """Write the current actionable failures without routing the next agent action.
+
+    The validator owns observation, not workflow scheduling.  A primary agent
+    can use this small file to choose the next edit and immediately rerun the
+    same validator.
+    """
+    scenarios = matrix.get("scenarios")
+    failures = []
+    if isinstance(scenarios, list):
+        for row in scenarios:
+            if not isinstance(row, dict) or row.get("rust_impl_c_test") == "pass":
+                continue
+            failures.append({
+                key: row.get(key)
+                for key in (
+                    "scenario_id", "scorer_case_id", "suite", "failure_layer",
+                    "diagnosis", "reason", "log", "handoff",
+                )
+            })
+    summary = {
+        "stage": "VERIFY_RUST_WITH_C_TESTS",
+        "status": "pass" if not failures else "repair_required",
+        "execution_id": matrix.get("execution_id"),
+        "failures": failures,
+        "guidance": (
+            "Inspect only the listed failure logs and relevant Rust files; "
+            "after a minimal edit rerun c_cross_validate.py."
+            if failures else "All observed C-Cross scenarios passed."
+        ),
+    }
+    _write_json(c_cross / "failure-summary.json", summary)
+    return summary
 
 
 def _has_complete_attempt_evidence(matrix: dict[str, Any], root: Path) -> bool:
@@ -2009,7 +2025,6 @@ def main(argv: list[str] | None = None) -> int:
         print("GENERATE_RUST_SCAFFOLD: LAYOUT_CHECK_WRITTEN")
         print(f"stage_result={'PASS' if result['status'] == 'pass' else 'FAIL'}")
         print(f"verification_result={result['status']}")
-        print(f"next_action={'REWRITE_CORE_MODULES' if result['status'] == 'pass' else 'REPAIR_ABI_LAYOUT'}")
         return 0 if result["status"] == "pass" else 1
 
     matrix_path = out / "validation-matrix.json"
@@ -2027,24 +2042,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     execution_id = f"{time.time_ns()}-{_safe_c_suffix(args.attempt_kind)}-{_safe_c_suffix(args.trigger)}"
     matrix["execution_id"] = execution_id
-    plan = _write_current_repair_plan(
-        matrix,
-        out / "c-cross",
-        project=args.project,
-        out=args.out,
-    )
-    next_action = str(plan.get("next_action") or "REPAIR_RUST")
     final_complete = (
         matrix.get("verification_result") == "pass"
         and matrix.get("mode") == "full"
         and matrix.get("scope") == "all"
     )
-    if args.attempt_kind == "final" and not final_complete:
-        next_action = "STOP_WITH_FAILURES"
-        plan["next_action"] = next_action
-        plan["status"] = "final_failed"
-        _write_json(out / "c-cross" / "repair-plan.json", plan)
-    matrix["next_action"] = next_action
+    _write_failure_summary(matrix, out / "c-cross")
     attempt = record_attempt(
         out / "c-cross",
         previous_matrix,
@@ -2073,7 +2076,6 @@ def main(argv: list[str] | None = None) -> int:
     print("rust_impl_c_test=" + ",".join(f"{key}:{value}" for key, value in sorted(counts.items())))
     print(f"stage_result={matrix['stage_result']}")
     print(f"verification_result={matrix['verification_result']}")
-    print(f"next_action={matrix['next_action']}")
     if args.attempt_kind == "final":
         return 0 if final_complete else 1
     return 0 if _has_complete_attempt_evidence(matrix, root) else 1
