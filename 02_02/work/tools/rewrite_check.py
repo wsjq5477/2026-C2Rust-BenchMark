@@ -37,6 +37,7 @@ def run_check(
     role: str,
     revision: int,
     max_output_bytes: int,
+    final_batch: bool = False,
 ) -> dict[str, Any]:
     normalized = role.upper()
     cargo = f"{project}/Cargo.toml"
@@ -46,9 +47,9 @@ def run_check(
     if normalized == "IMPLEMENT_CORE":
         commands.append(("check", ["cargo", "check", "--all-targets", "--manifest-path", cargo]))
     elif normalized == "WIRE_FACADE":
-        commands.extend([
-            ("build", ["cargo", "build", "--release", "--manifest-path", cargo]),
-            (
+        commands.append(("build", ["cargo", "build", "--release", "--manifest-path", cargo]))
+        if final_batch:
+            commands.append((
                 "audit",
                 [
                     sys.executable,
@@ -64,8 +65,7 @@ def run_check(
                     "--output",
                     "logs/trace/implementation-audit.json",
                 ],
-            ),
-        ])
+            ))
     else:
         raise ValueError(f"unsupported rewrite role: {role}")
 
@@ -126,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", default="flashDB_rust")
     parser.add_argument("--role", choices=["IMPLEMENT_CORE", "WIRE_FACADE"], required=True)
     parser.add_argument("--revision", type=int, required=True)
+    parser.add_argument("--final-batch", action="store_true")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     contract = load_json(CONTRACT_PATH)
@@ -137,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         role=args.role,
         revision=args.revision,
         max_output_bytes=limit,
+        final_batch=args.final_batch,
     )
     rendered, _ = bounded_text(json.dumps(result, ensure_ascii=False), limit)
     print(rendered)

@@ -31,7 +31,7 @@ permission:
 
 自然语言“完成”、subagent 回复、单次 cargo build 或手工 state 修改都不能推进阶段。`--resume` 只能重试当前阶段。
 
-`RECHECK_REWRITE_CORE_MODULES` 表示两个静态 worker 已完成、仅 controller gate 需要重检：主控执行 `python3 work/tools/workflowctl.py --root . recheck-rewrite`，不得派发任何 worker。`REPAIR_REWRITE_CORE_MODULES` 才按 `status.next_command` 重新 begin；控制器会自动复用首次 REWRITE 的脚手架基线。不得运行任何 Git 命令，不得创建、清理或写入 `/tmp/**`，也不得用 `cp` 备份或回退 `flashDB_rust/`、重新生成 scaffold。
+`RECHECK_REWRITE_CORE_MODULES` 表示所有 requirement batch worker 已完成、仅 controller gate 需要重检：主控执行 `python3 work/tools/workflowctl.py --root . recheck-rewrite`，不得派发任何 worker。`REPAIR_REWRITE_CORE_MODULES` 才按 `status.next_command` 重新 begin；控制器会自动复用首次 REWRITE 的脚手架基线。不得运行任何 Git 命令，不得创建、清理或写入 `/tmp/**`，也不得用 `cp` 备份或回退 `flashDB_rust/`、重新生成 scaffold。
 
 ## subagent 调度规则
 
@@ -68,7 +68,7 @@ permission:
 
 5. **subagent 调用必须由控制器落盘**：对应 stage receipt 通过后调用 `workflowctl record-agent`，禁止代理直接写 JSONL。C 分析阶段族使用 `stage=C_ANALYSIS`，不得拆成三个成功记录。
 
-6. **核心改写批次必须是机器可读证据**：`core_rewrite_batches.jsonl` 每行必须含 `stage=REWRITE_CORE_MODULES`、`status=complete|pass`、非空 `changed_files` 和非空 `obligations`；路径只允许位于 `flashDB_rust/src/`。
+6. **核心改写批次必须是机器可读证据**：`core_rewrite_batches.jsonl` 每行必须含 `stage=REWRITE_CORE_MODULES`、`status=pass|failed_final`、非空 `changed_files`、非空 `obligations` 和对应 targeted C-Cross receipt；路径只允许位于 `flashDB_rust/src/`。
 
 `logs/trace` 是机器证据仓库，不是默认上下文输入。除 `workflow_state.json`、短阶段日志和必要错误 tail 外，subagent 默认不得全文读取 `c_api_model.json`、`c_test_model.json`、`rust_api_design.json`、`validation-matrix.json`、总设计文档或历史报告；需要模型事实时只能读取与当前阶段直接相关的局部片段。
 
@@ -243,13 +243,13 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 
 ## REWRITE_CORE_MODULES
 
-外部仍只有一个阶段，内部由 `workflowctl` 固定调度两个全新 session：
+外部仍只有一个阶段，内部由 `workflowctl` 按 `implementation_requirements` 依赖顺序生成真实批次，每批最多 3 项：
 
-1. 父阶段 `begin` 后执行 `next-rewrite-worker`，先释放 `IMPLEMENT_CORE` packet。该 worker 只写 manifest 的 `core_owned_paths`。
-2. worker 执行 packet 给出的 `finish-rewrite-worker`；控制器核验真实 diff 并运行有界 core check。失败时重新释放同角色新 session，通过后进入 facade。
-3. 再次执行 `next-rewrite-worker`，释放 `WIRE_FACADE` packet。该 worker 只写 `facade_owned_paths`，且不得改变冻结签名。
-4. facade check 失败按所有权重试；缺 core 能力时 worker 返回 `missing_core_capability` 和不超过 1000 bytes 的简短 reason，控制器把该 handoff 放入新 CORE packet，并使旧 facade 回执失效。不得建立第三种 integration repair agent。
-5. rewrite 状态为 `READY` 后，执行状态输出中的父阶段 `finish`；控制器生成 `logs/trace/06-rewrite-core-modules.md`、`core_rewrite_batches.jsonl`、implementation audit、check 日志和 worker 回执并运行 gate。
+1. 每批先释放 `IMPLEMENT_CORE` packet，只写 `core_owned_paths`；有界 core check 通过后再释放同批 `WIRE_FACADE` packet，只写 `facade_owned_paths`。
+2. facade build 通过后，控制器自动对该批 acceptance scenarios 运行 targeted C-Cross，并写入 `logs/trace/rewrite-c-cross/<batch>/attempt-*.json`。
+3. targeted C-Cross 通过才释放下一批；失败回到同批 CORE，默认最多 2 次。预算耗尽记为 `failed_final` 后继续其他批次，不能无限循环或伪造通过。
+4. 最后一批必须连接全部剩余 facade，并追加 `core_impl_audit`。缺 core 能力时仍使用 `missing_core_capability` 返回同批 CORE，不建立第三种 repair agent。
+5. 所有批次为 `pass` 或 `failed_final` 且 rewrite 状态为 `READY` 后，执行父阶段 `finish`；控制器生成中文 `logs/trace/06-rewrite-core-modules.md`，并核验 batch C-Cross、diff、check、revision 和 implementation audit。
 
 父阶段 `finish` 内部执行的字面检查点命令为 `python3 work/tools/gate.py --stage REWRITE_CORE_MODULES`；worker 不得手工运行它冒充阶段完成。
 

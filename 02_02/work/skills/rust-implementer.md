@@ -24,7 +24,7 @@ permission:
 
 - 根据 `logs/trace/rust_api_design.json` 的必要局部设计事实生成 `flashDB_rust/`。
 - 根据 C/Rust 模型的必要局部片段和必要的 `$FLASHDB_SOURCE` 局部 C 源码证据，实现 `flashDB_rust/src/`。
-- REWRITE 时只执行 task packet 指定的 `IMPLEMENT_CORE` 或 `WIRE_FACADE` 单一角色；不得在同一 session 中切换角色或自行拆分动态 batch。
+- REWRITE 时只执行 task packet 指定的当前 requirement batch 与 `IMPLEMENT_CORE` 或 `WIRE_FACADE` 单一角色；不得切换角色、自选下一批或扩大 requirements。
 - 维护 Rust `staticlib` 和 FlashDB C ABI facade，使原始 C 测试 runner 能链接并调用 Rust 实现。
 - 运行原始 C 测试证据验证 Rust 实现，生成 `logs/trace/validation-matrix.json`。
 - 写入中文阶段日志：`05-generate-rust-scaffold.md`、`06-rewrite-core-modules.md`、`06-5-verify-rust-with-c-tests.md`。
@@ -42,12 +42,14 @@ python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out log
 
 `GENERATE_RUST_SCAFFOLD` 必须写 scaffold manifest，并在任何模型实现前通过 compiler-confirmed layout-only 检查。工具会拒绝覆盖 manifest/hash 不匹配的既有项目；遇到该错误必须停止，不能删除或重新生成项目。具有明确 ABI 证据的指针、定宽/已解析 typedef、定长数组和具名 struct 必须生成可访问的 Rust 类型；匿名 struct/union、回调和无法可靠分类的聚合才使用 compiler-confirmed `[u8; N]` byte region，不得猜测嵌套声明。
 
-`REWRITE_CORE_MODULES` 的 task packet 会声明角色和精确写路径：
+生成的 `storage.rs` 已提供通用 `SidecarRegistry<T>`，固定 caller-owned C object 与 Rust-owned state 的边界。C 输入启用 POSIX file mode 只是 harness 事实，不代表 Rust 首轮必须复制物理文件布局；只有当前 requirement 的 C-Cross 可观察义务明确需要时，才在 Sidecar 内增加对应持久化或 flash 行为。
+
+`REWRITE_CORE_MODULES` 的 task packet 会声明当前 requirement batch、acceptance scenarios、角色和精确写路径：
 
 - `IMPLEMENT_CORE`：只写 `core_owned_paths`，消费 packet 中的 requirements，实现内部模型、状态和行为；不得修改 facade、冻结合同或共享只读文件。
 - `WIRE_FACADE`：只写 `facade_owned_paths`，消费 packet 中的 `facade_contracts`，保持冻结函数签名并连接现有内部 API；不得补写 core。
 
-完成后只执行 packet 给出的 `finish-rewrite-worker`。构建、审计、真实 diff、batch 日志和回执由控制器生成，不得手写或先运行父阶段 `workflowctl finish`。任何 `workflowctl` 错误都必须原样报告给主控并停止；不得修改 `work/**`、contract、controller state 或证据文件来绕过错误。facade 确认缺少内部能力时用 `--status missing_core_capability` 交还控制器；不得越权直接修 core。控制器会使旧 facade 回执失效，并安排新的 CORE→FACADE revision。所有修复均原地向前进行，不得运行 Git、复制到 `/tmp`、用 `cp` 备份/回退源码或再次执行 scaffold generator。
+完成后只执行 packet 给出的 `finish-rewrite-worker`。控制器在同批 CORE/FACADE 构建通过后自动运行 targeted C-Cross；通过才释放下一批，失败在默认 2 次预算内回到同批 CORE。预算耗尽会留下 `failed_final` 并继续后续批次，不得自行重试、跳批或伪造通过。构建、审计、真实 diff、batch 日志和回执由控制器生成。任何 `workflowctl` 错误都必须原样报告给主控并停止；不得修改 `work/**`、contract、controller state 或证据文件来绕过错误。facade 确认缺少内部能力时用 `--status missing_core_capability` 交还控制器；不得越权直接修 core。
 
 `VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。工具按 build/layout/link/full 分层执行并解析 runner 的逐测试输出；全量 invocation 必须都有真实结果或 unresolved 证据。实现期间可按动态发现的 suite 使用 `--suite <suite>`，不得硬编码 suite 名或用例总数。checkpoint/repair 写出完整证据后返回 0，`CONTINUE_WITH_FAILURES` 必须消费 repair plan，按 target agent、scenario IDs、symbols、requirements、selected suites 和 verification command 定向修复，直到全通过或预算耗尽。crash/timeout 的 not_run 必须消费 isolation queue；regression 时不得覆盖 best-known。只有 final 非全通过返回非零。平台问题由工具登记到 `logs/trace/c-cross/workbench-issues.jsonl`。
 
@@ -95,7 +97,7 @@ python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out log
 - typed callback 已由设计给出时直接使用该类型；不得降级为 `void *`/`transmute`。
 - FFI export 内不得使用可能因锁中毒而 panic 的裸 `unwrap()`，不得让 panic 穿越 C ABI，不得用 `CString::into_raw()` 制造无回收 getter 泄漏。
 - 不得手写 `core_rewrite_batches.jsonl`、`implementation-audit.json` 或 rewrite check 回执；控制器按源码真实 diff 生成这些证据。
-- `IMPLEMENT_CORE` 的控制器检查是 `cargo fmt --check + cargo check --all-targets`；`WIRE_FACADE` 的控制器检查是 `cargo fmt --check + cargo build --release + core_impl_audit`。worker 只读取有界失败 tail 并在新 session 中按原角色修复。
+- `IMPLEMENT_CORE` 的控制器检查是 `cargo fmt --check + cargo check --all-targets`；每批 `WIRE_FACADE` 执行 `cargo fmt --check + cargo build --release`，最后一批追加 `core_impl_audit`，随后由控制器运行该批 acceptance scenarios 的 targeted C-Cross。
 
 ## 禁止事项
 

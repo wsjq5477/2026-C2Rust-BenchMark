@@ -167,10 +167,9 @@ def check_design_test_contracts(design: dict[str, Any], test_model: dict[str, An
             errors.append("rust_api_design.json test_api missing observable sector_status for sector/status obligations")
     if "use_control_interface" in obligations and "control" not in controls:
         errors.append("rust_api_design.json test_api missing control interface for use_control_interface")
-    if any(item.startswith("data_shape:cross_sector") for item in obligations):
-        storage_constraints = design.get("storage_constraints")
-        if not isinstance(storage_constraints, dict) or storage_constraints.get("backend") != "file_sector_mode":
-            errors.append("rust_api_design.json storage_constraints.backend must be file_sector_mode for cross-sector obligations")
+    storage_constraints = design.get("storage_constraints")
+    if not isinstance(storage_constraints, dict) or storage_constraints.get("backend") != "sidecar_state":
+        errors.append("rust_api_design.json storage_constraints.backend must be sidecar_state")
     return errors
 
 
@@ -1219,6 +1218,28 @@ def check_typed_ffi_scaffold(project: Path, design: dict[str, Any]) -> list[str]
     return errors
 
 
+def check_sidecar_storage_scaffold(project: Path, design: dict[str, Any]) -> list[str]:
+    strategy = design.get("ffi_strategy")
+    modules = design.get("modules")
+    if (
+        not isinstance(strategy, dict)
+        or strategy.get("kind") != "c_facade_with_sidecar_state"
+        or not isinstance(modules, list)
+        or "storage" not in modules
+    ):
+        return []
+    path = project / "src" / "storage.rs"
+    if not path.is_file():
+        return ["sidecar strategy requires flashDB_rust/src/storage.rs"]
+    source = path.read_text(encoding="utf-8", errors="ignore")
+    errors: list[str] = []
+    if "pub struct SidecarRegistry<" not in source:
+        errors.append("sidecar strategy requires generated SidecarRegistry<T>")
+    if "pub fn remove<" not in source:
+        errors.append("sidecar registry must expose deinit cleanup through remove")
+    return errors
+
+
 def extract_current_ffi_signature(source: str, symbol: str) -> str | None:
     """Extract one Rust extern-C signature without being confused by callback parentheses."""
     match = re.search(
@@ -1833,6 +1854,7 @@ def check_generate_rust_scaffold(root: Path) -> list[str]:
                     if f"pub mod {module};" not in lib_text:
                         errors.append(f"src/lib.rs missing pub mod {module};")
             errors.extend(check_typed_ffi_scaffold(project, design))
+            errors.extend(check_sidecar_storage_scaffold(project, design))
 
     if project.exists():
         errors.extend(
@@ -1885,12 +1907,14 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
     project = root / "flashDB_rust"
     design, design_error = load_json(root / "logs" / "trace" / "rust_api_design.json")
     manifest, manifest_error = load_json(root / "logs" / "trace" / "scaffold-manifest.json")
+    rewrite_state: dict[str, Any] | None = None
     if manifest_error:
         errors.append(f"scaffold-manifest.json: {manifest_error}")
     else:
         errors.extend(check_rewrite_ownership_manifest(project, manifest))
         if isinstance(design, dict):
             errors.extend(check_typed_ffi_scaffold(project, design))
+            errors.extend(check_sidecar_storage_scaffold(project, design))
         rewrite_state, rewrite_state_error = load_json(root / "logs" / "trace" / "rewrite-state.json")
         if rewrite_state_error:
             errors.append(f"rewrite-state.json: {rewrite_state_error}")
@@ -1900,6 +1924,16 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
                 errors.append("static REWRITE ownership manifest changed after controller initialization")
             if rewrite_state.get("phase") != "READY" or rewrite_state.get("status") != "ready_for_finish":
                 errors.append("static REWRITE state must be READY before the stage gate")
+            requirement_batches = rewrite_state.get("requirement_batches")
+            if not isinstance(requirement_batches, list) or not requirement_batches:
+                errors.append("static REWRITE state must contain requirement batches")
+            else:
+                non_terminal = [
+                    str(item.get("id")) for item in requirement_batches
+                    if not isinstance(item, dict) or item.get("status") not in {"pass", "failed_final"}
+                ]
+                if non_terminal:
+                    errors.append("static REWRITE has non-terminal requirement batches: " + ", ".join(non_terminal))
             core_revision = rewrite_state.get("core_revision")
             facade_revision = rewrite_state.get("facade_revision")
             if not isinstance(core_revision, int) or core_revision < 1:
@@ -2004,11 +2038,17 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
                     if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id")
                 }
         implemented_obligations: set[str] = set()
+        recorded_batch_ids: list[str] = []
         for index, batch in enumerate(batches, start=1):
             if batch.get("stage") != "REWRITE_CORE_MODULES":
                 errors.append(f"core_rewrite_batches.jsonl record {index} stage must be REWRITE_CORE_MODULES")
-            if batch.get("status") not in {"complete", "pass"}:
-                errors.append(f"core_rewrite_batches.jsonl record {index} must include complete/pass status")
+            batch_id = batch.get("batch_id")
+            if not isinstance(batch_id, str) or not batch_id:
+                errors.append(f"core_rewrite_batches.jsonl record {index} must include batch_id")
+            else:
+                recorded_batch_ids.append(batch_id)
+            if batch.get("status") not in {"pass", "failed_final"}:
+                errors.append(f"core_rewrite_batches.jsonl record {index} must include pass/failed_final status")
             changed_files = batch.get("changed_files")
             if not isinstance(changed_files, list) or not changed_files:
                 errors.append(f"core_rewrite_batches.jsonl record {index} must include changed_files")
@@ -2026,6 +2066,35 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
                 errors.append(f"core_rewrite_batches.jsonl record {index} obligations must be non-empty strings")
             else:
                 implemented_obligations.update(obligations)
+            scenarios = batch.get("scenarios")
+            if not isinstance(scenarios, list):
+                errors.append(f"core_rewrite_batches.jsonl record {index} scenarios must be a list")
+            verification_receipt = batch.get("verification_receipt")
+            if isinstance(scenarios, list) and scenarios:
+                evidence, evidence_error = load_json(
+                    root / verification_receipt
+                ) if isinstance(verification_receipt, str) else (None, "missing")
+                if evidence_error or not isinstance(evidence, dict):
+                    errors.append(f"core_rewrite_batches.jsonl record {index} lacks targeted C-cross evidence")
+                elif evidence.get("batch_id") != batch.get("batch_id"):
+                    errors.append(f"core_rewrite_batches.jsonl record {index} C-cross evidence belongs to another batch")
+                elif batch.get("status") == "pass" and evidence.get("status") != "pass":
+                    errors.append(f"core_rewrite_batches.jsonl record {index} claims pass without passing C-cross evidence")
+                elif batch.get("status") == "failed_final" and evidence.get("status") != "fail":
+                    errors.append(f"core_rewrite_batches.jsonl record {index} failed_final must reference failing C-cross evidence")
+                if batch.get("status") == "failed_final" and int(batch.get("verification_attempts", 0) or 0) < int(
+                    WORKFLOW_CONTRACT.get("rewrite_static", {}).get("max_batch_c_cross_attempts", 2)
+                ):
+                    errors.append(f"core_rewrite_batches.jsonl record {index} exhausted status lacks full batch attempt budget")
+        if len(recorded_batch_ids) != len(set(recorded_batch_ids)):
+            errors.append("core_rewrite_batches.jsonl batch_id values must be unique")
+        if isinstance(rewrite_state, dict) and isinstance(rewrite_state.get("requirement_batches"), list):
+            expected_batch_ids = {
+                item.get("id") for item in rewrite_state["requirement_batches"]
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            }
+            if set(recorded_batch_ids) != expected_batch_ids:
+                errors.append("core_rewrite_batches.jsonl must cover every rewrite-state requirement batch exactly once")
         missing_obligations = sorted(required_obligations - implemented_obligations)
         if missing_obligations:
             errors.append(

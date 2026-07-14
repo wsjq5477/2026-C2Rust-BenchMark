@@ -615,19 +615,19 @@ def design_storage_constraints(c_project_model: dict[str, Any], c_api_model: dic
     source_files = c_project_model.get("source_files", [])
     macro_set = {item for item in macros if isinstance(item, str)} if isinstance(macros, list) else set()
     file_sources = [item for item in source_files if isinstance(item, str) and "file" in item.lower()] if isinstance(source_files, list) else []
-    file_sector_mode = "FDB_USING_FILE_POSIX_MODE" in macro_set or bool(file_sources)
-    if file_sector_mode:
-        return {
-            "backend": "file_sector_mode",
-            "sector_file_pattern": "{dir}/{name}.fdb.{index}",
-            "fd_cache_required": True,
-            "requires_reload_scan": True,
-        }
+    c_input_backend = (
+        "file_sector_mode"
+        if "FDB_USING_FILE_POSIX_MODE" in macro_set or bool(file_sources)
+        else "memory_or_custom"
+    )
     return {
-        "backend": "memory_or_custom",
-        "sector_file_pattern": "",
-        "fd_cache_required": False,
-        "requires_reload_scan": True,
+        "backend": "sidecar_state",
+        "c_input_backend": c_input_backend,
+        "physical_backend_required": False,
+        "extension_rule": (
+            "Keep caller-owned C objects behind the generated sidecar facade. "
+            "Add persistence or physical flash behavior only when a scorer obligation observes it."
+        ),
     }
 
 
@@ -724,9 +724,15 @@ def design_api(
     )
     facade["c_type_map"] = c_type_map_from_signatures(function_signatures, typedef_map)
     storage_constraints = design_storage_constraints(c_project_model, c_api_model)
-    storage_implementation = (
-        "FileSectorStorage" if storage_constraints["backend"] == "file_sector_mode" else "MemoryStorage"
-    )
+    implementation_requirements = derive_implementation_requirements(c_test_model)
+    requirement_ids = {str(item["id"]) for item in implementation_requirements}
+    storage_semantics = ["sidecar_object_lifecycle"]
+    if "physical_sector_address_fidelity" in requirement_ids:
+        storage_semantics.append("observable_sector_addresses")
+    if "reload_reconstructs_state" in requirement_ids:
+        storage_semantics.append("persistent_reload")
+    if "gc_retains_latest_live_records" in requirement_ids:
+        storage_semantics.append("retain_latest_live_records")
     input_digest = c_api_model.get("input_digest") or c_project_model.get("input_digest") or c_test_model.get("input_digest")
 
     return {
@@ -742,12 +748,8 @@ def design_api(
             "strategy": "Map C status and validation failures observed in the current API model into typed Rust Result values.",
         },
         "storage_model": {
-            "implementations": [storage_implementation],
-            "semantics": [
-                "record_append",
-                "reload_scan",
-                "retain_valid_records",
-            ],
+            "implementations": ["SidecarState"],
+            "semantics": storage_semantics,
         },
         "storage_constraints": storage_constraints,
         "ffi_strategy": {
@@ -777,7 +779,7 @@ def design_api(
             "Keep source-to-Rust evidence in stage artifacts.",
         ],
         "implementation_requirements_schema_version": 2,
-        "implementation_requirements": derive_implementation_requirements(c_test_model),
+        "implementation_requirements": implementation_requirements,
         "source_evidence": {
             "source_files": count_list(c_project_model, "source_files"),
             "headers": count_list(c_project_model, "headers"),

@@ -5,7 +5,9 @@
     "max_scenarios": 3
   },
   "rewrite_static": {
+    "max_batch_c_cross_attempts": 2,
     "max_command_output_bytes": 8192,
+    "max_requirements_per_batch": 3,
     "max_worker_failed_checks": 3,
     "max_worker_retries": 3
   },
@@ -156,6 +158,10 @@
         "flashDB_rust/src/**",
         "logs/trace/implementation-audit.json",
         "logs/trace/core_rewrite_batches.jsonl",
+        "logs/trace/c-cross/**",
+        "logs/trace/ffi_manifest.json",
+        "logs/trace/validation-matrix.json",
+        "logs/trace/rewrite-c-cross/**",
         "logs/trace/rewrite-check/**",
         "logs/trace/rewrite-worker-receipts/**",
         "logs/trace/rewrite-worker-runs/**",

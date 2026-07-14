@@ -437,6 +437,7 @@ def _invoke_task_packet(
     stage: str,
     action: str | None = None,
     rewrite_role: str | None = None,
+    requirement_ids: list[str] | None = None,
 ) -> str | None:
     tool = root / "work" / "tools" / "task_packet.py"
     if not tool.exists():
@@ -457,6 +458,8 @@ def _invoke_task_packet(
         command.extend(["--action", action])
     if rewrite_role:
         command.extend(["--rewrite-role", rewrite_role])
+    for requirement_id in requirement_ids or []:
+        command.extend(["--requirement-id", requirement_id])
     completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if completed.returncode != 0:
         raise WorkflowError("task packet generation failed:\n" + completed.stdout[-4000:])
@@ -523,6 +526,73 @@ def _rewrite_manifest(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     return manifest, ownership
 
 
+def _requirement_batches(root: Path) -> list[dict[str, Any]]:
+    design = _json(root / "logs" / "trace" / "rust_api_design.json")
+    raw = design.get("implementation_requirements", [])
+    requirements = [
+        item for item in raw
+        if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id")
+    ] if isinstance(raw, list) else []
+    if not requirements:
+        return [{
+            "id": "batch-001",
+            "requirement_ids": ["rewrite_core"],
+            "scenario_ids": [],
+            "status": "pending",
+            "verification_attempts": 0,
+            "verification_receipts": [],
+        }]
+
+    by_id = {str(item["id"]): item for item in requirements}
+    remaining = list(by_id)
+    ordered: list[str] = []
+    while remaining:
+        ready = [
+            identifier for identifier in remaining
+            if all(
+                not isinstance(dependency, str)
+                or dependency not in by_id
+                or dependency in ordered
+                for dependency in by_id[identifier].get("dependency_ids", [])
+            )
+        ]
+        selected = ready or [remaining[0]]
+        for identifier in selected:
+            ordered.append(identifier)
+            remaining.remove(identifier)
+
+    batch_size = max(1, int(REWRITE_SETTINGS.get("max_requirements_per_batch", 3)))
+    batches: list[dict[str, Any]] = []
+    for offset in range(0, len(ordered), batch_size):
+        identifiers = ordered[offset: offset + batch_size]
+        scenarios = list(dict.fromkeys(
+            scenario
+            for identifier in identifiers
+            for scenario in by_id[identifier].get("acceptance_scenarios", [])
+            if isinstance(scenario, str) and scenario
+        ))
+        batches.append({
+            "id": f"batch-{len(batches) + 1:03d}",
+            "requirement_ids": identifiers,
+            "scenario_ids": scenarios,
+            "status": "pending",
+            "verification_attempts": 0,
+            "verification_receipts": [],
+        })
+    return batches
+
+
+def _current_requirement_batch(rewrite: dict[str, Any]) -> dict[str, Any]:
+    batches = rewrite.get("requirement_batches")
+    index = int(rewrite.get("current_batch_index", 0) or 0)
+    if not isinstance(batches, list) or index < 0 or index >= len(batches):
+        raise WorkflowError("rewrite state has no current requirement batch")
+    batch = batches[index]
+    if not isinstance(batch, dict):
+        raise WorkflowError("rewrite requirement batch is malformed")
+    return batch
+
+
 def _prepare_static_rewrite(root: Path, parent_run_id: str) -> None:
     manifest, _ = _rewrite_manifest(root)
     path = _rewrite_state_path(root)
@@ -554,6 +624,7 @@ def _prepare_static_rewrite(root: Path, parent_run_id: str) -> None:
                 "REWRITE must start from the controller-verified scaffold: "
                 + ", ".join(str(item) for item in changed_scaffold[:20])
             )
+    requirement_batches = _requirement_batches(root)
     document = {
         "schema_version": 1,
         "parent_run_id": parent_run_id,
@@ -564,6 +635,8 @@ def _prepare_static_rewrite(root: Path, parent_run_id: str) -> None:
             if isinstance(key, str) and isinstance(value, dict) and isinstance(value.get("sha256"), str)
         }),
         "phase": "CORE",
+        "current_batch_index": 0,
+        "requirement_batches": requirement_batches,
         "core_revision": 0,
         "facade_revision": 0,
         "facade_based_on_core_revision": None,
@@ -781,11 +854,34 @@ def cmd_next_rewrite_worker(args: argparse.Namespace) -> int:
     max_retries = int(REWRITE_SETTINGS.get("max_worker_retries", 3))
     if attempt > max_retries:
         raise WorkflowError(f"rewrite worker retry budget exhausted for {role}")
-    packet = _invoke_task_packet(root, "REWRITE_CORE_MODULES", rewrite_role=role)
+    batch = _current_requirement_batch(rewrite)
+    requirement_ids = [
+        item for item in batch.get("requirement_ids", []) if isinstance(item, str) and item
+    ]
+    packet = _invoke_task_packet(
+        root,
+        "REWRITE_CORE_MODULES",
+        rewrite_role=role,
+        requirement_ids=requirement_ids,
+    )
     if packet is None:
         raise WorkflowError("static rewrite packet generation is unavailable")
     packet_path = root / packet
     packet_doc = _json(packet_path)
+    batches = rewrite.get("requirement_batches")
+    batch_index = int(rewrite.get("current_batch_index", 0) or 0)
+    if role == "WIRE_FACADE" and isinstance(batches, list) and batch_index == len(batches) - 1:
+        manifest = _json(root / "logs" / "trace" / "scaffold-manifest.json")
+        ownership = manifest.get("rewrite_ownership")
+        contracts = ownership.get("frozen_contract_symbols") if isinstance(ownership, dict) else None
+        packet_doc["facade_contracts"] = contracts if isinstance(contracts, list) else []
+        packet_doc["symbols"] = sorted({
+            item.get("symbol") for item in packet_doc["facade_contracts"]
+            if isinstance(item, dict) and isinstance(item.get("symbol"), str)
+        })
+        packet_doc.setdefault("command_notes", []).append(
+            "This is the final requirement batch: wire every remaining generated facade body before completion."
+        )
     allowed = packet_doc.get("allowed_modification_paths")
     if not isinstance(allowed, list) or not allowed or not all(isinstance(item, str) for item in allowed):
         raise WorkflowError("static rewrite packet has no exact owner paths")
@@ -843,6 +939,11 @@ def cmd_next_rewrite_worker(args: argparse.Namespace) -> int:
         "worker_run_id": worker_run_id,
         "parent_run_id": parent.get("run_id"),
         "role": role,
+        "batch_id": batch.get("id"),
+        "requirement_ids": requirement_ids,
+        "scenario_ids": [
+            item for item in batch.get("scenario_ids", []) if isinstance(item, str) and item
+        ],
         "attempt": attempt,
         "core_revision_before": int(rewrite.get("core_revision", 0) or 0),
         "facade_revision_before": int(rewrite.get("facade_revision", 0) or 0),
@@ -875,43 +976,149 @@ def cmd_next_rewrite_worker(args: argparse.Namespace) -> int:
 def _append_rewrite_batch(
     root: Path,
     *,
-    role: str,
-    revision: int,
+    batch: dict[str, Any],
     changed: list[str],
     receipt_path: str,
+    verification_status: str,
+    verification_receipt: str | None,
 ) -> None:
-    design = _json(root / "logs" / "trace" / "rust_api_design.json")
-    if role == "IMPLEMENT_CORE":
-        raw = design.get("implementation_requirements", [])
-        obligations = [
-            item.get("id") for item in raw
-            if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id")
-        ] if isinstance(raw, list) else []
-    else:
-        manifest = _json(root / "logs" / "trace" / "scaffold-manifest.json")
-        functions = manifest.get("ffi_functions", {})
-        obligations = [f"ffi:{item}" for item in sorted(functions)] if isinstance(functions, dict) else []
     _append_jsonl(root / "logs" / "trace" / "core_rewrite_batches.jsonl", {
-        "schema_version": 2,
+        "schema_version": 3,
         "stage": "REWRITE_CORE_MODULES",
-        "worker_role": role,
-        "revision": revision,
-        "status": "complete",
+        "batch_id": batch.get("id"),
+        "status": verification_status,
         "changed_files": changed,
-        "obligations": obligations or [role.lower()],
+        "obligations": [
+            item for item in batch.get("requirement_ids", []) if isinstance(item, str) and item
+        ],
+        "scenarios": [
+            item for item in batch.get("scenario_ids", []) if isinstance(item, str) and item
+        ],
+        "verification_attempts": batch.get("verification_attempts", 0),
+        "verification_receipt": verification_receipt,
         "receipt": receipt_path,
     })
 
 
+def _known_c_cross_scenarios(root: Path) -> set[str]:
+    model = _json(root / "logs" / "trace" / "c_test_model.json")
+    known: set[str] = set()
+    for key in ("standard_scenarios", "scorer_standard_cases"):
+        values = model.get(key, [])
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            identifier = item.get("scenario_id", item.get("id"))
+            if isinstance(identifier, str) and identifier:
+                known.add(identifier)
+    return known
+
+
+def _run_rewrite_batch_c_cross(
+    root: Path,
+    *,
+    batch: dict[str, Any],
+    changed_files: list[str],
+) -> tuple[str, str | None]:
+    scenarios = [
+        item for item in batch.get("scenario_ids", []) if isinstance(item, str) and item
+    ]
+    known = _known_c_cross_scenarios(root)
+    selected = [item for item in scenarios if item in known]
+    if not selected:
+        return "not_applicable", None
+
+    attempt = int(batch.get("verification_attempts", 0) or 0) + 1
+    project = str(_load_state(root).get("rust_project_path") or "flashDB_rust")
+    command = [
+        sys.executable,
+        str(root / "work" / "tools" / "c_cross_validate.py"),
+        "--root", str(root),
+        "--project", project,
+        "--out", "logs/trace",
+        "--mode", "full",
+        "--attempt-kind", "checkpoint",
+        "--trigger", f"rewrite_{batch.get('id')}_attempt_{attempt}",
+    ]
+    for scenario in selected:
+        command.extend(["--scenario", scenario])
+    matrix_path = root / "logs" / "trace" / "validation-matrix.json"
+    previous_matrix = _json(matrix_path) if matrix_path.is_file() else {}
+    previous_execution_id = previous_matrix.get("execution_id")
+    completed = subprocess.run(
+        command,
+        cwd=root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    matrix = _json(matrix_path) if matrix_path.is_file() else {}
+    rows = matrix.get("scenarios")
+    execution_id = matrix.get("execution_id")
+    passed = (
+        completed.returncode == 0
+        and isinstance(execution_id, str)
+        and bool(execution_id)
+        and execution_id != previous_execution_id
+        and isinstance(rows, list)
+        and {row.get("scenario_id") for row in rows if isinstance(row, dict)} == set(selected)
+        and all(
+            isinstance(row, dict) and row.get("rust_impl_c_test") == "pass"
+            for row in rows
+        )
+    )
+    evidence_path = (
+        root / "logs" / "trace" / "rewrite-c-cross" / str(batch.get("id"))
+        / f"attempt-{attempt}.json"
+    )
+    _atomic_json(evidence_path, {
+        "schema_version": 1,
+        "batch_id": batch.get("id"),
+        "attempt": attempt,
+        "status": "pass" if passed else "fail",
+        "selected_scenarios": selected,
+        "changed_files": changed_files,
+        "command": command,
+        "exit_code": completed.returncode,
+        "output_tail": completed.stdout[-int(REWRITE_SETTINGS.get("max_command_output_bytes", 8192)):],
+        "matrix": matrix,
+    })
+    batch["verification_attempts"] = attempt
+    batch.setdefault("verification_receipts", []).append(
+        evidence_path.relative_to(root).as_posix()
+    )
+    return ("pass" if passed else "fail"), evidence_path.relative_to(root).as_posix()
+
+
+def _advance_rewrite_batch(rewrite: dict[str, Any]) -> str:
+    batches = rewrite.get("requirement_batches")
+    current = int(rewrite.get("current_batch_index", 0) or 0)
+    if isinstance(batches, list) and current + 1 < len(batches):
+        rewrite["current_batch_index"] = current + 1
+        rewrite["phase"] = "CORE"
+        rewrite["attempts"] = {"IMPLEMENT_CORE": 0, "WIRE_FACADE": 0}
+        rewrite["failed_checks"] = {"IMPLEMENT_CORE": 0, "WIRE_FACADE": 0}
+        return "CORE"
+    rewrite["phase"] = "READY"
+    rewrite["status"] = "ready_for_finish"
+    return "READY"
+
+
 def _write_rewrite_stage_log(root: Path, rewrite: dict[str, Any]) -> None:
     path = root / "logs" / "trace" / "06-rewrite-core-modules.md"
+    batches = rewrite.get("requirement_batches", [])
+    passed = sum(1 for item in batches if isinstance(item, dict) and item.get("status") == "pass") if isinstance(batches, list) else 0
+    failed = sum(1 for item in batches if isinstance(item, dict) and item.get("status") == "failed_final") if isinstance(batches, list) else 0
     path.write_text(
         "# REWRITE_CORE_MODULES\n\n"
-        "- 静态职责：IMPLEMENT_CORE → WIRE_FACADE。\n"
+        "- 执行单元：每个 requirement batch 执行 IMPLEMENT_CORE → WIRE_FACADE → targeted C-Cross。\n"
+        f"- 批次结果：pass={passed}，failed_final={failed}。\n"
         f"- core revision：{rewrite.get('core_revision', 0)}\n"
         f"- facade revision：{rewrite.get('facade_revision', 0)}\n"
         "- 修复方式：原地向前修复，不恢复旧源码。\n"
-        "- 验证证据：logs/trace/rewrite-check/ 与 rewrite-worker-receipts/。\n",
+        "- 验证证据：logs/trace/rewrite-check/、rewrite-c-cross/ 与 rewrite-worker-receipts/。\n",
         encoding="utf-8",
     )
 
@@ -974,12 +1181,15 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
     if status == "missing_core_capability" and not reason:
         raise WorkflowError("missing_core_capability requires a brief --reason")
     check_receipt: str | None = None
+    completed_batch: dict[str, Any] | None = None
+    batch_verification_status: str | None = None
+    batch_verification_receipt: str | None = None
+    batch_changed_files: list[str] = []
     next_phase = str(rewrite.get("phase") or "")
     receipt_status = status
     if status == "complete":
         check_tool = root / "work" / "tools" / "rewrite_check.py"
-        completed = subprocess.run(
-            [
+        check_command = [
                 sys.executable,
                 str(check_tool),
                 "--root",
@@ -990,7 +1200,13 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
                 role,
                 "--revision",
                 str(attempt),
-            ],
+            ]
+        batches = rewrite.get("requirement_batches")
+        current_batch_index = int(rewrite.get("current_batch_index", 0) or 0)
+        if role == "WIRE_FACADE" and isinstance(batches, list) and current_batch_index == len(batches) - 1:
+            check_command.append("--final-batch")
+        completed = subprocess.run(
+            check_command,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1027,9 +1243,40 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
         elif role == "WIRE_FACADE":
             rewrite["facade_revision"] = int(rewrite.get("facade_revision", 0) or 0) + 1
             rewrite["facade_based_on_core_revision"] = int(rewrite.get("core_revision", 0) or 0)
-            rewrite["phase"] = "READY"
-            rewrite["status"] = "ready_for_finish"
-            next_phase = "READY"
+            batch = _current_requirement_batch(rewrite)
+            core_receipt_rel = rewrite.get("latest_receipts", {}).get("IMPLEMENT_CORE")
+            core_receipt = _json(root / core_receipt_rel) if isinstance(core_receipt_rel, str) else {}
+            batch_changed_files = sorted(set(
+                item for item in [
+                    *core_receipt.get("changed_files", []),
+                    *cumulative_changed,
+                ]
+                if isinstance(item, str)
+            ))
+            verification_status, verification_receipt = _run_rewrite_batch_c_cross(
+                root,
+                batch=batch,
+                changed_files=batch_changed_files,
+            )
+            batch_verification_status = verification_status
+            batch_verification_receipt = verification_receipt
+            maximum = int(REWRITE_SETTINGS.get("max_batch_c_cross_attempts", 2))
+            if verification_status in {"pass", "not_applicable"}:
+                batch["status"] = "pass"
+                completed_batch = batch
+                next_phase = _advance_rewrite_batch(rewrite)
+            elif int(batch.get("verification_attempts", 0) or 0) < maximum:
+                batch["status"] = "repair_required"
+                rewrite["phase"] = "CORE"
+                next_phase = "CORE"
+                receipt_status = "retry_required"
+                reason = f"targeted C-cross failed; see {verification_receipt}"
+            else:
+                batch["status"] = "failed_final"
+                completed_batch = batch
+                batch_verification_status = "failed_final"
+                reason = f"targeted C-cross budget exhausted; see {verification_receipt}"
+                next_phase = _advance_rewrite_batch(rewrite)
     elif status == "missing_core_capability":
         if role != "WIRE_FACADE":
             raise WorkflowError("missing_core_capability is only valid for WIRE_FACADE")
@@ -1080,16 +1327,17 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
     rewrite["latest_receipts"] = latest
     rewrite["active_worker"] = None
     _atomic_json(_rewrite_state_path(root), rewrite)
-    if receipt_status == "complete":
+    if completed_batch is not None:
         _append_rewrite_batch(
             root,
-            role=role,
-            revision=revision,
-            changed=cumulative_changed,
+            batch=completed_batch,
+            changed=batch_changed_files,
             receipt_path=receipt_path.relative_to(root).as_posix(),
+            verification_status=str(completed_batch.get("status")),
+            verification_receipt=batch_verification_receipt,
         )
-        if next_phase == "READY":
-            _write_rewrite_stage_log(root, rewrite)
+    if next_phase == "READY":
+        _write_rewrite_stage_log(root, rewrite)
     print("WORKFLOWCTL: REWRITE_WORKER_FINISHED")
     print(f"role={role}")
     print(f"status={receipt_status}")

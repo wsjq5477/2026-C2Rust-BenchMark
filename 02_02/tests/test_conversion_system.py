@@ -2316,6 +2316,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 "test_api": {"kvdb_tests": [], "tsdb_tests": []},
                 "error_model": {"result_alias": "Result<T, FdbError>"},
                 "storage_model": {"implementations": ["MemFlash", "FileFlash"]},
+                "storage_constraints": {"backend": "sidecar_state"},
                 "c_to_rust_symbol_map": {"fdb_kvdb_init": "KvDb::open", "fdb_tsdb_init": "TsDb::open"},
             }
             (trace / "rust_api_design.json").write_text(json.dumps(valid_design), encoding="utf-8")
@@ -2643,6 +2644,32 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 text=True,
             )
             self.assertEqual(0, cargo_check.returncode, cargo_check.stdout)
+
+    def test_generate_scaffold_provides_generic_sidecar_registry(self):
+        scaffold = load_tool("generate_rust_scaffold.py")
+        design = {
+            "crate_name": "flashdb_rust",
+            "modules": ["error", "storage"],
+            "ffi_strategy": {"kind": "c_facade_with_sidecar_state"},
+            "c_abi_facade": {"structs": [], "functions": []},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td) / "flashDB_rust"
+            scaffold.generate_project(design, project)
+
+            storage = (project / "src" / "storage.rs").read_text(encoding="utf-8")
+            self.assertIn("pub struct SidecarRegistry<T>", storage)
+            self.assertIn("pub fn key_for<C>(object: *const C) -> Option<usize>", storage)
+            self.assertIn("pub fn remove<C>", storage)
+            self.assertNotIn(scaffold.PLACEHOLDER_MODULE_MARKER, storage)
+            completed = subprocess.run(
+                ["cargo", "check", "--quiet"],
+                cwd=project,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            self.assertEqual(0, completed.returncode, completed.stdout)
 
     def test_gate_generate_scaffold_requires_typed_ffi_outputs(self):
         gate = PROJECT / "work" / "tools" / "gate.py"
@@ -3453,9 +3480,12 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
             },
         )
 
-        self.assertEqual("file_sector_mode", design["storage_constraints"]["backend"])
-        self.assertTrue(design["storage_constraints"]["fd_cache_required"])
-        self.assertIn("{dir}/{name}.fdb.{index}", design["storage_constraints"]["sector_file_pattern"])
+        self.assertEqual("sidecar_state", design["storage_constraints"]["backend"])
+        self.assertEqual("file_sector_mode", design["storage_constraints"]["c_input_backend"])
+        self.assertFalse(design["storage_constraints"]["physical_backend_required"])
+        self.assertEqual(["SidecarState"], design["storage_model"]["implementations"])
+        self.assertIn("observable_sector_addresses", design["storage_model"]["semantics"])
+        self.assertNotIn("persistent_reload", design["storage_model"]["semantics"])
         observables = {item["name"] for item in design["test_api"]["observables"]}
         controls = {item["name"] for item in design["test_api"]["controls"]}
         self.assertIn("oldest_addr", observables)
@@ -3514,7 +3544,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 "test_api": {"observables": [], "controls": []},
                 "error_model": {"result_alias": "Result<T, Error>"},
                 "storage_model": {"implementations": []},
-                "storage_constraints": {"backend": "memory_only"},
+                "storage_constraints": {"backend": "sidecar_state"},
                 "c_to_rust_symbol_map": {"fdb_kvdb_init": "Kvdb::init", "fdb_tsdb_init": "Tsdb::init"},
             }), encoding="utf-8")
             (trace / "04-design-rust-api.md").write_text("# Rust API 设计\n\n中文。\n", encoding="utf-8")

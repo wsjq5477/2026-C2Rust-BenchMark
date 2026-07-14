@@ -87,7 +87,7 @@ opencode 根据 C 模型和架构知识写出 `rust_api_design.json`，至少包
 - reload、gc、tombstone、append record 的语义保留点。
 - `test_api.observables` 必须声明 C 测试需要的 Rust 观察接口，例如 `oldest_addr`、`is_initialized`、`sector_status`；
 - `test_api.controls` 必须声明 C control 接口对应的 Rust builder/config/control 能力；
-- `storage_constraints` 必须记录后端约束。如果 C 输入启用 POSIX file mode 或包含 file storage 源码，应声明 `backend: "file_sector_mode"`、sector 文件模式和 fd cache 约束。
+- `storage_constraints.backend` 固定为 `sidecar_state`；C 输入启用 POSIX file mode 只记录到 `c_input_backend`，不得由 harness 后端反推 Rust 必须复制物理文件布局。持久化或 flash 行为只由 scorer 可观察义务驱动扩展。
 - `c_abi_facade.structs` 必须完全来自 `c_api_model.json.abi_layouts`，每个结构体记录 `c_name`、`rust_name`、`sizeof`、`alignof`、`fields` 和 `notes`；
 - `notes` 必须记录影响布局的 active macros 或条件编译说明，禁止在 Rust API 设计阶段重新猜测字段。
 - `c_abi_facade.functions` 必须来自 `c_api_model.json.function_signatures`，覆盖 C runner、scorer case 和 `c_to_rust_symbol_map` 需要的 C symbols。每个函数必须记录 `c_symbol`、`rust_export`、`source_signature`、`return.rust_ffi_type`、`params[].rust_ffi_type`、`safe_target` 和 `required_by`；
@@ -133,7 +133,7 @@ python3 work/tools/gate.py --stage DESIGN_RUST_API
 - 如果 C 测试义务包含 `verify_addr_alignment`，`test_api.observables` 必须包含 `oldest_addr`；
 - 如果 C 测试义务包含 `verify_init_state`，`test_api.observables` 必须包含 `is_initialized`；
 - 如果 C 测试义务包含 `use_control_interface`，`test_api.controls` 必须包含 control 等价接口；
-- 如果 C 测试义务包含跨 sector 数据规模，`storage_constraints.backend` 必须为 `file_sector_mode`；
+- `storage_constraints.backend` 必须为 `sidecar_state`；跨 sector 数据规模只要求对应地址、容量和状态行为，不强制具体物理后端；
 - 如果 `c_api_model.json.abi_layouts` 非空，`rust_api_design.json.c_abi_facade.structs` 必须一一覆盖并保留布局字段；
 - `rust_api_design.json.c_abi_facade.functions` 必须覆盖 `c_to_rust_symbol_map`、KVDB/TSDB 关键路径和当前 scorer/test 需要的 C symbols；
 - 每个 facade function 必须绑定 `source_signature`，且 return/params 必须声明 `rust_ffi_type`；

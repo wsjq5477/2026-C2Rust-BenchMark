@@ -770,7 +770,7 @@ def apply_static_rewrite_role(
         "rule": "The worker edits only its owner paths; workflowctl computes diffs and runs bounded checks.",
     }
     packet["command_notes"] = [
-        "This is one fixed static REWRITE role, not a dynamic batch. Do not change roles or edit the other owner's files.",
+        "This is one controller-selected requirement batch and one fixed REWRITE role. Do not change batches, roles, or the other owner's files.",
         "A workflowctl error ends this worker attempt. Report its exact text to the orchestrator; never edit work/**, contracts, controller state, or generated evidence to bypass it.",
         "Do not run workflowctl stage finish, regenerate the scaffold, or create source backups.",
     ]
@@ -789,10 +789,20 @@ def apply_static_rewrite_role(
             if readonly:
                 requirement["non_writable_dependencies"] = readonly
     else:
-        packet["objective"] = "Wire generated external ABI function bodies to the existing internal Rust API."
-        packet["requirements"] = []
-        packet["scenarios"] = []
-        packet["facade_contracts"] = ownership.get("frozen_contract_symbols", [])
+        packet["objective"] = "Wire only this requirement batch's external ABI functions to the existing internal Rust API."
+        batch_symbols = {
+            item for item in packet.get("symbols", []) if isinstance(item, str)
+        }
+        all_contracts = ownership.get("frozen_contract_symbols", [])
+        packet["facade_contracts"] = [
+            item for item in all_contracts
+            if isinstance(item, dict) and item.get("symbol") in batch_symbols
+        ] if isinstance(all_contracts, list) else []
+        if not packet["facade_contracts"] and isinstance(all_contracts, list):
+            packet["facade_contracts"] = [item for item in all_contracts if isinstance(item, dict)]
+            packet["command_notes"].append(
+                "No generated facade symbol matched this batch's modeled symbols; wire the available facade contracts and let targeted C-Cross provide the correction evidence."
+            )
         packet["symbols"] = sorted({
             item.get("symbol")
             for item in packet["facade_contracts"]
@@ -823,6 +833,12 @@ def main(argv: list[str] | None = None) -> int:
         choices=["IMPLEMENT_CORE", "WIRE_FACADE"],
         help="Generate one static REWRITE worker packet from scaffold ownership.",
     )
+    parser.add_argument(
+        "--requirement-id",
+        action="append",
+        dest="requirement_ids",
+        help="Restrict a static rewrite packet to one controller-selected requirement batch.",
+    )
     args = parser.parse_args(argv)
 
     if any(value is not None and value < 1 for value in (args.max_requirements, args.max_scenarios, args.max_steps)):
@@ -844,14 +860,25 @@ def main(argv: list[str] | None = None) -> int:
     design = load_json(design_path) if design_path.is_file() else {}
     test_model = load_json(test_model_path) if test_model_path.is_file() else {}
     repair_plan = load_json(repair_path) if repair_path else None
+    if args.requirement_ids:
+        repair_plan = {
+            "task": {
+                "status": "pending",
+                "requirement_ids": list(dict.fromkeys(args.requirement_ids)),
+            }
+        }
     if args.action and stage == "VERIFY_RUST_WITH_C_TESTS":
         repair_plan = dict(repair_plan or {})
         repair_plan["next_action"] = normalize_stage(args.action)
     implementation_requirements = design.get("implementation_requirements", [])
     role_requirement_limit = (
-        max(1, len(implementation_requirements))
-        if args.rewrite_role == "IMPLEMENT_CORE" and isinstance(implementation_requirements, list)
-        else args.max_requirements
+        max(1, len(args.requirement_ids))
+        if args.requirement_ids
+        else (
+            max(1, len(implementation_requirements))
+            if args.rewrite_role == "IMPLEMENT_CORE" and isinstance(implementation_requirements, list)
+            else args.max_requirements
+        )
     )
     packet = build_task_packet(
         stage,

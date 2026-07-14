@@ -48,15 +48,15 @@
   3. 分析 C 测试中的扇区数量变化模式 → 生成 `Kvdb::reinit()` 或 `Kvdb::resize()` 接口
   4. 将这些接口加入 `rust_api_design.json` 的 `test_api` 部分，标记为 `test_observable: true`
 
-### 5. storage_model 没有约束后端实现方式
+### 5. storage_model 曾错误约束后端实现方式（已修复）
 
 - **问题描述**: 三次运行产生了三种不同的存储后端：run_1 用 MemFlash（纯内存）、run_3 用文件 I/O（性能只有 C 的 16-41%）、run_4 用 HashMap+文件序列化（架构与 C 完全不同）。C 的 benchmark 用的是 `FDB_USING_FILE_POSIX_MODE`（每个 sector 一个 POSIX 文件），性能数据本应可比，但因为 Rust 后端不一致导致无法公平比较。
-- **根因**: `design_rust_api.py` 的 `storage_model` 只声明了三个语义要求（`record_append`, `reload_scan`, `retain_valid_records`），没有从 C 代码中提取后端实现约束
-- **优化方案**: 在 `design_rust_api.py` 中：
-  1. 检测 C 代码中的 `FDB_USING_FILE_POSIX_MODE` → 在 storage_model 中加入 `backend: "file_sector_mode"` 强制约束
-  2. 提取 C 的扇区文件命名模式（`{dir}/{name}.fdb.{index}`）→ 加入 `sector_file_pattern`
-  3. 提取 C 的文件描述符缓存机制 → 加入 `fd_cache_required: true`
-  4. 在 `rust_api_design.json` 中增加 `storage_constraints` 字段，REWRITE 阶段必须遵守
+- **根因**: 旧合同把 C harness 的 POSIX file mode 和跨 sector 行为误推导成 Rust 必须复制真实文件后端，诱导弱模型扩大实现范围。
+- **当前方案**:
+  1. `storage_constraints.backend` 固定为 `sidecar_state`，POSIX file mode 只记录为 `c_input_backend`；
+  2. scaffold 生成通用 `SidecarRegistry<T>`，领域状态按动态 requirement 补充；
+  3. persistence、sector address、GC 等只在对应 scorer obligation 存在时进入 `storage_model.semantics`；
+  4. 每个 requirement batch 通过 targeted C-Cross 后才继续，失败按有限预算如实收口。
 
 ---
 
@@ -163,4 +163,3 @@
 | **P2** | #10 | 上下文耗尽 | `INSTRUCTION.md` + orchestrator | 提升 pipeline 稳定性 |
 | **P2** | #11 | Linter 覆写 | `INSTRUCTION.md` | 减少无效回合 |
 | **P2** | #13 | 评分映射不一致 | `build_c_model.py` + 评分 skill | 消除判定歧义 |
-

@@ -14,7 +14,7 @@
 | 3 | BUILD_C_MODEL | [03-build-c-model.md](03-build-c-model.md) | `c_project_model.json` / `c_api_model.json` / `c_test_model.json` |
 | 4 | DESIGN_RUST_API | [04-design-rust-api.md](04-design-rust-api.md) | `rust_api_design.json` |
 | 5 | GENERATE_RUST_SCAFFOLD | [05-generate-rust-scaffold.md](05-generate-rust-scaffold.md) | `flashDB_rust/Cargo.toml` / `src/` / scaffold `cargo check` |
-| 6 | REWRITE_CORE_MODULES | [06-rewrite-core-modules.md](06-rewrite-core-modules.md) | Rust core modules / per-batch `cargo check` |
+| 6 | REWRITE_CORE_MODULES | [06-rewrite-core-modules.md](06-rewrite-core-modules.md) | Rust core modules / per-batch targeted C-Cross |
 | 6.5 | VERIFY_RUST_WITH_C_TESTS | [06-5-verify-rust-with-c-tests.md](06-5-verify-rust-with-c-tests.md) | `validation-matrix.json` / C tests on Rust evidence |
 | 7 | MIGRATE_TESTS | [07-migrate-tests.md](07-migrate-tests.md) | Rust integration tests / `rust_test_mapping.json` |
 | 8 | BUILD_TEST_REPAIR | [08-build-test-repair.md](08-build-test-repair.md) | cargo logs / repair trace |
@@ -29,7 +29,7 @@
 5. **修复闭环独立**：`BUILD_TEST_REPAIR` 用 cargo 错误栈最小修复，禁止删除测试或弱化断言。
 6. **报告只收口**：`REPORT_AND_VERIFY` 汇总证据，不补写缺失实现。
 7. **核心域是下限，不是上限**：KVDB/TSDB/FlashStorage 必须覆盖，但真实 FlashDB 新增文件、目录和符号也必须被记录、分类、映射或显式排除。
-8. **构建检查前移**：`GENERATE_RUST_SCAFFOLD` 后立即 `cargo check`；`REWRITE_CORE_MODULES` 的 CORE/FACADE worker 分别由控制器执行有界 check，通过前不释放下一角色，避免把骨架和集成错误堆到 `BUILD_TEST_REPAIR`。
+8. **实现验证前移**：`GENERATE_RUST_SCAFFOLD` 后立即检查 ABI；`REWRITE_CORE_MODULES` 每批执行 CORE/FACADE 有界构建和 acceptance-scenario targeted C-Cross，通过或真实耗尽批次预算后才处理下一批。
 9. **主控判定、subagent 执行**：重阶段优先由 `c-analyzer`、`rust-implementer`、`test-migrator`、`repairer` 执行；主控只做调度、状态推进、gate 和最终报告。原生 subagent 不可用时用通用 subagent 读取 `work/skills/{subagent}.md` 执行，连续 3 次 subagent 失败后才允许主控 fallback。
 10. **短调度单，不替代文档**：主控传给 subagent 的提示词只包含动态上下文、目标阶段族、必须读取的 Markdown 和停止条件；业务规则以 `work/skills/{subagent}.md` 为准，禁止在调度提示中重写 API 清单、源码文件清单或实现策略。
 

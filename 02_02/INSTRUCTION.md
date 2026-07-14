@@ -168,17 +168,18 @@ python3 work/tools/workflowctl.py --root . record-agent --agent c-analyzer --sta
 3. 运行 `python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust`。
    若工具报告 existing project 与 scaffold manifest 不一致，必须停止并保留当前实现；不得覆盖、删除或重新生成项目。只有主控明确启动全新 `init --force` 才可清理旧项目。
 4. 工具必须同时生成 `logs/trace/scaffold-manifest.json`，记录生成文件、FFI body baseline、stub symbols 和 placeholder module hash。
+   `storage.rs` 必须生成通用 Sidecar registry 骨架；C 输入使用 POSIX file mode 只记录为输入事实，不得据此强制 Rust 首轮重写真实文件、sector、CRC 或 GC 后端。
 5. 立即运行 `python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --scaffold-layout-only`，写入 `logs/trace/c-cross/scaffold-layout-check.json`；layout 未一次通过时先修复生成工具事实，不把错误 ABI 留给模型猜。
 6. 写入中文 `logs/trace/05-generate-rust-scaffold.md`，由 `workflowctl finish` 更新状态、核验回执并运行 gate。
 
 ### REWRITE_CORE_MODULES
 
-1. 主控先 `workflowctl begin --stage REWRITE_CORE_MODULES`，再执行状态返回的 `next-rewrite-worker`。本阶段内部固定顺序为 `IMPLEMENT_CORE`、`WIRE_FACADE`，每个角色必须使用全新的 `rust-implementer` session，不继承 scaffold 或前一角色的对话历史。
-2. 每个 worker 只读取控制器生成的角色 task packet。`IMPLEMENT_CORE` 只写 manifest 的 `core_owned_paths`，实现内部状态、行为和 Rust API；`WIRE_FACADE` 只写 `facade_owned_paths`，在冻结签名内完成参数转换、边界检查和内部 API 调用。其余 owner 文件均只读，`frozen_contract_paths` 和 `shared_readonly_paths` 禁止修改。
-3. worker 不自行分 batch，不生成依赖图，不运行通用 integration repair，不写阶段日志、batch 回执或验证回执。完成后只执行 packet 中的 `finish-rewrite-worker` 命令；真实 diff、`core_rewrite_batches.jsonl`、检查日志和回执均由控制器生成。
-4. `IMPLEMENT_CORE` 完成后，控制器运行有界 `cargo fmt --check + cargo check --all-targets`；通过后才释放 `WIRE_FACADE`。`WIRE_FACADE` 完成后，控制器运行有界 `cargo fmt --check + cargo build --release + core_impl_audit`；通过后 rewrite 状态才进入 `READY`。
+1. 主控先 `workflowctl begin --stage REWRITE_CORE_MODULES`，再执行状态返回的 `next-rewrite-worker`。控制器按 `implementation_requirements` 的依赖顺序每批最多选择 3 项；每批固定执行 `IMPLEMENT_CORE → WIRE_FACADE → targeted C-Cross`，每个角色必须使用全新的 `rust-implementer` session。
+2. 每个 worker 只读取当前 requirement batch 的 task packet。`IMPLEMENT_CORE` 只写 manifest 的 `core_owned_paths`；`WIRE_FACADE` 只写 `facade_owned_paths` 并连接当前场景需要的 facade，最后一批必须消除全部剩余 FFI stub。其余 owner 文件均只读。
+3. worker 不自行分 batch、选择下一批或写验证证据。完成后只执行 packet 中的 `finish-rewrite-worker`；控制器生成真实 diff、`core_rewrite_batches.jsonl`、`rewrite-c-cross/<batch>/attempt-*.json`、检查日志和回执。
+4. `IMPLEMENT_CORE` 通过 `cargo fmt --check + cargo check --all-targets` 后才释放同批 `WIRE_FACADE`；facade build 通过后，控制器对该批 acceptance scenarios 运行真实 targeted C-Cross。通过才进入下一批；失败回到同批 CORE，默认最多 2 次。预算耗尽记为 `failed_final` 并继续其余批次，失败不得改写为通过；最终一批额外运行 `core_impl_audit`。
 5. facade 自身错误只重试 `WIRE_FACADE`；缺少内部能力时以 `--status missing_core_capability --reason '<缺失能力>'` 返回 `IMPLEMENT_CORE`。core 产生新 revision 后旧 facade 回执失效，再以新 session 重做 facade。所有修复都在当前源码上向前修改，禁止源码回滚、Git、`/tmp` 备份、`cp` 回退或再次生成 scaffold。
-6. 两个角色均完成后，主控执行状态给出的父阶段 `workflowctl finish`。gate 必须核验 ownership、冻结签名、最新 core/facade revision 绑定、机器生成 diff/check 回执及 implementation audit，任一不一致都不得推进。
+6. 所有批次达到 `pass` 或 `failed_final` 后，主控执行状态给出的父阶段 `workflowctl finish`。gate 必须核验 ownership、冻结签名、最新 revision、每批 targeted C-Cross 证据、机器 diff/check 回执及最终 implementation audit。
 7. 不链接 C 源码，不写 `todo!()`、`unimplemented!()`。只有 `IMPLEMENT_CORE` 可在 packet 事实不足时按需读取 C 源码局部窗口；读取前必须说明缺口，超过 400 行的文件先用 `rg` 定位，单次窗口不超过 120 行。`WIRE_FACADE` 不得系统性读取 C 工程。
 
 ### VERIFY_RUST_WITH_C_TESTS

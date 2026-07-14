@@ -844,7 +844,7 @@ class StaticRewriteControllerTests(unittest.TestCase):
             )
 
     def _begin_worker(self, root: Path, *, packet_padding_bytes: int = 0) -> dict:
-        def fake_packet(_root, _stage, action=None, rewrite_role=None):
+        def fake_packet(_root, _stage, action=None, rewrite_role=None, requirement_ids=None):
             self.assertIsNotNone(rewrite_role)
             relative = self._packet(root, rewrite_role)
             if packet_padding_bytes:
@@ -1047,7 +1047,7 @@ class StaticRewriteControllerTests(unittest.TestCase):
                 )
             )
             self.assertTrue(core["requirements"])
-            self.assertEqual([], facade["requirements"])
+            self.assertEqual(["REQ-1"], [item["id"] for item in facade["requirements"]])
             self.assertTrue(facade["facade_contracts"])
             self.assertEqual([], core["evidence_paths"])
             self.assertNotIn("src/c_abi.rs", core["requirements"][0]["suggested_files"])
@@ -1092,6 +1092,127 @@ class StaticRewriteControllerTests(unittest.TestCase):
             packet = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(15, len(packet["requirements"]))
             self.assertEqual([], packet["selection"]["omitted_requirement_ids"])
+
+            selected_output = root / "logs" / "trace" / "task-packets" / "selected-core.json"
+            self.assertEqual(
+                0,
+                TASK_PACKET.main(
+                    [
+                        "--root", str(root),
+                        "--stage", "REWRITE_CORE_MODULES",
+                        "--rewrite-role", "IMPLEMENT_CORE",
+                        "--requirement-id", "REQ-7",
+                        "--output", str(selected_output),
+                    ]
+                ),
+            )
+            selected = json.loads(selected_output.read_text(encoding="utf-8"))
+            self.assertEqual(["REQ-7"], [item["id"] for item in selected["requirements"]])
+
+    def test_requirement_batches_are_dependency_ordered_and_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            design_path = root / "logs" / "trace" / "rust_api_design.json"
+            write_json(design_path, {
+                "implementation_requirements": [
+                    {"id": "child", "dependency_ids": ["base"], "acceptance_scenarios": ["child_case"]},
+                    {"id": "base", "dependency_ids": [], "acceptance_scenarios": ["base_case"]},
+                    {"id": "other", "dependency_ids": [], "acceptance_scenarios": ["other_case"]},
+                    {"id": "last", "dependency_ids": ["child"], "acceptance_scenarios": ["last_case"]},
+                ]
+            })
+            with mock.patch.dict(WORKFLOWCTL.REWRITE_SETTINGS, {"max_requirements_per_batch": 2}):
+                batches = WORKFLOWCTL._requirement_batches(root)
+
+            flattened = [item for batch in batches for item in batch["requirement_ids"]]
+            self.assertLess(flattened.index("base"), flattened.index("child"))
+            self.assertLess(flattened.index("child"), flattened.index("last"))
+            self.assertTrue(all(len(batch["requirement_ids"]) <= 2 for batch in batches))
+            self.assertEqual({"pending"}, {batch["status"] for batch in batches})
+
+    def test_rewrite_batch_c_cross_writes_controller_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_json(root / "logs" / "trace" / "workflow_state.json", {
+                "rust_project_path": "flashDB_rust"
+            })
+            write_json(root / "logs" / "trace" / "c_test_model.json", {
+                "scorer_standard_cases": [{"scenario_id": "case_a"}]
+            })
+            batch = {
+                "id": "batch-001",
+                "scenario_ids": ["case_a"],
+                "verification_attempts": 0,
+                "verification_receipts": [],
+            }
+
+            def run_c_cross(*_args, **_kwargs):
+                write_json(root / "logs" / "trace" / "validation-matrix.json", {
+                    "execution_id": "rewrite-batch-attempt-1",
+                    "scenarios": [{"scenario_id": "case_a", "rust_impl_c_test": "pass"}]
+                })
+                return argparse.Namespace(returncode=0, stdout="selected case passed")
+
+            with mock.patch.object(WORKFLOWCTL.subprocess, "run", side_effect=run_c_cross):
+                status, receipt = WORKFLOWCTL._run_rewrite_batch_c_cross(
+                    root,
+                    batch=batch,
+                    changed_files=["flashDB_rust/src/storage.rs"],
+                )
+
+            self.assertEqual("pass", status)
+            self.assertEqual(1, batch["verification_attempts"])
+            self.assertTrue(receipt)
+            evidence = json.loads((root / receipt).read_text(encoding="utf-8"))
+            self.assertEqual(["case_a"], evidence["selected_scenarios"])
+            self.assertEqual("pass", evidence["status"])
+
+    def test_failed_targeted_c_cross_stops_after_batch_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            project, _ = self._prepare(root)
+            self._begin_parent(root)
+
+            def fail_batch(_root, *, batch, changed_files):
+                batch["verification_attempts"] = int(batch.get("verification_attempts", 0)) + 1
+                receipt = f"logs/trace/rewrite-c-cross/{batch['id']}/attempt-{batch['verification_attempts']}.json"
+                write_json(root / receipt, {
+                    "batch_id": batch["id"],
+                    "status": "fail",
+                    "changed_files": changed_files,
+                })
+                batch.setdefault("verification_receipts", []).append(receipt)
+                return "fail", receipt
+
+            with mock.patch.object(WORKFLOWCTL, "_run_rewrite_batch_c_cross", side_effect=fail_batch):
+                for attempt in range(2):
+                    core = self._begin_worker(root)
+                    if attempt == 0:
+                        (project / "src" / "core_model.rs").write_text(
+                            "pub fn model_ready() -> bool { true }\n", encoding="utf-8"
+                        )
+                    self.assertEqual(0, self._finish_worker(root, core))
+                    facade = self._begin_worker(root)
+                    if attempt == 0:
+                        (project / "src" / "ffi" / "c_abi.rs").write_text(
+                            '#[no_mangle]\npub extern "C" fn fixture_export() -> i32 { 7 }\n',
+                            encoding="utf-8",
+                        )
+                    self.assertEqual(0, self._finish_worker(root, facade))
+
+            rewrite = json.loads(
+                (root / "logs" / "trace" / "rewrite-state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("READY", rewrite["phase"])
+            self.assertEqual("failed_final", rewrite["requirement_batches"][0]["status"])
+            self.assertEqual(2, rewrite["requirement_batches"][0]["verification_attempts"])
+            records = [
+                json.loads(line)
+                for line in (root / "logs" / "trace" / "core_rewrite_batches.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(["failed_final"], [item["status"] for item in records])
 
 
 class RepairAndAttemptRoutingTests(unittest.TestCase):

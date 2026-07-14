@@ -27,6 +27,7 @@ work/knowledge/flashdb-rust-architecture.md
 flashDB_rust/Cargo.toml
 flashDB_rust/src/lib.rs
 flashDB_rust/src/error.rs
+flashDB_rust/src/storage.rs
 flashDB_rust/src/flash.rs
 flashDB_rust/src/kvdb.rs
 flashDB_rust/src/tsdb.rs
@@ -77,6 +78,8 @@ pub mod tsdb;
 ```
 
 API 空壳必须与 `rust_api_design.json` 一致。`error`、`flash`、`kvdb`、`tsdb` 是必须存在的核心模块；如果 `rust_api_design.json.modules` 包含支持模块或扩展模块，也必须生成对应 `.rs` 文件和 `lib.rs` module 声明。允许使用明确错误返回表示“尚未实现”，但不得长期留下 `todo!()`、`unimplemented!()` 或 panic 作为后续阶段通过条件。
+
+当 `ffi_strategy.kind == c_facade_with_sidecar_state` 时，`src/storage.rs` 不是空 placeholder，而是生成通用 `SidecarRegistry<T>`：以非空 caller-owned C object 地址标识 Rust-owned state，并提供 insert/get/get_mut/remove。领域状态字段仍由 REWRITE 按 requirement 补充。C 输入使用 POSIX file mode 只作为输入事实，不强制 Rust 首轮复制物理文件布局。
 
 如果 `rust_api_design.json.c_abi_facade` 包含 struct 或 function 合同，本阶段必须同步生成 typed FFI 骨架：
 
@@ -148,6 +151,7 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 - `error.rs`、`flash.rs`、`kvdb.rs`、`tsdb.rs` 存在；
 - `flashDB_rust/tests/` 存在；
 - public module 声明与 `rust_api_design.json.modules` 一致；
+- Sidecar 策略下 `src/storage.rs` 包含非占位的 `SidecarRegistry<T>`；
 - `rust_api_design.json.modules` 中声明的支持/扩展模块均有对应 Rust 文件；
 - 当 `rust_api_design.json.c_abi_facade` 声明 struct 或 function 时，`src/ffi/mod.rs`、`src/ffi/c_types.rs`、`src/ffi/c_abi.rs`、`src/ffi/layout_probe.rs` 必须存在；
 - `c_abi_facade.structs` 中的每个 Rust struct 必须在 `src/ffi/c_types.rs` 以 `#[repr(C)]` 生成，并包含合同字段；
