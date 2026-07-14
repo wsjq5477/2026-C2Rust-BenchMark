@@ -75,7 +75,7 @@ python3 work/tools/workflowctl.py --root . status
 1. 确认 `python3`、`cargo`、`rustfmt` 可执行。
 2. 不依赖网络、API Key、Docker 或人工输入。
 3. 不得修改平台提供的源码或测试。
-4. 不得预置、复制或冒充 `flashDB_rust`；`flashDB_rust` 必须在 `GENERATE_RUST_SCAFFOLD` 阶段由 opencode 生成。 如果进入 `INIT_WORKSPACE` 时作品根目录下已经存在 `flashDB_rust`，需要删除该目录
+4. 不得预置、复制或冒充 `flashDB_rust`；`flashDB_rust` 必须在 `GENERATE_RUST_SCAFFOLD` 阶段由 opencode 生成。已有项目时 `workflowctl init` 必须拒绝；只有明确要放弃当前实现、开始全新运行时才允许 `init --force`，不得由 subagent 手动删除项目绕过保护。
 
 ## subagent 分工
 
@@ -166,6 +166,7 @@ python3 work/tools/workflowctl.py --root . record-agent --agent c-analyzer --sta
 1. 优先调用 `rust-implementer` subagent；如果原生 subagent 不可用，拉起隔离任务代理读取 `work/skills/rust-implementer.md` 后执行；连续 3 次失败后才允许主控 fallback。本阶段结束后该 subagent session 可退出，下一阶段不得依赖本阶段对话历史。
 2. 读取 `logs/trace/rust_api_design.json` 中生成脚手架所需的局部设计事实；不得读取 C 源码。
 3. 运行 `python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust`。
+   若工具报告 existing project 与 scaffold manifest 不一致，必须停止并保留当前实现；不得覆盖、删除或重新生成项目。只有主控明确启动全新 `init --force` 才可清理旧项目。
 4. 工具必须同时生成 `logs/trace/scaffold-manifest.json`，记录生成文件、FFI body baseline、stub symbols 和 placeholder module hash。
 5. 立即运行 `python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --scaffold-layout-only`，写入 `logs/trace/c-cross/scaffold-layout-check.json`；layout 未一次通过时先修复生成工具事实，不把错误 ABI 留给模型猜。
 6. 写入中文 `logs/trace/05-generate-rust-scaffold.md`，由 `workflowctl finish` 更新状态、核验回执并运行 gate。

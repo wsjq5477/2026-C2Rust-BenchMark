@@ -501,6 +501,13 @@ class ScaffoldAndImplementationAuditTests(unittest.TestCase):
         self.assertEqual("[u8; 8]", SCAFFOLD.rust_field_type(anonymous))
         self.assertEqual("[u8; 16]", SCAFFOLD.rust_field_type(legacy_array))
 
+        typed_array = {
+            **array,
+            "array_extents": ["4"],
+            "raw_declarator": "uint32_t values[4]",
+        }
+        self.assertEqual("[u32; 4]", SCAFFOLD.rust_field_type(typed_array))
+
         design = {
             "c_abi_facade": {
                 "structs": [
@@ -543,6 +550,31 @@ class ScaffoldAndImplementationAuditTests(unittest.TestCase):
         self.assertIn("pub next_ptr: *mut std::ffi::c_void", generated)
         self.assertEqual("fdb_kv_type_0", SCAFFOLD.c_symbol_suffix("FDB.KV/type[0]"))
         self.assertEqual("FdbKvTypeT", SCAFFOLD.safe_rust_type("_fdb-kv/type_t"))
+
+    def test_scaffold_refuses_to_overwrite_implemented_project(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "flashDB_rust"
+            source = project / "src" / "lib.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text("pub fn scaffold() {}\n", encoding="utf-8")
+            design_path = root / "rust_api_design.json"
+            write_json(design_path, {"crate_name": "fixture"})
+            manifest_path = root / "scaffold-manifest.json"
+            manifest = {
+                "schema_version": SCAFFOLD.SCAFFOLD_SCHEMA_VERSION,
+                "project": str(project.resolve()),
+                "design_sha256": SCAFFOLD._sha256_bytes(design_path.read_bytes()),
+                "files": {
+                    "src/lib.rs": {"sha256": SCAFFOLD._sha256_bytes(source.read_bytes())}
+                },
+            }
+            write_json(manifest_path, manifest)
+            SCAFFOLD.assert_safe_scaffold_overwrite(project, manifest_path, design_path)
+
+            source.write_text("pub fn implemented() {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "implementation changes"):
+                SCAFFOLD.assert_safe_scaffold_overwrite(project, manifest_path, design_path)
 
     def test_abi_only_regeneration_cannot_overwrite_core_implementation(self):
         with tempfile.TemporaryDirectory() as directory:

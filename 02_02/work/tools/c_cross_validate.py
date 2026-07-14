@@ -1057,6 +1057,7 @@ def _run_layout_checker(
     trace: Path,
     *,
     artifact_name: str = "layout",
+    log_path_override: Path | None = None,
 ) -> tuple[bool, str]:
     structs = _layout_structs(trace)
     headers = _layout_headers(c_root, structs)
@@ -1069,6 +1070,8 @@ def _run_layout_checker(
         source = c_cross / f"{safe_name}_checker.c"
         binary = c_cross / f"{safe_name}_checker"
         log_path = c_cross / f"{safe_name}-check.log"
+    if log_path_override is not None:
+        log_path = log_path_override
     source.write_text(_layout_checker_source(structs, headers), encoding="utf-8")
     cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if cc is None:
@@ -1184,6 +1187,7 @@ def run_scaffold_layout_check(
                 _rust_staticlib(project),
                 trace,
                 artifact_name="scaffold-layout",
+                log_path_override=log_path,
             )
         except Exception as exc:
             layout_ok = False

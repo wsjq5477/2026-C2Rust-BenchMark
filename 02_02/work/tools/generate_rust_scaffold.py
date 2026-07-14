@@ -183,7 +183,12 @@ def c_abi_symbols(design: dict[str, Any]) -> list[str]:
     ]
 
 
-def rust_field_type(field: dict[str, Any]) -> str:
+def rust_field_type(
+    field: dict[str, Any],
+    *,
+    resolved_types: dict[str, Any] | None = None,
+    known_struct_types: dict[str, dict[str, Any]] | None = None,
+) -> str:
     ctype = str(field.get("ctype", "")).strip()
     normalized_ctype = re.sub(r"\s+", " ", ctype).strip().lower()
     size = field.get("sizeof")
@@ -196,25 +201,21 @@ def rust_field_type(field: dict[str, Any]) -> str:
     def byte_storage() -> str:
         return f"[u8; {size_int}]"
 
-    # Arrays and aggregates have internal layout that cannot be represented by
-    # guessing from a C type string.  Exact byte storage plus compiler offsets
-    # is deterministic and is sufficient for the boundary scaffold.
+    # Anonymous aggregates and callbacks need their own C declaration parser.
+    # Preserve them as exact bytes until that evidence exists; never guess a
+    # Rust field type merely because it happens to have the same width.
     if kind in {
-        "array",
         "anonymous_struct",
         "anonymous_union",
-        "named_struct",
         "named_union",
         "function_pointer",
         "function_pointer_array",
         "bitfield",
     }:
         return byte_storage()
-    if re.search(r"\[[^\]]*\]", raw) or "(*" in normalized_ctype:
+    if "(*" in normalized_ctype:
         return byte_storage()
     if re.match(r"^(?:struct|union)\s*\{", normalized_ctype):
-        return byte_storage()
-    if re.match(r"^(?:struct|union)\s+[a-z_][a-z0-9_]*\b", normalized_ctype) and "*" not in normalized_ctype:
         return byte_storage()
 
     # A packed field must not be emitted as a naturally aligned Rust scalar.
@@ -225,11 +226,77 @@ def rust_field_type(field: dict[str, Any]) -> str:
             return False
         return not isinstance(offset, int) or offset % natural == 0
 
+    def resolved_rust_type() -> str | None:
+        if not isinstance(resolved_types, dict):
+            return None
+        entry = resolved_types.get(ctype)
+        if not isinstance(entry, dict):
+            return None
+        candidate = str(entry.get("rust_ffi_type") or "").strip()
+        primitive_widths = {
+            "u8": 1, "i8": 1, "u16": 2, "i16": 2,
+            "u32": 4, "i32": 4, "std::ffi::c_int": 4,
+            "u64": 8, "i64": 8, "usize": 8,
+        }
+        expected = primitive_widths.get(candidate)
+        if expected is not None:
+            return candidate if size_int == expected and alignment_is_safe(expected) else None
+        if candidate.startswith(("*const ", "*mut ")):
+            return candidate if alignment_is_safe(size_int) else None
+        return None
+
+    if kind == "array":
+        extents = field.get("array_extents")
+        values = extents if isinstance(extents, list) else []
+        try:
+            count = 1
+            for value in values:
+                count *= int(str(value), 10)
+        except ValueError:
+            count = 0
+        if count > 0 and size_int % count == 0:
+            element = dict(field)
+            element.update({
+                "kind": "scalar_or_typedef",
+                "sizeof": size_int // count,
+                "raw_declarator": "",
+            })
+            element_type = rust_field_type(
+                element,
+                resolved_types=resolved_types,
+                known_struct_types=known_struct_types,
+            )
+            if not element_type.startswith("[u8;"):
+                return f"[{element_type}; {count}]"
+        return byte_storage()
+
+    if kind == "named_struct":
+        match = re.fullmatch(r"struct\s+([a-z_][a-z0-9_]*)", normalized_ctype)
+        known = known_struct_types.get(match.group(1)) if match and isinstance(known_struct_types, dict) else None
+        if isinstance(known, dict):
+            rust_type = known.get("rust_type")
+            if (
+                isinstance(rust_type, str)
+                and known.get("sizeof") == size_int
+                and known.get("alignof") == align
+            ):
+                return rust_type
+        return byte_storage()
+
+    mapped = resolved_rust_type()
+    if mapped is not None:
+        return mapped
+
     if "*" in normalized_ctype:
         if normalized_ctype.count("*") != 1:
             return byte_storage()
         if size_int <= 0 or not alignment_is_safe(size_int):
             return byte_storage()
+        struct_match = re.search(r"struct\s+([a-z_][a-z0-9_]*)", normalized_ctype)
+        known = known_struct_types.get(struct_match.group(1)) if struct_match and isinstance(known_struct_types, dict) else None
+        if isinstance(known, dict) and isinstance(known.get("rust_type"), str):
+            prefix = "*const" if "const" in normalized_ctype else "*mut"
+            return f"{prefix} {known['rust_type']}"
         if "char" in normalized_ctype:
             return "*const std::ffi::c_char" if "const" in normalized_ctype else "*mut std::ffi::c_char"
         return "*const std::ffi::c_void" if "const" in normalized_ctype else "*mut std::ffi::c_void"
@@ -249,8 +316,10 @@ def rust_field_type(field: dict[str, Any]) -> str:
             return rust_type if size_int == expected_size and alignment_is_safe(expected_size) else byte_storage()
     if normalized_ctype in {"_bool", "bool", "char", "signed char", "unsigned char"}:
         return "u8" if size_int == 1 and alignment_is_safe(1) else byte_storage()
-    if normalized_ctype in {"int", "signed int", "unsigned int"}:
+    if normalized_ctype in {"int", "signed int"}:
         return "i32" if size_int == 4 and alignment_is_safe(4) else byte_storage()
+    if normalized_ctype == "unsigned int":
+        return "u32" if size_int == 4 and alignment_is_safe(4) else byte_storage()
     if normalized_ctype == "size_t":
         return "usize" if alignment_is_safe(size_int) else byte_storage()
     return byte_storage()
@@ -276,6 +345,18 @@ def generate_c_types(design: dict[str, Any]) -> str:
         "#![allow(non_camel_case_types)]",
         "",
     ]
+    facade = design.get("c_abi_facade")
+    type_map = facade.get("c_type_map") if isinstance(facade, dict) else None
+    resolved_types = type_map.get("resolved") if isinstance(type_map, dict) else None
+    known_struct_types: dict[str, dict[str, Any]] = {}
+    for struct in facade_structs(design):
+        c_name = str(struct.get("c_name") or "")
+        if c_name:
+            known_struct_types[c_name] = {
+                "rust_type": safe_rust_type(str(struct.get("rust_name") or c_name), "CAbiStruct"),
+                "sizeof": struct.get("sizeof"),
+                "alignof": struct.get("alignof"),
+            }
     type_alias_lines = collect_type_aliases(design)
     for alias_line in type_alias_lines:
         lines.append(alias_line)
@@ -315,7 +396,9 @@ def generate_c_types(design: dict[str, Any]) -> str:
                 pad_index += 1
                 cursor = offset
             field_name = safe_rust_ident(field["name"])
-            lines.append(f"    pub {field_name}: {rust_field_type(field)},")
+            lines.append(
+                f"    pub {field_name}: {rust_field_type(field, resolved_types=resolved_types, known_struct_types=known_struct_types)},"
+            )
             cursor = max(cursor, offset + max(size, 0))
         if isinstance(sizeof, int) and sizeof > cursor:
             lines.append(f"    pub _pad_{pad_index}: [u8; {sizeof - cursor}],")
@@ -678,6 +761,57 @@ def write_scaffold_manifest(
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def assert_safe_scaffold_overwrite(
+    project: Path,
+    manifest_path: Path | None,
+    design_path: Path | None,
+) -> None:
+    """Reject overwriting a project unless it is the exact recorded scaffold."""
+    if not project.exists():
+        return
+    existing_files = [
+        path for path in project.rglob("*")
+        if path.is_file() and "target" not in path.relative_to(project).parts and path.name != "Cargo.lock"
+    ]
+    if not existing_files:
+        return
+    if manifest_path is None or not manifest_path.is_file():
+        raise ValueError(
+            "refusing to overwrite existing flashDB_rust without scaffold-manifest.json; "
+            "start an intentional clean run with workflowctl init --force"
+        )
+    manifest = load_json(manifest_path)
+    if manifest.get("schema_version") != SCAFFOLD_SCHEMA_VERSION:
+        raise ValueError("refusing to overwrite existing flashDB_rust with an unsupported scaffold manifest")
+    if manifest.get("project") != str(project.resolve()):
+        raise ValueError("refusing to overwrite existing flashDB_rust whose scaffold manifest belongs to another project")
+    if design_path is not None and design_path.is_file():
+        if manifest.get("design_sha256") != _sha256_bytes(design_path.read_bytes()):
+            raise ValueError("refusing to overwrite existing flashDB_rust built from a different design")
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("refusing to overwrite existing flashDB_rust with an incomplete scaffold manifest")
+    actual_paths = {path.relative_to(project).as_posix() for path in existing_files}
+    expected_paths = {path for path in files if isinstance(path, str)}
+    unexpected = sorted(actual_paths - expected_paths)
+    if unexpected:
+        raise ValueError(
+            "refusing to overwrite existing flashDB_rust with untracked project files: "
+            + ", ".join(unexpected)
+        )
+    changed = [
+        relative for relative in sorted(expected_paths)
+        if not (project / relative).is_file()
+        or not isinstance(files.get(relative), dict)
+        or files[relative].get("sha256") != _sha256_bytes((project / relative).read_bytes())
+    ]
+    if changed:
+        raise ValueError(
+            "refusing to overwrite existing flashDB_rust with implementation changes: "
+            + ", ".join(changed)
+        )
+
+
 def regenerate_abi_layout_files(design: dict[str, Any], project: Path) -> list[Path]:
     """Regenerate only compiler-derived ABI layout files for a repair route."""
     outputs = [
@@ -696,6 +830,7 @@ def generate_project(
     manifest_path: Path | None = None,
     design_path: Path | None = None,
 ) -> None:
+    assert_safe_scaffold_overwrite(project, manifest_path, design_path)
     crate_name = design.get("crate_name", "flashdb_rust")
     modules = module_names(design)
 

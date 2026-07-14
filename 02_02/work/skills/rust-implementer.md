@@ -40,7 +40,7 @@ python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out log
 python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind checkpoint --trigger core_complete
 ```
 
-`GENERATE_RUST_SCAFFOLD` 必须写 scaffold manifest，并在任何模型实现前通过 compiler-confirmed layout-only 检查。复杂聚合字段优先使用编译器确认 size/offset/align 的 byte region，不得从 C type 字符串猜嵌套 struct、union 或 array。
+`GENERATE_RUST_SCAFFOLD` 必须写 scaffold manifest，并在任何模型实现前通过 compiler-confirmed layout-only 检查。工具会拒绝覆盖 manifest/hash 不匹配的既有项目；遇到该错误必须停止，不能删除或重新生成项目。具有明确 ABI 证据的指针、定宽/已解析 typedef、定长数组和具名 struct 必须生成可访问的 Rust 类型；匿名 struct/union、回调和无法可靠分类的聚合才使用 compiler-confirmed `[u8; N]` byte region，不得猜测嵌套声明。
 
 `REWRITE_CORE_MODULES` 的 task packet 会声明角色和精确写路径：
 
