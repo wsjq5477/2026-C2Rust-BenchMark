@@ -822,11 +822,6 @@ def cmd_next_rewrite_worker(args: argparse.Namespace) -> int:
         retry_context.append(context)
     packet_doc["retry_context"] = retry_context
     _atomic_json(packet_path, packet_doc)
-    max_packet = int(REWRITE_SETTINGS.get("max_packet_bytes", 24576))
-    if packet_path.stat().st_size > max_packet:
-        raise WorkflowError(
-            f"static rewrite packet exceeds configured budget: {packet_path.stat().st_size}>{max_packet}"
-        )
     record = {
         "schema_version": 1,
         "worker_run_id": worker_run_id,

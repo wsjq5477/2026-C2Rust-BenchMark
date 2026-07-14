@@ -6,7 +6,6 @@
   },
   "rewrite_static": {
     "max_command_output_bytes": 8192,
-    "max_packet_bytes": 24576,
     "max_worker_failed_checks": 3,
     "max_worker_retries": 3
   },

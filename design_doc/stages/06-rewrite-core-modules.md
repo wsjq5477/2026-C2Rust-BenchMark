@@ -107,6 +107,8 @@ core_impl_audit.py
 
 完整 stdout/stderr 写入 `logs/trace/rewrite-check/<role>/<attempt>/`；反馈给 worker 的内容受 `workflow-contract.json.rewrite_static.max_command_output_bytes` 限制，避免把重复构建日志重新注入上下文。
 
+任务 packet 文件本身不设字节数门槛：它是 worker 启动后按需读取的工作说明，不是启动 prompt 的全量注入。控制器只限制会反复回传的命令失败 tail；若 `workflowctl` 返回错误，worker 必须停止本次尝试并原样报告，不得修改工作台合同、状态或证据绕过检查。
+
 ## 机器证据
 
 控制器生成并维护：

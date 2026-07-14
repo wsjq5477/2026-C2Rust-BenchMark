@@ -1173,8 +1173,14 @@ def extract_current_ffi_signature(source: str, symbol: str) -> str | None:
         if end >= len(source):
             return None
         return_type = source[cursor:end].strip()
-    normalize = lambda value: re.sub(r"\s+", "", value)
-    return f"{symbol}({normalize(params)})->{normalize(return_type)}"
+    normalized_params = re.sub(r"\s+", "", params)
+    # Rust accepts an optional trailing comma in a multi-line parameter list.
+    # It must not turn a formatted generated facade into a different ABI
+    # contract and tempt a worker to edit a frozen file.
+    if normalized_params.endswith(","):
+        normalized_params = normalized_params[:-1]
+    normalized_return = re.sub(r"\s+", "", return_type)
+    return f"{symbol}({normalized_params})->{normalized_return}"
 
 
 def check_rewrite_ownership_manifest(
@@ -1716,6 +1722,13 @@ def check_generate_rust_scaffold(root: Path) -> list[str]:
             errors.extend(check_typed_ffi_scaffold(project, design))
 
     if project.exists():
+        errors.extend(
+            check_project_command(
+                project,
+                ["cargo", "fmt", "--all", "--", "--check"],
+                "generated scaffold cargo fmt",
+            )
+        )
         errors.extend(check_project_command(project, ["cargo", "check", "--all-targets"], "generated scaffold cargo check"))
 
     if state.get("controller_contract_version"):

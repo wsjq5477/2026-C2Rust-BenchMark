@@ -2714,7 +2714,7 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
 
             ffi = project / "src" / "ffi"
             ffi.mkdir()
-            (ffi / "mod.rs").write_text("pub mod c_types;\npub mod c_abi;\npub mod layout_probe;\n", encoding="utf-8")
+            (ffi / "mod.rs").write_text("pub mod c_abi;\npub mod c_types;\npub mod layout_probe;\n", encoding="utf-8")
             (ffi / "c_types.rs").write_text("#[repr(C)]\npub struct FdbDb { pub _opaque: [u8; 16], }\n", encoding="utf-8")
             (ffi / "c_abi.rs").write_text("use std::ffi::c_void;\npub extern \"C\" fn fdb_kvdb_init() -> *mut c_void { std::ptr::null_mut() }\n", encoding="utf-8")
             (ffi / "layout_probe.rs").write_text("", encoding="utf-8")
@@ -2733,11 +2733,11 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 encoding="utf-8",
             )
             (ffi / "c_abi.rs").write_text(
-                "use super::c_types::*;\n#[no_mangle]\npub extern \"C\" fn fdb_kvdb_init(db: *mut FdbDb) -> i32 { 0 }\n",
+                "use super::c_types::*;\n\n#[no_mangle]\npub extern \"C\" fn fdb_kvdb_init(db: *mut FdbDb) -> i32 {\n    0\n}\n",
                 encoding="utf-8",
             )
             (ffi / "layout_probe.rs").write_text(
-                "use super::c_types::*;\nuse core::mem::offset_of;\npub extern \"C\" fn rust_sizeof_fdb_db() -> usize { core::mem::size_of::<FdbDb>() }\npub extern \"C\" fn rust_offsetof_fdb_db_status() -> usize { offset_of!(FdbDb, status) }\npub extern \"C\" fn rust_offsetof_fdb_db_storage() -> usize { offset_of!(FdbDb, storage) }\n",
+                "use super::c_types::*;\nuse core::mem::offset_of;\npub extern \"C\" fn rust_sizeof_fdb_db() -> usize {\n    core::mem::size_of::<FdbDb>()\n}\npub extern \"C\" fn rust_offsetof_fdb_db_status() -> usize {\n    offset_of!(FdbDb, status)\n}\npub extern \"C\" fn rust_offsetof_fdb_db_storage() -> usize {\n    offset_of!(FdbDb, storage)\n}\n",
                 encoding="utf-8",
             )
             valid = subprocess.run(

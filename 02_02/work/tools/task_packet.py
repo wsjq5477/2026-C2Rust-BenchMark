@@ -490,14 +490,10 @@ def stage_profile(
             ],
         },
         "REWRITE_CORE_MODULES": {
-            "objective": "Implement the selected behavioral invariants and C facade symbols in safe Rust core modules.",
-            "verification_commands": [
-                f"cargo fmt --manifest-path {cargo} -- --check",
-                f"cargo build --release --manifest-path {cargo}",
-                f"python3 work/tools/core_impl_audit.py --root . --project {rust_project} --manifest logs/trace/scaffold-manifest.json --design logs/trace/rust_api_design.json --output logs/trace/implementation-audit.json",
-            ],
+            "objective": "Controller-only parent for static CORE/FACADE rewrite workers.",
+            "verification_commands": [],
             "command_notes": [
-                "If workflowctl routes back to REPAIR_REWRITE_CORE_MODULES, begin the routed stage directly. It reuses the original scaffold baseline automatically; do not reset, copy, or regenerate flashDB_rust.",
+                "Do not implement, audit, format, or finish this parent packet. workflowctl releases one exact-owner worker packet at a time.",
             ],
         },
         "VERIFY_RUST_WITH_C_TESTS": {
@@ -746,6 +742,7 @@ def apply_static_rewrite_role(
     if not isinstance(raw_paths, list) or not raw_paths or not all(isinstance(item, str) and item for item in raw_paths):
         raise ValueError(f"rewrite ownership {key} must be a non-empty string list")
     project = rust_project.rstrip("/")
+    owner_paths = set(raw_paths)
     packet["rewrite_role"] = normalized
     packet["allowed_modification_paths"] = [f"{project}/{item}" for item in raw_paths]
     packet["read_only_paths"] = [
@@ -759,6 +756,10 @@ def apply_static_rewrite_role(
         for item in ownership.get(category, [])
         if isinstance(item, str) and item not in raw_paths
     ]
+    # Controller-owned stage evidence is not worker input.  Showing it in a
+    # role packet caused workers to run the final audit while facade stubs
+    # were intentionally still present.
+    packet["evidence_paths"] = []
     packet["verification_commands"] = []
     packet["completion_contract"] = {
         "command": (
@@ -768,13 +769,25 @@ def apply_static_rewrite_role(
         "owner": "workflowctl",
         "rule": "The worker edits only its owner paths; workflowctl computes diffs and runs bounded checks.",
     }
-    packet.setdefault("command_notes", []).extend([
+    packet["command_notes"] = [
         "This is one fixed static REWRITE role, not a dynamic batch. Do not change roles or edit the other owner's files.",
+        "A workflowctl error ends this worker attempt. Report its exact text to the orchestrator; never edit work/**, contracts, controller state, or generated evidence to bypass it.",
         "Do not run workflowctl stage finish, regenerate the scaffold, or create source backups.",
-    ])
+    ]
     if normalized == "IMPLEMENT_CORE":
         packet["objective"] = "Implement internal Rust behavior only in generator-declared core-owned files."
         packet["facade_contracts"] = []
+        for requirement in packet.get("requirements", []):
+            if not isinstance(requirement, dict):
+                continue
+            suggested = requirement.get("suggested_files")
+            if not isinstance(suggested, list):
+                continue
+            writable = [item for item in suggested if isinstance(item, str) and item in owner_paths]
+            readonly = [item for item in suggested if isinstance(item, str) and item not in owner_paths]
+            requirement["suggested_files"] = writable
+            if readonly:
+                requirement["non_writable_dependencies"] = readonly
     else:
         packet["objective"] = "Wire generated external ABI function bodies to the existing internal Rust API."
         packet["requirements"] = []

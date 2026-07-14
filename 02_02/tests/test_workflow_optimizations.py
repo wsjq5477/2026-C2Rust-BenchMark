@@ -461,6 +461,20 @@ class ScaffoldAndImplementationAuditTests(unittest.TestCase):
                 any("frozen external signature changed" in item for item in signature_errors)
             )
 
+    def test_frozen_signature_treats_rust_trailing_parameter_comma_as_equivalent(self):
+        source = (
+            "#[no_mangle]\n"
+            "pub extern \"C\" fn fixture_export(\n"
+            "    value: i32,\n"
+            ") -> i32 {\n"
+            "    value\n"
+            "}\n"
+        )
+        self.assertEqual(
+            "fixture_export(value:i32)->i32",
+            GATE.extract_current_ffi_signature(source, "fixture_export"),
+        )
+
     def test_abi_arrays_and_anonymous_aggregates_use_exact_byte_storage(self):
         array = {
             "ctype": "uint32_t",
@@ -663,10 +677,16 @@ class StaticRewriteControllerTests(unittest.TestCase):
             (root / "logs" / "trace" / "workflow_state.json").read_text(encoding="utf-8")
         )["active_stage_run"]
 
-    def _begin_worker(self, root: Path) -> dict:
+    def _begin_worker(self, root: Path, *, packet_padding_bytes: int = 0) -> dict:
         def fake_packet(_root, _stage, action=None, rewrite_role=None):
             self.assertIsNotNone(rewrite_role)
-            return self._packet(root, rewrite_role)
+            relative = self._packet(root, rewrite_role)
+            if packet_padding_bytes:
+                packet_path = root / relative
+                packet = json.loads(packet_path.read_text(encoding="utf-8"))
+                packet["test_only_padding"] = "x" * packet_padding_bytes
+                write_json(packet_path, packet)
+            return relative
 
         with mock.patch.object(WORKFLOWCTL, "_invoke_task_packet", side_effect=fake_packet):
             self.assertEqual(
@@ -751,6 +771,16 @@ class StaticRewriteControllerTests(unittest.TestCase):
             with self.assertRaisesRegex(WORKFLOWCTL.WorkflowError, "another owner/frozen"):
                 self._finish_worker(root, active)
 
+    def test_static_worker_dispatch_does_not_gate_on_packet_file_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self._prepare(root)
+            self._begin_parent(root)
+
+            active = self._begin_worker(root, packet_padding_bytes=32 * 1024)
+
+            self.assertEqual("IMPLEMENT_CORE", active["role"])
+
     def test_static_retry_packet_carries_bounded_failure_and_cumulative_diff(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -830,6 +860,10 @@ class StaticRewriteControllerTests(unittest.TestCase):
             design = json.loads(
                 (root / "logs" / "trace" / "rust_api_design.json").read_text(encoding="utf-8")
             )
+            design["implementation_requirements"][0]["suggested_files"] = [
+                "src/core_model.rs",
+                "src/c_abi.rs",
+            ]
             manifest = json.loads(
                 (root / "logs" / "trace" / "scaffold-manifest.json").read_text(encoding="utf-8")
             )
@@ -849,6 +883,11 @@ class StaticRewriteControllerTests(unittest.TestCase):
             self.assertTrue(core["requirements"])
             self.assertEqual([], facade["requirements"])
             self.assertTrue(facade["facade_contracts"])
+            self.assertEqual([], core["evidence_paths"])
+            self.assertNotIn("src/c_abi.rs", core["requirements"][0]["suggested_files"])
+            self.assertIn(
+                "src/c_abi.rs", core["requirements"][0]["non_writable_dependencies"]
+            )
 
     def test_core_role_packet_keeps_all_model_derived_requirements(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -887,7 +926,6 @@ class StaticRewriteControllerTests(unittest.TestCase):
             packet = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(15, len(packet["requirements"]))
             self.assertEqual([], packet["selection"]["omitted_requirement_ids"])
-            self.assertLess(output.stat().st_size, 24576)
 
 
 class RepairAndAttemptRoutingTests(unittest.TestCase):

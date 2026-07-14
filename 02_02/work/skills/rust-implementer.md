@@ -37,7 +37,6 @@ permission:
 ```bash
 python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust
 python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --scaffold-layout-only
-python3 work/tools/core_impl_audit.py --root . --project flashDB_rust --manifest logs/trace/scaffold-manifest.json --design logs/trace/rust_api_design.json --output logs/trace/implementation-audit.json
 python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --attempt-kind checkpoint --trigger core_complete
 ```
 
@@ -48,7 +47,7 @@ python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out log
 - `IMPLEMENT_CORE`：只写 `core_owned_paths`，消费 packet 中的 requirements，实现内部模型、状态和行为；不得修改 facade、冻结合同或共享只读文件。
 - `WIRE_FACADE`：只写 `facade_owned_paths`，消费 packet 中的 `facade_contracts`，保持冻结函数签名并连接现有内部 API；不得补写 core。
 
-完成后只执行 packet 给出的 `finish-rewrite-worker`。构建、审计、真实 diff、batch 日志和回执由控制器生成，不得手写或先运行父阶段 `workflowctl finish`。facade 确认缺少内部能力时用 `--status missing_core_capability` 交还控制器；不得越权直接修 core。控制器会使旧 facade 回执失效，并安排新的 CORE→FACADE revision。所有修复均原地向前进行，不得运行 Git、复制到 `/tmp`、用 `cp` 备份/回退源码或再次执行 scaffold generator。
+完成后只执行 packet 给出的 `finish-rewrite-worker`。构建、审计、真实 diff、batch 日志和回执由控制器生成，不得手写或先运行父阶段 `workflowctl finish`。任何 `workflowctl` 错误都必须原样报告给主控并停止；不得修改 `work/**`、contract、controller state 或证据文件来绕过错误。facade 确认缺少内部能力时用 `--status missing_core_capability` 交还控制器；不得越权直接修 core。控制器会使旧 facade 回执失效，并安排新的 CORE→FACADE revision。所有修复均原地向前进行，不得运行 Git、复制到 `/tmp`、用 `cp` 备份/回退源码或再次执行 scaffold generator。
 
 `VERIFY_RUST_WITH_C_TESTS` 属于你的完成条件。工具按 build/layout/link/full 分层执行并解析 runner 的逐测试输出；全量 invocation 必须都有真实结果或 unresolved 证据。实现期间可按动态发现的 suite 使用 `--suite <suite>`，不得硬编码 suite 名或用例总数。checkpoint/repair 写出完整证据后返回 0，`CONTINUE_WITH_FAILURES` 必须消费 repair plan，按 target agent、scenario IDs、symbols、requirements、selected suites 和 verification command 定向修复，直到全通过或预算耗尽。crash/timeout 的 not_run 必须消费 isolation queue；regression 时不得覆盖 best-known。只有 final 非全通过返回非零。平台问题由工具登记到 `logs/trace/c-cross/workbench-issues.jsonl`。
 
