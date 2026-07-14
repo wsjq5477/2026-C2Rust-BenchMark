@@ -1138,6 +1138,163 @@ def check_typed_ffi_scaffold(project: Path, design: dict[str, Any]) -> list[str]
     return errors
 
 
+def extract_current_ffi_signature(source: str, symbol: str) -> str | None:
+    """Extract one Rust extern-C signature without being confused by callback parentheses."""
+    match = re.search(
+        rf'pub\s+extern\s+"C"\s+fn\s+{re.escape(symbol)}\s*\(',
+        source,
+    )
+    if match is None:
+        return None
+    open_paren = source.find("(", match.start())
+    depth = 0
+    close_paren: int | None = None
+    for index in range(open_paren, len(source)):
+        character = source[index]
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                close_paren = index
+                break
+    if close_paren is None:
+        return None
+    params = source[open_paren + 1:close_paren]
+    cursor = close_paren + 1
+    while cursor < len(source) and source[cursor].isspace():
+        cursor += 1
+    return_type = "()"
+    if source[cursor:cursor + 2] == "->":
+        cursor += 2
+        end = cursor
+        while end < len(source) and source[end] not in "{;":
+            end += 1
+        if end >= len(source):
+            return None
+        return_type = source[cursor:end].strip()
+    normalize = lambda value: re.sub(r"\s+", "", value)
+    return f"{symbol}({normalize(params)})->{normalize(return_type)}"
+
+
+def check_rewrite_ownership_manifest(
+    project: Path,
+    manifest: dict[str, Any],
+) -> list[str]:
+    """Validate controller-consumable, model-independent rewrite ownership."""
+    errors: list[str] = []
+    ownership = manifest.get("rewrite_ownership")
+    if not isinstance(ownership, dict) or ownership.get("schema_version") != 1:
+        return ["scaffold-manifest.json must contain rewrite_ownership schema_version 1"]
+
+    category_names = [
+        "core_owned_paths",
+        "facade_owned_paths",
+        "frozen_contract_paths",
+        "shared_readonly_paths",
+    ]
+    categories: dict[str, set[str]] = {}
+    for name in category_names:
+        values = ownership.get(name)
+        if not isinstance(values, list) or not all(isinstance(item, str) and item for item in values):
+            errors.append(f"scaffold-manifest.json rewrite_ownership.{name} must be a string list")
+            categories[name] = set()
+            continue
+        invalid = sorted(
+            item for item in values
+            if Path(item).is_absolute() or ".." in Path(item).parts or item.startswith("/")
+        )
+        if invalid:
+            errors.append(f"rewrite_ownership.{name} contains unsafe paths: {', '.join(invalid)}")
+        categories[name] = set(values)
+
+    for index, left_name in enumerate(category_names):
+        for right_name in category_names[index + 1:]:
+            overlap = sorted(categories[left_name] & categories[right_name])
+            if overlap:
+                errors.append(
+                    f"rewrite ownership categories {left_name}/{right_name} overlap: "
+                    + ", ".join(overlap)
+                )
+
+    generated = manifest.get("files")
+    generated_paths = set(generated) if isinstance(generated, dict) else set()
+    classified = set().union(*(categories[name] for name in category_names))
+    missing = sorted(generated_paths - classified)
+    unknown = sorted(classified - generated_paths)
+    if missing:
+        errors.append("rewrite ownership does not classify generated files: " + ", ".join(missing))
+    if unknown:
+        errors.append("rewrite ownership references files absent from manifest: " + ", ".join(unknown))
+    for relative in sorted(classified):
+        path = project / relative
+        if not path.is_file() or path.is_symlink():
+            errors.append(f"rewrite ownership path must be a regular generated file: {relative}")
+
+    placeholders = manifest.get("placeholder_modules")
+    placeholder_paths = {
+        entry.get("path") for entry in placeholders.values()
+        if isinstance(placeholders, dict) and isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    } if isinstance(placeholders, dict) else set()
+    missing_core = sorted(placeholder_paths - categories["core_owned_paths"])
+    if missing_core:
+        errors.append("placeholder modules must be core-owned: " + ", ".join(missing_core))
+
+    ffi_functions = manifest.get("ffi_functions")
+    ffi_paths = {
+        entry.get("path") for entry in ffi_functions.values()
+        if isinstance(ffi_functions, dict) and isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    } if isinstance(ffi_functions, dict) else set()
+    missing_facade = sorted(ffi_paths - categories["facade_owned_paths"])
+    if missing_facade:
+        errors.append("FFI stub files must be facade-owned: " + ", ".join(missing_facade))
+
+    frozen_symbols = ownership.get("frozen_contract_symbols")
+    if not isinstance(frozen_symbols, list):
+        errors.append("rewrite_ownership.frozen_contract_symbols must be a list")
+        frozen_symbols = []
+    seen_symbols: set[str] = set()
+    for entry in frozen_symbols:
+        if not isinstance(entry, dict):
+            errors.append("frozen_contract_symbols entries must be objects")
+            continue
+        symbol = entry.get("symbol")
+        relative = entry.get("path")
+        signature = entry.get("signature")
+        signature_hash = entry.get("signature_sha256")
+        if not all(isinstance(item, str) and item for item in [symbol, relative, signature, signature_hash]):
+            errors.append("frozen_contract_symbols entries must contain symbol/path/signature/signature_sha256")
+            continue
+        if symbol in seen_symbols:
+            errors.append(f"duplicate frozen contract symbol: {symbol}")
+        seen_symbols.add(symbol)
+        actual_hash = hashlib.sha256(signature.encode("utf-8")).hexdigest()
+        if actual_hash != signature_hash:
+            errors.append(f"frozen contract signature hash mismatch: {symbol}")
+        if relative not in categories["facade_owned_paths"]:
+            errors.append(f"frozen contract symbol path must be facade-owned: {symbol}:{relative}")
+        if not isinstance(ffi_functions, dict) or symbol not in ffi_functions:
+            errors.append(f"frozen contract symbol is absent from ffi_functions: {symbol}")
+        source_path = project / relative
+        if source_path.is_file():
+            source = source_path.read_text(encoding="utf-8", errors="ignore")
+            current_signature = extract_current_ffi_signature(source, symbol)
+            expected_signature = re.sub(r"\s+", "", signature)
+            if current_signature != expected_signature:
+                errors.append(f"frozen external signature changed: {symbol}")
+            symbol_match = re.search(
+                rf'pub\s+extern\s+"C"\s+fn\s+{re.escape(symbol)}\s*\(', source
+            )
+            prefix = source[max(0, symbol_match.start() - 160):symbol_match.start()] if symbol_match else ""
+            if "#[no_mangle]" not in prefix:
+                errors.append(f"frozen external symbol lost #[no_mangle]: {symbol}")
+    if isinstance(ffi_functions, dict):
+        missing_frozen = sorted(set(ffi_functions) - seen_symbols)
+        if missing_frozen:
+            errors.append("FFI functions missing frozen signature contracts: " + ", ".join(missing_frozen))
+    return errors
+
+
 def require_state(
     root: Path,
     required_keys: set[str],
@@ -1567,6 +1724,8 @@ def check_generate_rust_scaffold(root: Path) -> list[str]:
             errors.append(f"scaffold-manifest.json: {manifest_error}")
         elif not isinstance(manifest.get("files"), (dict, list)) or not manifest.get("files"):
             errors.append("scaffold-manifest.json must record generated file hashes")
+        else:
+            errors.extend(check_rewrite_ownership_manifest(project, manifest))
         layout, layout_error = load_json(
             root / "logs" / "trace" / "c-cross" / "scaffold-layout-check.json"
         )
@@ -1599,6 +1758,96 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
 
     project = root / "flashDB_rust"
     design, design_error = load_json(root / "logs" / "trace" / "rust_api_design.json")
+    manifest, manifest_error = load_json(root / "logs" / "trace" / "scaffold-manifest.json")
+    if manifest_error:
+        errors.append(f"scaffold-manifest.json: {manifest_error}")
+    else:
+        errors.extend(check_rewrite_ownership_manifest(project, manifest))
+        if isinstance(design, dict):
+            errors.extend(check_typed_ffi_scaffold(project, design))
+        rewrite_state, rewrite_state_error = load_json(root / "logs" / "trace" / "rewrite-state.json")
+        if rewrite_state_error:
+            errors.append(f"rewrite-state.json: {rewrite_state_error}")
+        else:
+            manifest_path = root / "logs" / "trace" / "scaffold-manifest.json"
+            if rewrite_state.get("manifest_sha256") != _file_sha256(manifest_path):
+                errors.append("static REWRITE ownership manifest changed after controller initialization")
+            if rewrite_state.get("phase") != "READY" or rewrite_state.get("status") != "ready_for_finish":
+                errors.append("static REWRITE state must be READY before the stage gate")
+            core_revision = rewrite_state.get("core_revision")
+            facade_revision = rewrite_state.get("facade_revision")
+            if not isinstance(core_revision, int) or core_revision < 1:
+                errors.append("static REWRITE must have a completed core revision")
+            if not isinstance(facade_revision, int) or facade_revision < 1:
+                errors.append("static REWRITE must have a completed facade revision")
+            if rewrite_state.get("facade_based_on_core_revision") != core_revision:
+                errors.append("latest facade evidence is stale for the current core revision")
+            latest = rewrite_state.get("latest_receipts")
+            ownership = manifest.get("rewrite_ownership", {}) if isinstance(manifest, dict) else {}
+            owner_keys = {
+                "IMPLEMENT_CORE": "core_owned_paths",
+                "WIRE_FACADE": "facade_owned_paths",
+            }
+            for role, owner_key in owner_keys.items():
+                receipt_rel = latest.get(role) if isinstance(latest, dict) else None
+                if not isinstance(receipt_rel, str):
+                    errors.append(f"static REWRITE has no latest {role} receipt")
+                    continue
+                receipt, receipt_error = load_json(root / receipt_rel)
+                if receipt_error:
+                    errors.append(f"{role} receipt: {receipt_error}")
+                    continue
+                if receipt.get("role") != role or receipt.get("status") != "complete":
+                    errors.append(f"latest {role} receipt must be complete and role-bound")
+                if receipt.get("parent_run_id") != rewrite_state.get("parent_run_id"):
+                    errors.append(f"latest {role} receipt belongs to another REWRITE parent run")
+                expected_revision = core_revision if role == "IMPLEMENT_CORE" else facade_revision
+                if receipt.get("revision") != expected_revision:
+                    errors.append(f"latest {role} receipt has a stale revision")
+                if role == "WIRE_FACADE" and receipt.get("based_on_core_revision") != core_revision:
+                    errors.append("latest WIRE_FACADE receipt is not based on the latest core revision")
+                allowed = set(ownership.get(owner_key, [])) if isinstance(ownership, dict) else set()
+                changed = receipt.get("changed_files")
+                invalid = [
+                    item for item in changed if isinstance(item, str)
+                    if item.removeprefix("flashDB_rust/") not in allowed
+                ] if isinstance(changed, list) else []
+                if invalid:
+                    errors.append(f"{role} receipt contains paths owned by another role: {', '.join(invalid)}")
+                generated = manifest.get("files", {}) if isinstance(manifest, dict) else {}
+                actual_owner_changes = {
+                    f"flashDB_rust/{item}"
+                    for item in allowed
+                    if not (project / item).is_file()
+                    or not isinstance(generated.get(item), dict)
+                    or generated[item].get("sha256") != _file_sha256(project / item)
+                }
+                recorded_owner_changes = set(changed) if isinstance(changed, list) else set()
+                if actual_owner_changes != recorded_owner_changes:
+                    errors.append(f"latest {role} receipt does not match cumulative owner diff")
+                recorded_hashes = receipt.get("changed_file_hashes")
+                if not isinstance(recorded_hashes, dict):
+                    errors.append(f"latest {role} receipt has no changed-file hashes")
+                else:
+                    stale_hashes = [
+                        item for item, expected in recorded_hashes.items()
+                        if not isinstance(item, str)
+                        or not isinstance(expected, str)
+                        or not (root / item).is_file()
+                        or _file_sha256(root / item) != expected
+                    ]
+                    if stale_hashes:
+                        errors.append(f"latest {role} receipt hashes are stale: {', '.join(stale_hashes)}")
+                check_rel = receipt.get("check_receipt")
+                check, check_error = load_json(root / check_rel) if isinstance(check_rel, str) else (None, "missing")
+                if (
+                    check_error
+                    or not isinstance(check, dict)
+                    or check.get("status") != "pass"
+                    or check.get("role") != role
+                    or check.get("revision") != receipt.get("attempt")
+                ):
+                    errors.append(f"latest {role} receipt must reference a passing bounded check")
     modules = design.get("modules", []) if not design_error and isinstance(design, dict) else []
     if not isinstance(modules, list) or not modules:
         errors.append("rust_api_design.json modules must be available for REWRITE_CORE_MODULES")

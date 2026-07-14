@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shlex
@@ -727,6 +728,69 @@ def build_task_packet(
     }
 
 
+def apply_static_rewrite_role(
+    packet: dict[str, Any],
+    manifest: dict[str, Any],
+    role: str,
+    rust_project: str,
+) -> None:
+    """Restrict a REWRITE packet to one generator-owned static worker role."""
+    normalized = role.upper()
+    if normalized not in {"IMPLEMENT_CORE", "WIRE_FACADE"}:
+        raise ValueError(f"unsupported rewrite role: {role}")
+    ownership = manifest.get("rewrite_ownership")
+    if not isinstance(ownership, dict) or ownership.get("schema_version") != 1:
+        raise ValueError("scaffold manifest has no supported rewrite_ownership contract")
+    key = "core_owned_paths" if normalized == "IMPLEMENT_CORE" else "facade_owned_paths"
+    raw_paths = ownership.get(key)
+    if not isinstance(raw_paths, list) or not raw_paths or not all(isinstance(item, str) and item for item in raw_paths):
+        raise ValueError(f"rewrite ownership {key} must be a non-empty string list")
+    project = rust_project.rstrip("/")
+    packet["rewrite_role"] = normalized
+    packet["allowed_modification_paths"] = [f"{project}/{item}" for item in raw_paths]
+    packet["read_only_paths"] = [
+        f"{project}/{item}"
+        for category in [
+            "core_owned_paths",
+            "facade_owned_paths",
+            "frozen_contract_paths",
+            "shared_readonly_paths",
+        ]
+        for item in ownership.get(category, [])
+        if isinstance(item, str) and item not in raw_paths
+    ]
+    packet["verification_commands"] = []
+    packet["completion_contract"] = {
+        "command": (
+            "python3 work/tools/workflowctl.py --root . finish-rewrite-worker "
+            "--worker-run-id <WORKER_RUN_ID> --nonce <WORKER_NONCE> --status complete"
+        ),
+        "owner": "workflowctl",
+        "rule": "The worker edits only its owner paths; workflowctl computes diffs and runs bounded checks.",
+    }
+    packet.setdefault("command_notes", []).extend([
+        "This is one fixed static REWRITE role, not a dynamic batch. Do not change roles or edit the other owner's files.",
+        "Do not run workflowctl stage finish, regenerate the scaffold, or create source backups.",
+    ])
+    if normalized == "IMPLEMENT_CORE":
+        packet["objective"] = "Implement internal Rust behavior only in generator-declared core-owned files."
+        packet["facade_contracts"] = []
+    else:
+        packet["objective"] = "Wire generated external ABI function bodies to the existing internal Rust API."
+        packet["requirements"] = []
+        packet["scenarios"] = []
+        packet["facade_contracts"] = ownership.get("frozen_contract_symbols", [])
+        packet["symbols"] = sorted({
+            item.get("symbol")
+            for item in packet["facade_contracts"]
+            if isinstance(item, dict) and isinstance(item.get("symbol"), str)
+        })
+        packet["command_notes"].append(
+            "If the frozen facade cannot be wired because an internal API is missing, finish with "
+            "--status missing_core_capability --reason '<brief required capability>'."
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Create a bounded per-stage conversion task packet.")
     parser.add_argument("--root", default=".", help="Conversion workbench root.")
@@ -741,6 +805,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-requirements", type=int, help="Defaults to workflow-contract.json")
     parser.add_argument("--max-scenarios", type=int, help="Defaults to workflow-contract.json")
     parser.add_argument("--max-steps", type=int, help="Defaults to workflow-contract.json")
+    parser.add_argument(
+        "--rewrite-role",
+        choices=["IMPLEMENT_CORE", "WIRE_FACADE"],
+        help="Generate one static REWRITE worker packet from scaffold ownership.",
+    )
     args = parser.parse_args(argv)
 
     if any(value is not None and value < 1 for value in (args.max_requirements, args.max_scenarios, args.max_steps)):
@@ -765,16 +834,34 @@ def main(argv: list[str] | None = None) -> int:
     if args.action and stage == "VERIFY_RUST_WITH_C_TESTS":
         repair_plan = dict(repair_plan or {})
         repair_plan["next_action"] = normalize_stage(args.action)
+    implementation_requirements = design.get("implementation_requirements", [])
+    role_requirement_limit = (
+        max(1, len(implementation_requirements))
+        if args.rewrite_role == "IMPLEMENT_CORE" and isinstance(implementation_requirements, list)
+        else args.max_requirements
+    )
     packet = build_task_packet(
         stage,
         design,
         test_model,
         repair_plan,
         rust_project=args.rust_project,
-        max_requirements=args.max_requirements,
+        max_requirements=role_requirement_limit,
         max_scenarios=args.max_scenarios,
         max_steps=args.max_steps,
     )
+    if args.rewrite_role:
+        if stage != "REWRITE_CORE_MODULES":
+            parser.error("--rewrite-role is only valid for REWRITE_CORE_MODULES")
+        manifest_path = root / "logs" / "trace" / "scaffold-manifest.json"
+        if not manifest_path.is_file():
+            parser.error("--rewrite-role requires logs/trace/scaffold-manifest.json")
+        apply_static_rewrite_role(
+            packet,
+            load_json(manifest_path),
+            args.rewrite_role,
+            args.rust_project,
+        )
     state_path = root / "logs" / "trace" / "workflow_state.json"
     runtime_context: dict[str, Any] = {}
     if state_path.is_file():
@@ -792,11 +879,18 @@ def main(argv: list[str] | None = None) -> int:
         triage = load_last_jsonl_object(root / "logs" / "trace" / "test-failure-triage.jsonl")
         apply_test_triage_scope(packet, triage)
         packet["triage_authorization"] = triage
-    packet["source_artifacts"] = {
-        "design": design_path.as_posix() if design_path.is_file() else None,
-        "test_model": test_model_path.as_posix() if test_model_path.is_file() else None,
-        "repair_plan": repair_path.as_posix() if repair_path else None,
-    }
+    if args.rewrite_role:
+        packet["controller_inputs"] = {
+            "design_sha256": hashlib.sha256(design_path.read_bytes()).hexdigest() if design_path.is_file() else None,
+            "test_model_sha256": hashlib.sha256(test_model_path.read_bytes()).hexdigest() if test_model_path.is_file() else None,
+            "agent_readable": False,
+        }
+    else:
+        packet["source_artifacts"] = {
+            "design": design_path.as_posix() if design_path.is_file() else None,
+            "test_model": test_model_path.as_posix() if test_model_path.is_file() else None,
+            "repair_plan": repair_path.as_posix() if repair_path else None,
+        }
     output = rooted(args.output, str(Path(args.trace_dir) / "task-packets" / f"{stage}.json"))
     write_json(output, packet)
     print("TASK_PACKET: WRITTEN")

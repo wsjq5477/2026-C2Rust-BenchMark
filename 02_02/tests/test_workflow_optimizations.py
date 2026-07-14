@@ -33,6 +33,7 @@ CONVERGE = load_tool("c_cross_converge.py")
 TASK_PACKET = load_tool("task_packet.py")
 C_MODEL = load_tool("build_c_model.py")
 REPORT_WRITER = load_tool("report_writer.py")
+GATE = load_tool("gate.py")
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -143,7 +144,9 @@ class WorkflowControllerContractTests(unittest.TestCase):
                 root=str(root), stage="REWRITE_CORE_MODULES", agent="rust-implementer",
                 allow_path=[], require_output=[], resume=False,
             )
-            with mock.patch.object(WORKFLOWCTL, "_invoke_task_packet", return_value=None):
+            with mock.patch.object(WORKFLOWCTL, "_invoke_task_packet", return_value=None), mock.patch.object(
+                WORKFLOWCTL, "_prepare_static_rewrite", return_value=None
+            ):
                 self.assertEqual(0, WORKFLOWCTL.cmd_begin(args))
             active = json.loads(state_path.read_text(encoding="utf-8"))["active_stage_run"]
             run = json.loads((root / active["run_file"]).read_text(encoding="utf-8"))
@@ -395,6 +398,23 @@ class ScaffoldAndImplementationAuditTests(unittest.TestCase):
             manifest_doc = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(["fdb_get"], manifest_doc["stub_symbols"])
             self.assertIn("body_normalized_sha256", manifest_doc["ffi_functions"]["fdb_get"])
+            ownership = manifest_doc["rewrite_ownership"]
+            self.assertIn("src/kvdb.rs", ownership["core_owned_paths"])
+            self.assertIn("src/ffi/c_abi.rs", ownership["facade_owned_paths"])
+            self.assertEqual("fdb_get", ownership["frozen_contract_symbols"][0]["symbol"])
+            categories = [
+                set(ownership[name])
+                for name in [
+                    "core_owned_paths",
+                    "facade_owned_paths",
+                    "frozen_contract_paths",
+                    "shared_readonly_paths",
+                ]
+            ]
+            self.assertEqual(sum(map(len, categories)), len(set().union(*categories)))
+            self.assertEqual(
+                [], GATE.check_rewrite_ownership_manifest(project, manifest_doc)
+            )
 
             initial = self._audit(root, project, design, manifest)
             initial_codes = {finding["code"] for finding in initial["findings"]}
@@ -429,6 +449,17 @@ class ScaffoldAndImplementationAuditTests(unittest.TestCase):
             )
             implemented = self._audit(root, project, design, manifest)
             self.assertEqual("pass", implemented["status"], implemented["findings"])
+
+            changed_signature = (project / "src" / "ffi" / "c_abi.rs").read_text(
+                encoding="utf-8"
+            ).replace(") -> i32", ") -> i64")
+            (project / "src" / "ffi" / "c_abi.rs").write_text(
+                changed_signature, encoding="utf-8"
+            )
+            signature_errors = GATE.check_rewrite_ownership_manifest(project, manifest_doc)
+            self.assertTrue(
+                any("frozen external signature changed" in item for item in signature_errors)
+            )
 
     def test_abi_arrays_and_anonymous_aggregates_use_exact_byte_storage(self):
         array = {
@@ -535,6 +566,328 @@ class ScaffoldAndImplementationAuditTests(unittest.TestCase):
                 "stale probe\n", (ffi / "layout_probe.rs").read_text(encoding="utf-8")
             )
             self.assertFalse((project / "Cargo.toml").exists())
+
+
+class StaticRewriteControllerTests(unittest.TestCase):
+    def _prepare(self, root: Path) -> tuple[Path, dict]:
+        self.assertEqual(
+            0,
+            WORKFLOWCTL.cmd_init(
+                argparse.Namespace(root=str(root), force=False, max_c_cross_repairs=6)
+            ),
+        )
+        project = root / "flashDB_rust"
+        design_path = root / "logs" / "trace" / "rust_api_design.json"
+        manifest_path = root / "logs" / "trace" / "scaffold-manifest.json"
+        design = {
+            "crate_name": "static_rewrite_fixture",
+            "modules": ["error", "core_model"],
+            "implementation_requirements": [
+                {
+                    "id": "REQ-1",
+                    "invariant": "Values written to the model can be read back.",
+                    "symbols": ["model_set", "model_get"],
+                    "acceptance_scenarios": ["set_then_get"],
+                    "suggested_files": ["src/core_model.rs"],
+                    "dependency_ids": [],
+                }
+            ],
+            "c_abi_facade": {
+                "functions": [
+                    {
+                        "rust_export": "fixture_export",
+                        "params": [],
+                        "return": {"rust_ffi_type": "i32"},
+                    }
+                ]
+            },
+        }
+        write_json(design_path, design)
+        write_json(root / "logs" / "trace" / "c_test_model.json", {})
+        SCAFFOLD.generate_project(
+            design,
+            project,
+            manifest_path=manifest_path,
+            design_path=design_path,
+        )
+        state_path = root / "logs" / "trace" / "workflow_state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.update(
+            {
+                "current_stage": "GENERATE_RUST_SCAFFOLD",
+                "checkpoint": "GENERATE_RUST_SCAFFOLD",
+                "next_action": "REWRITE_CORE_MODULES",
+            }
+        )
+        write_json(state_path, state)
+        return project, design
+
+    def _packet(self, root: Path, role: str) -> str:
+        design = json.loads(
+            (root / "logs" / "trace" / "rust_api_design.json").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (root / "logs" / "trace" / "scaffold-manifest.json").read_text(encoding="utf-8")
+        )
+        packet = TASK_PACKET.build_task_packet(
+            "REWRITE_CORE_MODULES", design, {}, None, rust_project="flashDB_rust"
+        )
+        TASK_PACKET.apply_static_rewrite_role(packet, manifest, role, "flashDB_rust")
+        packet.pop("source_artifacts", None)
+        path = (
+            root
+            / "logs"
+            / "trace"
+            / "task-packets"
+            / f"rewrite_core_modules-{role.lower()}.json"
+        )
+        write_json(path, packet)
+        return path.relative_to(root).as_posix()
+
+    def _begin_parent(self, root: Path) -> dict:
+        with mock.patch.object(WORKFLOWCTL, "_invoke_task_packet", return_value=None):
+            self.assertEqual(
+                0,
+                WORKFLOWCTL.cmd_begin(
+                    argparse.Namespace(
+                        root=str(root),
+                        stage="REWRITE_CORE_MODULES",
+                        agent="rust-implementer",
+                        allow_path=[],
+                        require_output=[],
+                        resume=False,
+                    )
+                ),
+            )
+        return json.loads(
+            (root / "logs" / "trace" / "workflow_state.json").read_text(encoding="utf-8")
+        )["active_stage_run"]
+
+    def _begin_worker(self, root: Path) -> dict:
+        def fake_packet(_root, _stage, action=None, rewrite_role=None):
+            self.assertIsNotNone(rewrite_role)
+            return self._packet(root, rewrite_role)
+
+        with mock.patch.object(WORKFLOWCTL, "_invoke_task_packet", side_effect=fake_packet):
+            self.assertEqual(
+                0,
+                WORKFLOWCTL.cmd_next_rewrite_worker(argparse.Namespace(root=str(root))),
+            )
+        return json.loads(
+            (root / "logs" / "trace" / "rewrite-state.json").read_text(encoding="utf-8")
+        )["active_worker"]
+
+    def _finish_worker(self, root: Path, active: dict) -> int:
+        run = json.loads((root / active["run_file"]).read_text(encoding="utf-8"))
+        write_json(
+            root
+            / "logs"
+            / "trace"
+            / "rewrite-check"
+            / run["role"].lower()
+            / str(run["attempt"])
+            / "result.json",
+            {
+                "schema_version": 1,
+                "role": run["role"],
+                "revision": run["attempt"],
+                "status": "pass",
+                "phases": [],
+            },
+        )
+        completed = argparse.Namespace(returncode=0, stdout="{}")
+        with mock.patch.object(WORKFLOWCTL.subprocess, "run", return_value=completed):
+            return WORKFLOWCTL.cmd_finish_rewrite_worker(
+                argparse.Namespace(
+                    root=str(root),
+                    worker_run_id=active["worker_run_id"],
+                    nonce=active["nonce"],
+                    status="complete",
+                )
+            )
+
+    def test_static_rewrite_enforces_owner_order_and_forward_revisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            project, _ = self._prepare(root)
+            self._begin_parent(root)
+
+            core_worker = self._begin_worker(root)
+            self.assertEqual("IMPLEMENT_CORE", core_worker["role"])
+            (project / "src" / "core_model.rs").write_text(
+                "pub fn model_ready() -> bool { true }\n", encoding="utf-8"
+            )
+            self.assertEqual(0, self._finish_worker(root, core_worker))
+            rewrite = json.loads(
+                (root / "logs" / "trace" / "rewrite-state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("FACADE", rewrite["phase"])
+            self.assertEqual(1, rewrite["core_revision"])
+
+            facade_worker = self._begin_worker(root)
+            self.assertEqual("WIRE_FACADE", facade_worker["role"])
+            (project / "src" / "ffi" / "c_abi.rs").write_text(
+                '#[no_mangle]\npub extern "C" fn fixture_export() -> i32 { 7 }\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(0, self._finish_worker(root, facade_worker))
+            rewrite = json.loads(
+                (root / "logs" / "trace" / "rewrite-state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("READY", rewrite["phase"])
+            self.assertEqual(1, rewrite["facade_revision"])
+            self.assertEqual(1, rewrite["facade_based_on_core_revision"])
+
+    def test_static_rewrite_rejects_cross_owner_edits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            project, _ = self._prepare(root)
+            self._begin_parent(root)
+            active = self._begin_worker(root)
+            (project / "src" / "ffi" / "c_abi.rs").write_text(
+                '#[no_mangle]\npub extern "C" fn fixture_export() -> i32 { 9 }\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(WORKFLOWCTL.WorkflowError, "another owner/frozen"):
+                self._finish_worker(root, active)
+
+    def test_static_retry_packet_carries_bounded_failure_and_cumulative_diff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            project, _ = self._prepare(root)
+            self._begin_parent(root)
+            first = self._begin_worker(root)
+            (project / "src" / "core_model.rs").write_text(
+                "pub fn model_ready() -> bool { true }\n", encoding="utf-8"
+            )
+            first_run = json.loads((root / first["run_file"]).read_text(encoding="utf-8"))
+            first_result = (
+                root
+                / "logs"
+                / "trace"
+                / "rewrite-check"
+                / first_run["role"].lower()
+                / str(first_run["attempt"])
+                / "result.json"
+            )
+            write_json(
+                first_result,
+                {
+                    "schema_version": 1,
+                    "role": "IMPLEMENT_CORE",
+                    "revision": 1,
+                    "status": "fail",
+                    "phases": [
+                        {
+                            "phase": "check",
+                            "status": "fail",
+                            "exit_code": 101,
+                            "log_path": "logs/trace/rewrite-check/implement_core/1/check.log",
+                            "tail": "missing internal method",
+                        }
+                    ],
+                },
+            )
+            failed = argparse.Namespace(returncode=1, stdout="failed")
+            with mock.patch.object(WORKFLOWCTL.subprocess, "run", return_value=failed):
+                self.assertEqual(
+                    0,
+                    WORKFLOWCTL.cmd_finish_rewrite_worker(
+                        argparse.Namespace(
+                            root=str(root),
+                            worker_run_id=first["worker_run_id"],
+                            nonce=first["nonce"],
+                            status="complete",
+                            reason=None,
+                        )
+                    ),
+                )
+
+            second = self._begin_worker(root)
+            second_run = json.loads((root / second["run_file"]).read_text(encoding="utf-8"))
+            packet = json.loads((root / second_run["packet"]).read_text(encoding="utf-8"))
+            self.assertIn("missing internal method", json.dumps(packet["retry_context"]))
+            command = packet["completion_contract"]["command"]
+            self.assertIn(second["worker_run_id"], command)
+            self.assertNotIn("<WORKER_", command)
+
+            self.assertEqual(0, self._finish_worker(root, second))
+            rewrite = json.loads(
+                (root / "logs" / "trace" / "rewrite-state.json").read_text(encoding="utf-8")
+            )
+            receipt = json.loads(
+                (root / rewrite["latest_receipts"]["IMPLEMENT_CORE"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual([], receipt["attempt_changed_files"])
+            self.assertEqual(
+                ["flashDB_rust/src/core_model.rs"], receipt["changed_files"]
+            )
+
+    def test_static_role_packets_have_disjoint_write_scopes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self._prepare(root)
+            design = json.loads(
+                (root / "logs" / "trace" / "rust_api_design.json").read_text(encoding="utf-8")
+            )
+            manifest = json.loads(
+                (root / "logs" / "trace" / "scaffold-manifest.json").read_text(encoding="utf-8")
+            )
+            core = TASK_PACKET.build_task_packet(
+                "REWRITE_CORE_MODULES", design, {}, None, rust_project="flashDB_rust"
+            )
+            facade = TASK_PACKET.build_task_packet(
+                "REWRITE_CORE_MODULES", design, {}, None, rust_project="flashDB_rust"
+            )
+            TASK_PACKET.apply_static_rewrite_role(core, manifest, "IMPLEMENT_CORE", "flashDB_rust")
+            TASK_PACKET.apply_static_rewrite_role(facade, manifest, "WIRE_FACADE", "flashDB_rust")
+            self.assertTrue(
+                set(core["allowed_modification_paths"]).isdisjoint(
+                    facade["allowed_modification_paths"]
+                )
+            )
+            self.assertTrue(core["requirements"])
+            self.assertEqual([], facade["requirements"])
+            self.assertTrue(facade["facade_contracts"])
+
+    def test_core_role_packet_keeps_all_model_derived_requirements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self._prepare(root)
+            design_path = root / "logs" / "trace" / "rust_api_design.json"
+            design = json.loads(design_path.read_text(encoding="utf-8"))
+            design["implementation_requirements"] = [
+                {
+                    "id": f"REQ-{index}",
+                    "invariant": f"model-derived invariant {index}",
+                    "symbols": [f"symbol_{index}"],
+                    "acceptance_scenarios": [f"scenario_{index}"],
+                    "suggested_files": ["src/core_model.rs"],
+                    "dependency_ids": [],
+                }
+                for index in range(15)
+            ]
+            write_json(design_path, design)
+            output = root / "logs" / "trace" / "task-packets" / "all-core.json"
+            self.assertEqual(
+                0,
+                TASK_PACKET.main(
+                    [
+                        "--root",
+                        str(root),
+                        "--stage",
+                        "REWRITE_CORE_MODULES",
+                        "--rewrite-role",
+                        "IMPLEMENT_CORE",
+                        "--output",
+                        str(output),
+                    ]
+                ),
+            )
+            packet = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(15, len(packet["requirements"]))
+            self.assertEqual([], packet["selection"]["omitted_requirement_ids"])
+            self.assertLess(output.stat().st_size, 24576)
 
 
 class RepairAndAttemptRoutingTests(unittest.TestCase):

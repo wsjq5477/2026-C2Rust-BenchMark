@@ -29,7 +29,7 @@
 5. **修复闭环独立**：`BUILD_TEST_REPAIR` 用 cargo 错误栈最小修复，禁止删除测试或弱化断言。
 6. **报告只收口**：`REPORT_AND_VERIFY` 汇总证据，不补写缺失实现。
 7. **核心域是下限，不是上限**：KVDB/TSDB/FlashStorage 必须覆盖，但真实 FlashDB 新增文件、目录和符号也必须被记录、分类、映射或显式排除。
-8. **构建检查前移**：`GENERATE_RUST_SCAFFOLD` 后立即 `cargo check`，`REWRITE_CORE_MODULES` 每个实现批次后 `cargo check`，避免把骨架错误和核心实现错误堆到 `BUILD_TEST_REPAIR`。
+8. **构建检查前移**：`GENERATE_RUST_SCAFFOLD` 后立即 `cargo check`；`REWRITE_CORE_MODULES` 的 CORE/FACADE worker 分别由控制器执行有界 check，通过前不释放下一角色，避免把骨架和集成错误堆到 `BUILD_TEST_REPAIR`。
 9. **主控判定、subagent 执行**：重阶段优先由 `c-analyzer`、`rust-implementer`、`test-migrator`、`repairer` 执行；主控只做调度、状态推进、gate 和最终报告。原生 subagent 不可用时用通用 subagent 读取 `work/skills/{subagent}.md` 执行，连续 3 次 subagent 失败后才允许主控 fallback。
 10. **短调度单，不替代文档**：主控传给 subagent 的提示词只包含动态上下文、目标阶段族、必须读取的 Markdown 和停止条件；业务规则以 `work/skills/{subagent}.md` 为准，禁止在调度提示中重写 API 清单、源码文件清单或实现策略。
 

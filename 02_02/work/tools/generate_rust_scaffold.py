@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCAFFOLD_SCHEMA_VERSION = 1
+SCAFFOLD_SCHEMA_VERSION = 2
 FFI_STUB_MARKER = "@c2rust-scaffold:neutral-ffi:v1"
 PLACEHOLDER_MODULE_MARKER = "@c2rust-scaffold:placeholder-module:v1"
 
@@ -449,6 +449,14 @@ def scaffold_ffi_specs(design: dict[str, Any]) -> list[dict[str, Any]]:
     return specs
 
 
+def canonical_ffi_signature(spec: dict[str, Any]) -> str:
+    """Return the generator-owned ABI signature contract, excluding the body."""
+    params = spec.get("params", [])
+    rendered_params = ",".join(str(item).strip() for item in params if isinstance(item, str))
+    return_type = str(spec.get("return_type") or "()").strip()
+    return f'{spec["symbol"]}({rendered_params})->{return_type}'
+
+
 def generate_typed_c_abi(design: dict[str, Any]) -> str:
     lines = [
         "//! Typed C ABI facade generated from rust_api_design.json.",
@@ -579,9 +587,11 @@ def write_scaffold_manifest(
             }
 
     ffi_functions: dict[str, Any] = {}
+    frozen_contract_symbols: list[dict[str, Any]] = []
     for spec in scaffold_ffi_specs(design):
         symbol = str(spec["symbol"])
         body = str(spec["body"])
+        signature = canonical_ffi_signature(spec)
         ffi_functions[symbol] = {
             "path": "src/ffi/c_abi.rs",
             "return_type": spec["return_type"],
@@ -589,6 +599,45 @@ def write_scaffold_manifest(
             "neutral_expression": body,
             "marker": FFI_STUB_MARKER,
         }
+        frozen_contract_symbols.append({
+            "symbol": symbol,
+            "path": "src/ffi/c_abi.rs",
+            "signature": signature,
+            "signature_sha256": _sha256_bytes(signature.encode("utf-8")),
+        })
+
+    core_owned_paths = {
+        f"src/{module}.rs"
+        for module in module_names(design)
+        if module not in {"c_abi", "ffi"}
+    }
+    core_owned_paths.update(
+        entry["path"]
+        for entry in placeholders.values()
+        if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    )
+    facade_owned_paths = {
+        entry["path"]
+        for entry in ffi_functions.values()
+        if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    }
+    frozen_contract_paths = {
+        "Cargo.toml",
+        "src/c_abi.rs",
+        "src/ffi/c_types.rs",
+        "src/ffi/layout_probe.rs",
+        "src/ffi/mod.rs",
+    }
+    shared_readonly_paths = {"src/lib.rs"}
+    generated_paths = set(files)
+    core_owned_paths &= generated_paths
+    facade_owned_paths &= generated_paths
+    frozen_contract_paths &= generated_paths
+    shared_readonly_paths &= generated_paths
+    # A generated module may be explicitly assigned another role.  Ownership
+    # categories must be disjoint so workers never infer precedence.
+    core_owned_paths -= facade_owned_paths | frozen_contract_paths | shared_readonly_paths
+    facade_owned_paths -= frozen_contract_paths | shared_readonly_paths
 
     if design_path is not None and design_path.is_file():
         design_sha256 = _sha256_bytes(design_path.read_bytes())
@@ -613,6 +662,17 @@ def write_scaffold_manifest(
         "ffi_functions": ffi_functions,
         "stub_symbols": sorted(ffi_functions),
         "placeholder_modules": placeholders,
+        "rewrite_ownership": {
+            "schema_version": 1,
+            "core_owned_paths": sorted(core_owned_paths),
+            "facade_owned_paths": sorted(facade_owned_paths),
+            "frozen_contract_paths": sorted(frozen_contract_paths),
+            "shared_readonly_paths": sorted(shared_readonly_paths),
+            "frozen_contract_symbols": sorted(
+                frozen_contract_symbols,
+                key=lambda item: (item["path"], item["symbol"]),
+            ),
+        },
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")

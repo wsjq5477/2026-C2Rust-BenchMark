@@ -240,33 +240,15 @@ python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
 
 ## REWRITE_CORE_MODULES
 
-由新的 `rust-implementer` subagent session 执行，读取 `work/skills/flashdb-migration/SKILL.md` 中 `REWRITE_CORE_MODULES` 规则，不继承 `GENERATE_RUST_SCAFFOLD` 的对话历史。
+外部仍只有一个阶段，内部由 `workflowctl` 固定调度两个全新 session：
 
-实现或完善：
+1. 父阶段 `begin` 后执行 `next-rewrite-worker`，先释放 `IMPLEMENT_CORE` packet。该 worker 只写 manifest 的 `core_owned_paths`。
+2. worker 执行 packet 给出的 `finish-rewrite-worker`；控制器核验真实 diff 并运行有界 core check。失败时重新释放同角色新 session，通过后进入 facade。
+3. 再次执行 `next-rewrite-worker`，释放 `WIRE_FACADE` packet。该 worker 只写 `facade_owned_paths`，且不得改变冻结签名。
+4. facade check 失败按所有权重试；缺 core 能力时 worker 返回 `missing_core_capability` 和不超过 1000 bytes 的简短 reason，控制器把该 handoff 放入新 CORE packet，并使旧 facade 回执失效。不得建立第三种 integration repair agent。
+5. rewrite 状态为 `READY` 后，执行状态输出中的父阶段 `finish`；控制器生成 `06-rewrite-core-modules.md`、`core_rewrite_batches.jsonl`、implementation audit、check 日志和 worker 回执并运行 gate。
 
-- `rust_api_design.json.modules` 声明的核心、支持和扩展模块
-- `rust_api_design.json.implementation_requirements` 声明的全部动态语义要求；sector/address、reload、control、GC、blob/iterator 和 status 要求必须落实到内部模型，不能只补 facade 返回值
-
-写入：
-
-- 中文 `logs/trace/06-rewrite-core-modules.md`
-- `logs/trace/core_rewrite_batches.jsonl`
-
-运行：
-
-```bash
-python3 work/tools/core_impl_audit.py --root . --project flashDB_rust --manifest logs/trace/scaffold-manifest.json --design logs/trace/rust_api_design.json --output logs/trace/implementation-audit.json
-```
-
-提交时由 `workflowctl finish` 自动执行：
-
-```bash
-python3 work/tools/gate.py --stage REWRITE_CORE_MODULES
-```
-
-不得写 `todo!()`、`unimplemented!()`，不得保留 scaffold marker、恒定 neutral return 或 `module_available() -> true` placeholder，不得把 C 源码放进 `flashDB_rust/src/`。batch changed_files 必须与 stage receipt 的真实 diff 一致。
-
-只有本阶段可按需读取 C 源码局部窗口。读取前必须说明要验证的模型缺口或实现疑点；超过 400 行的 C/Rust 文件禁止全文读取，必须先用 `rg` 定位，再读取命中点附近窗口，单次窗口不超过 120 行。不得全文读取 trace 大 JSON。
+四类路径 `core_owned_paths`、`facade_owned_paths`、`frozen_contract_paths`、`shared_readonly_paths` 全部由 scaffold manifest 推导，主控不得按模块名硬编码或临时扩大写范围。所有失败都在当前源码上向前修复；禁止 Git、`/tmp`、`cp` 源码备份/回退和重新生成 scaffold。
 
 ## VERIFY_RUST_WITH_C_TESTS
 

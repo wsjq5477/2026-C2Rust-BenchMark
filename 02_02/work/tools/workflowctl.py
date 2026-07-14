@@ -100,7 +100,16 @@ CONTROLLER_OWNED_PATTERNS = [
     "logs/trace/task-packets/**",
     "logs/trace/input-source-baseline.json",
     "logs/trace/test-failure-triage.jsonl",
+    "logs/trace/rewrite-state.json",
+    "logs/trace/rewrite-worker-runs/**",
+    "logs/trace/rewrite-worker-receipts/**",
+    "logs/trace/rewrite-check/**",
+    "logs/trace/core_rewrite_batches.jsonl",
+    "logs/trace/implementation-audit.json",
+    "logs/trace/06-rewrite-core-modules.md",
 ]
+REWRITE_SETTINGS = WORKFLOW_CONTRACT.get("rewrite_static", {})
+REWRITE_ROLES = {"CORE": "IMPLEMENT_CORE", "FACADE": "WIRE_FACADE"}
 
 
 class WorkflowError(RuntimeError):
@@ -407,11 +416,17 @@ def _suggested_agent(stage: str, action: str) -> str:
     return "controller"
 
 
-def _invoke_task_packet(root: Path, stage: str, action: str | None = None) -> str | None:
+def _invoke_task_packet(
+    root: Path,
+    stage: str,
+    action: str | None = None,
+    rewrite_role: str | None = None,
+) -> str | None:
     tool = root / "work" / "tools" / "task_packet.py"
     if not tool.exists():
         return None
-    output = root / "logs" / "trace" / "task-packets" / f"{stage.lower()}.json"
+    suffix = f"-{rewrite_role.lower().replace('_', '-')}" if rewrite_role else ""
+    output = root / "logs" / "trace" / "task-packets" / f"{stage.lower()}{suffix}.json"
     command = [
         sys.executable,
         str(tool),
@@ -424,10 +439,137 @@ def _invoke_task_packet(root: Path, stage: str, action: str | None = None) -> st
     ]
     if action:
         command.extend(["--action", action])
+    if rewrite_role:
+        command.extend(["--rewrite-role", rewrite_role])
     completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if completed.returncode != 0:
         raise WorkflowError("task packet generation failed:\n" + completed.stdout[-4000:])
     return output.relative_to(root).as_posix()
+
+
+def _rewrite_state_path(root: Path) -> Path:
+    return root / "logs" / "trace" / "rewrite-state.json"
+
+
+def _load_rewrite_state(root: Path) -> dict[str, Any]:
+    return _json(_rewrite_state_path(root))
+
+
+def _rewrite_manifest(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    manifest = _json(root / "logs" / "trace" / "scaffold-manifest.json")
+    ownership = manifest.get("rewrite_ownership")
+    if not isinstance(ownership, dict) or ownership.get("schema_version") != 1:
+        raise WorkflowError("scaffold manifest has no supported rewrite_ownership contract")
+    categories: dict[str, set[str]] = {}
+    names = [
+        "core_owned_paths",
+        "facade_owned_paths",
+        "frozen_contract_paths",
+        "shared_readonly_paths",
+    ]
+    generated = manifest.get("files")
+    generated_paths = set(generated) if isinstance(generated, dict) else set()
+    for name in names:
+        values = ownership.get(name)
+        if not isinstance(values, list) or not all(isinstance(item, str) and item for item in values):
+            raise WorkflowError(f"rewrite ownership {name} must be a string list")
+        if any(Path(item).is_absolute() or ".." in Path(item).parts for item in values):
+            raise WorkflowError(f"rewrite ownership {name} contains unsafe paths")
+        categories[name] = set(values)
+    for index, left in enumerate(names):
+        for right in names[index + 1:]:
+            overlap = categories[left] & categories[right]
+            if overlap:
+                raise WorkflowError(f"rewrite ownership {left}/{right} overlap: {', '.join(sorted(overlap))}")
+    classified = set().union(*(categories[name] for name in names))
+    if classified != generated_paths:
+        missing = sorted(generated_paths - classified)
+        unknown = sorted(classified - generated_paths)
+        raise WorkflowError(
+            "rewrite ownership must classify every generated file"
+            + (f"; missing={','.join(missing)}" if missing else "")
+            + (f"; unknown={','.join(unknown)}" if unknown else "")
+        )
+    placeholders = manifest.get("placeholder_modules")
+    placeholder_paths = {
+        entry.get("path") for entry in placeholders.values()
+        if isinstance(placeholders, dict) and isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    } if isinstance(placeholders, dict) else set()
+    if not placeholder_paths.issubset(categories["core_owned_paths"]):
+        raise WorkflowError("rewrite ownership must assign every placeholder module to IMPLEMENT_CORE")
+    ffi_functions = manifest.get("ffi_functions")
+    ffi_paths = {
+        entry.get("path") for entry in ffi_functions.values()
+        if isinstance(ffi_functions, dict) and isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    } if isinstance(ffi_functions, dict) else set()
+    if not ffi_paths.issubset(categories["facade_owned_paths"]):
+        raise WorkflowError("rewrite ownership must assign every generated FFI body to WIRE_FACADE")
+    return manifest, ownership
+
+
+def _prepare_static_rewrite(root: Path, parent_run_id: str) -> None:
+    manifest, _ = _rewrite_manifest(root)
+    path = _rewrite_state_path(root)
+    previous: dict[str, Any] | None = None
+    if path.is_file():
+        previous = _json(path)
+        if previous.get("parent_run_id") == parent_run_id:
+            return
+        if previous.get("manifest_sha256") != _sha256(
+            root / "logs" / "trace" / "scaffold-manifest.json"
+        ):
+            raise WorkflowError("scaffold ownership manifest changed between REWRITE parent runs")
+    generated = manifest.get("files")
+    if not isinstance(generated, dict):
+        raise WorkflowError("scaffold manifest generated-file hashes are malformed")
+    rust_project = str(_load_state(root).get("rust_project_path") or "flashDB_rust")
+    if previous is None:
+        changed_scaffold = [
+            relative
+            for relative, evidence in generated.items()
+            if not isinstance(relative, str)
+            or not isinstance(evidence, dict)
+            or not isinstance(evidence.get("sha256"), str)
+            or not (root / rust_project / relative).is_file()
+            or _sha256(root / rust_project / relative) != evidence.get("sha256")
+        ]
+        if changed_scaffold:
+            raise WorkflowError(
+                "REWRITE must start from the controller-verified scaffold: "
+                + ", ".join(str(item) for item in changed_scaffold[:20])
+            )
+    document = {
+        "schema_version": 1,
+        "parent_run_id": parent_run_id,
+        "manifest_sha256": _sha256(root / "logs" / "trace" / "scaffold-manifest.json"),
+        "scaffold_digest": _snapshot_digest({
+            f"flashDB_rust/{key}": value.get("sha256")
+            for key, value in manifest.get("files", {}).items()
+            if isinstance(key, str) and isinstance(value, dict) and isinstance(value.get("sha256"), str)
+        }),
+        "phase": "CORE",
+        "core_revision": 0,
+        "facade_revision": 0,
+        "facade_based_on_core_revision": None,
+        "active_worker": None,
+        "failed_checks": {"IMPLEMENT_CORE": 0, "WIRE_FACADE": 0},
+        "attempts": {"IMPLEMENT_CORE": 0, "WIRE_FACADE": 0},
+        "latest_receipts": {"IMPLEMENT_CORE": None, "WIRE_FACADE": None},
+        "invalidated_receipts": [],
+        "status": "running",
+    }
+    _atomic_json(path, document)
+
+
+def _active_rewrite_parent(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    state = _load_state(root)
+    active = state.get("active_stage_run")
+    if not isinstance(active, dict) or active.get("stage") != "REWRITE_CORE_MODULES":
+        raise WorkflowError("static rewrite worker requires an active REWRITE_CORE_MODULES parent run")
+    run_path = root / str(active.get("run_file") or "")
+    if not run_path.is_file() or _sha256(run_path) != active.get("run_sha256"):
+        raise WorkflowError("active REWRITE parent run record was modified")
+    return state, active
 
 
 def cmd_begin(args: argparse.Namespace) -> int:
@@ -473,7 +615,13 @@ def cmd_begin(args: argparse.Namespace) -> int:
     outside_contract = [item for item in requested if not _pattern_within(item, defaults)]
     if outside_contract:
         raise WorkflowError("additional allow paths must stay within the stage contract: " + ", ".join(outside_contract))
-    packet = _invoke_task_packet(root, stage, str(state.get("next_action") or requested_action))
+    # REWRITE's parent run is controller-only.  Giving it the generic broad
+    # packet would invite a weak agent to bypass the two exact-owner workers.
+    packet = (
+        None
+        if stage == "REWRITE_CORE_MODULES"
+        else _invoke_task_packet(root, stage, str(state.get("next_action") or requested_action))
+    )
     packet_allowed: list[str] = []
     if packet:
         packet_doc = _json(root / packet)
@@ -574,6 +722,8 @@ def cmd_begin(args: argparse.Namespace) -> int:
     state["current_stage"] = stage
     state["checkpoint"] = stage
     state["next_action"] = f"COMPLETE_{stage}"
+    if stage == "REWRITE_CORE_MODULES":
+        _prepare_static_rewrite(root, run_id)
     _atomic_json(_state_path(root), state)
     print("WORKFLOWCTL: STAGE_BEGUN")
     print(f"stage={stage}")
@@ -581,6 +731,8 @@ def cmd_begin(args: argparse.Namespace) -> int:
     print(f"nonce={nonce}")
     if packet:
         print(f"task_packet={packet}")
+    if stage == "REWRITE_CORE_MODULES":
+        print("next_command=python3 work/tools/workflowctl.py --root . next-rewrite-worker")
     return 0
 
 
@@ -592,6 +744,353 @@ def _diff(before: dict[str, str], after: dict[str, str]) -> dict[str, list[str]]
         "deleted": sorted(before_keys - after_keys),
         "modified": sorted(path for path in before_keys & after_keys if before[path] != after[path]),
     }
+
+
+def cmd_next_rewrite_worker(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    _, parent = _active_rewrite_parent(root)
+    rewrite = _load_rewrite_state(root)
+    if rewrite.get("parent_run_id") != parent.get("run_id"):
+        raise WorkflowError("rewrite state belongs to a different parent run")
+    if rewrite.get("active_worker"):
+        raise WorkflowError("a static rewrite worker is already active")
+    phase = str(rewrite.get("phase") or "")
+    role = REWRITE_ROLES.get(phase)
+    if role is None:
+        raise WorkflowError(f"no rewrite worker is available in phase {phase}")
+    attempts = rewrite.get("attempts")
+    if not isinstance(attempts, dict):
+        raise WorkflowError("rewrite state attempts are malformed")
+    attempt = int(attempts.get(role, 0) or 0) + 1
+    max_retries = int(REWRITE_SETTINGS.get("max_worker_retries", 3))
+    if attempt > max_retries:
+        raise WorkflowError(f"rewrite worker retry budget exhausted for {role}")
+    packet = _invoke_task_packet(root, "REWRITE_CORE_MODULES", rewrite_role=role)
+    if packet is None:
+        raise WorkflowError("static rewrite packet generation is unavailable")
+    packet_path = root / packet
+    packet_doc = _json(packet_path)
+    allowed = packet_doc.get("allowed_modification_paths")
+    if not isinstance(allowed, list) or not allowed or not all(isinstance(item, str) for item in allowed):
+        raise WorkflowError("static rewrite packet has no exact owner paths")
+    nonce = secrets.token_hex(16)
+    worker_run_id = f"{_now_ns()}-{role.lower().replace('_', '-')}"
+    completion = packet_doc.get("completion_contract")
+    if not isinstance(completion, dict) or not isinstance(completion.get("command"), str):
+        raise WorkflowError("static rewrite packet has no completion command")
+    completion["command"] = (
+        completion["command"]
+        .replace("<WORKER_RUN_ID>", worker_run_id)
+        .replace("<WORKER_NONCE>", nonce)
+    )
+
+    retry_context: list[dict[str, Any]] = []
+    latest = rewrite.get("latest_receipts")
+    candidate_roles = [role]
+    if role == "IMPLEMENT_CORE":
+        candidate_roles.append("WIRE_FACADE")
+    for prior_role in candidate_roles:
+        receipt_rel = latest.get(prior_role) if isinstance(latest, dict) else None
+        if not isinstance(receipt_rel, str) or not (root / receipt_rel).is_file():
+            continue
+        receipt = _json(root / receipt_rel)
+        if receipt.get("status") not in {"retry_required", "blocked"}:
+            continue
+        context: dict[str, Any] = {
+            "role": prior_role,
+            "status": receipt.get("status"),
+            "reason": receipt.get("reason"),
+            "receipt": receipt_rel,
+        }
+        check_rel = receipt.get("check_receipt")
+        if isinstance(check_rel, str) and (root / check_rel).is_file():
+            check = _json(root / check_rel)
+            phases = check.get("phases")
+            context["failed_checks"] = [
+                {
+                    "phase": item.get("phase"),
+                    "status": item.get("status"),
+                    "exit_code": item.get("exit_code"),
+                    "log_path": item.get("log_path"),
+                    "tail": str(item.get("tail") or "")[
+                        -int(REWRITE_SETTINGS.get("max_command_output_bytes", 8192)):
+                    ],
+                }
+                for item in phases
+                if isinstance(item, dict) and item.get("status") != "pass"
+            ] if isinstance(phases, list) else []
+        retry_context.append(context)
+    packet_doc["retry_context"] = retry_context
+    _atomic_json(packet_path, packet_doc)
+    max_packet = int(REWRITE_SETTINGS.get("max_packet_bytes", 24576))
+    if packet_path.stat().st_size > max_packet:
+        raise WorkflowError(
+            f"static rewrite packet exceeds configured budget: {packet_path.stat().st_size}>{max_packet}"
+        )
+    record = {
+        "schema_version": 1,
+        "worker_run_id": worker_run_id,
+        "parent_run_id": parent.get("run_id"),
+        "role": role,
+        "attempt": attempt,
+        "core_revision_before": int(rewrite.get("core_revision", 0) or 0),
+        "facade_revision_before": int(rewrite.get("facade_revision", 0) or 0),
+        "packet": packet,
+        "packet_sha256": _sha256(packet_path),
+        "allowed_paths": allowed,
+        "baseline": _snapshot(root, ["**"]),
+        "started_at_ns": _now_ns(),
+    }
+    run_path = root / "logs" / "trace" / "rewrite-worker-runs" / role.lower() / f"{worker_run_id}.json"
+    _atomic_json(run_path, record)
+    attempts[role] = attempt
+    rewrite["attempts"] = attempts
+    rewrite["active_worker"] = {
+        "worker_run_id": worker_run_id,
+        "nonce": nonce,
+        "role": role,
+        "run_file": run_path.relative_to(root).as_posix(),
+        "run_sha256": _sha256(run_path),
+    }
+    _atomic_json(_rewrite_state_path(root), rewrite)
+    print("WORKFLOWCTL: REWRITE_WORKER_BEGUN")
+    print(f"role={role}")
+    print(f"worker_run_id={worker_run_id}")
+    print(f"nonce={nonce}")
+    print(f"task_packet={packet}")
+    return 0
+
+
+def _append_rewrite_batch(
+    root: Path,
+    *,
+    role: str,
+    revision: int,
+    changed: list[str],
+    receipt_path: str,
+) -> None:
+    design = _json(root / "logs" / "trace" / "rust_api_design.json")
+    if role == "IMPLEMENT_CORE":
+        raw = design.get("implementation_requirements", [])
+        obligations = [
+            item.get("id") for item in raw
+            if isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("id")
+        ] if isinstance(raw, list) else []
+    else:
+        manifest = _json(root / "logs" / "trace" / "scaffold-manifest.json")
+        functions = manifest.get("ffi_functions", {})
+        obligations = [f"ffi:{item}" for item in sorted(functions)] if isinstance(functions, dict) else []
+    _append_jsonl(root / "logs" / "trace" / "core_rewrite_batches.jsonl", {
+        "schema_version": 2,
+        "stage": "REWRITE_CORE_MODULES",
+        "worker_role": role,
+        "revision": revision,
+        "status": "complete",
+        "changed_files": changed,
+        "obligations": obligations or [role.lower()],
+        "receipt": receipt_path,
+    })
+
+
+def _write_rewrite_stage_log(root: Path, rewrite: dict[str, Any]) -> None:
+    path = root / "logs" / "trace" / "06-rewrite-core-modules.md"
+    path.write_text(
+        "# REWRITE_CORE_MODULES\n\n"
+        "- 静态职责：IMPLEMENT_CORE → WIRE_FACADE。\n"
+        f"- core revision：{rewrite.get('core_revision', 0)}\n"
+        f"- facade revision：{rewrite.get('facade_revision', 0)}\n"
+        "- 修复方式：原地向前修复，不恢复旧源码。\n"
+        "- 验证证据：logs/trace/rewrite-check/ 与 rewrite-worker-receipts/。\n",
+        encoding="utf-8",
+    )
+
+
+def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    _, parent = _active_rewrite_parent(root)
+    rewrite = _load_rewrite_state(root)
+    active = rewrite.get("active_worker")
+    if not isinstance(active, dict):
+        raise WorkflowError("no active static rewrite worker")
+    if active.get("worker_run_id") != args.worker_run_id or active.get("nonce") != args.nonce:
+        raise WorkflowError("worker_run_id/nonce do not match active rewrite worker")
+    run_path = root / str(active.get("run_file") or "")
+    if not run_path.is_file() or _sha256(run_path) != active.get("run_sha256"):
+        raise WorkflowError("rewrite worker run record was modified")
+    run = _json(run_path)
+    role = str(run.get("role") or "")
+    if run.get("parent_run_id") != parent.get("run_id"):
+        raise WorkflowError("rewrite worker belongs to another parent run")
+    packet_path = root / str(run.get("packet") or "")
+    if not packet_path.is_file() or _sha256(packet_path) != run.get("packet_sha256"):
+        raise WorkflowError("rewrite worker packet was modified")
+
+    before = run.get("baseline") if isinstance(run.get("baseline"), dict) else {}
+    after = _snapshot(root, ["**"])
+    business_before = {key: value for key, value in before.items() if not _matches(key, CONTROLLER_OWNED_PATTERNS)}
+    business_after = {key: value for key, value in after.items() if not _matches(key, CONTROLLER_OWNED_PATTERNS)}
+    changes = _diff(business_before, business_after)
+    changed = sorted(changes["created"] + changes["modified"] + changes["deleted"])
+    allowed = [item for item in run.get("allowed_paths", []) if isinstance(item, str)]
+    unexpected = [item for item in changed if not _matches(item, allowed)]
+    if unexpected:
+        raise WorkflowError("rewrite worker modified another owner/frozen path: " + ", ".join(unexpected))
+    if any((root / item).is_symlink() for item in changed):
+        raise WorkflowError("rewrite worker created or modified a symlink")
+    parent_run_path = root / str(parent.get("run_file") or "")
+    parent_run = _json(parent_run_path)
+    parent_baseline = (
+        parent_run.get("baseline") if isinstance(parent_run.get("baseline"), dict) else {}
+    )
+    owner_before = {
+        key: value for key, value in parent_baseline.items()
+        if isinstance(key, str) and isinstance(value, str) and _matches(key, allowed)
+    }
+    owner_after = {
+        key: value for key, value in after.items()
+        if _matches(key, allowed)
+    }
+    owner_changes = _diff(owner_before, owner_after)
+    cumulative_changed = sorted(
+        owner_changes["created"] + owner_changes["modified"] + owner_changes["deleted"]
+    )
+
+    attempt = int(run.get("attempt", 0) or 0)
+    status = args.status
+    reason = str(getattr(args, "reason", None) or "").strip()
+    if len(reason.encode("utf-8")) > 1000:
+        raise WorkflowError("rewrite worker reason exceeds 1000 bytes")
+    if status == "missing_core_capability" and not reason:
+        raise WorkflowError("missing_core_capability requires a brief --reason")
+    check_receipt: str | None = None
+    next_phase = str(rewrite.get("phase") or "")
+    receipt_status = status
+    if status == "complete":
+        check_tool = root / "work" / "tools" / "rewrite_check.py"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(check_tool),
+                "--root",
+                str(root),
+                "--project",
+                str(_load_state(root).get("rust_project_path") or "flashDB_rust"),
+                "--role",
+                role,
+                "--revision",
+                str(attempt),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        check_path = root / "logs" / "trace" / "rewrite-check" / role.lower() / str(attempt) / "result.json"
+        check_receipt = check_path.relative_to(root).as_posix() if check_path.is_file() else None
+        check_result = _json(check_path) if check_path.is_file() else {}
+        check_ok = (
+            completed.returncode == 0
+            and check_result.get("status") == "pass"
+            and check_result.get("role") == role
+            and check_result.get("revision") == attempt
+        )
+        if not check_ok:
+            failed = rewrite.get("failed_checks")
+            if not isinstance(failed, dict):
+                failed = {}
+            failed[role] = int(failed.get(role, 0) or 0) + 1
+            rewrite["failed_checks"] = failed
+            maximum = int(REWRITE_SETTINGS.get("max_worker_failed_checks", 2))
+            receipt_status = "blocked" if failed[role] >= maximum else "retry_required"
+            if receipt_status == "blocked":
+                rewrite["phase"] = "BLOCKED"
+                rewrite["status"] = "blocked"
+            next_phase = str(rewrite.get("phase") or "")
+        elif role == "IMPLEMENT_CORE":
+            previous_facade = rewrite.get("latest_receipts", {}).get("WIRE_FACADE")
+            if previous_facade:
+                rewrite.setdefault("invalidated_receipts", []).append(previous_facade)
+            rewrite["core_revision"] = int(rewrite.get("core_revision", 0) or 0) + 1
+            rewrite["facade_based_on_core_revision"] = None
+            rewrite["phase"] = "FACADE"
+            next_phase = "FACADE"
+        elif role == "WIRE_FACADE":
+            rewrite["facade_revision"] = int(rewrite.get("facade_revision", 0) or 0) + 1
+            rewrite["facade_based_on_core_revision"] = int(rewrite.get("core_revision", 0) or 0)
+            rewrite["phase"] = "READY"
+            rewrite["status"] = "ready_for_finish"
+            next_phase = "READY"
+    elif status == "missing_core_capability":
+        if role != "WIRE_FACADE":
+            raise WorkflowError("missing_core_capability is only valid for WIRE_FACADE")
+        previous_facade = rewrite.get("latest_receipts", {}).get("WIRE_FACADE")
+        if previous_facade:
+            rewrite.setdefault("invalidated_receipts", []).append(previous_facade)
+        rewrite["facade_based_on_core_revision"] = None
+        rewrite["phase"] = "CORE"
+        next_phase = "CORE"
+        receipt_status = "retry_required"
+    elif status == "blocked":
+        rewrite["phase"] = "BLOCKED"
+        rewrite["status"] = "blocked"
+        next_phase = "BLOCKED"
+
+    revision = (
+        int(rewrite.get("core_revision", 0) or 0)
+        if role == "IMPLEMENT_CORE"
+        else int(rewrite.get("facade_revision", 0) or 0)
+    )
+    receipt_path = root / "logs" / "trace" / "rewrite-worker-receipts" / role.lower() / f"{args.worker_run_id}.json"
+    receipt = {
+        "schema_version": 1,
+        "worker_run_id": args.worker_run_id,
+        "parent_run_id": parent.get("run_id"),
+        "role": role,
+        "attempt": attempt,
+        "revision": revision,
+        "status": receipt_status,
+        "based_on_scaffold_digest": rewrite.get("scaffold_digest"),
+        "based_on_core_revision": run.get("core_revision_before") if role == "WIRE_FACADE" else None,
+        "attempt_changed_files": changed,
+        "changed_files": cumulative_changed,
+        "changed_file_hashes": {
+            item: _sha256(root / item) for item in cumulative_changed if (root / item).is_file()
+        },
+        "check_receipt": check_receipt,
+        "reason": reason or None,
+        "finished_at_ns": _now_ns(),
+        "next_phase": next_phase,
+        "supersedes": rewrite.get("latest_receipts", {}).get(role),
+    }
+    _atomic_json(receipt_path, receipt)
+    latest = rewrite.get("latest_receipts")
+    if not isinstance(latest, dict):
+        latest = {}
+    latest[role] = receipt_path.relative_to(root).as_posix()
+    rewrite["latest_receipts"] = latest
+    rewrite["active_worker"] = None
+    _atomic_json(_rewrite_state_path(root), rewrite)
+    if receipt_status == "complete":
+        _append_rewrite_batch(
+            root,
+            role=role,
+            revision=revision,
+            changed=cumulative_changed,
+            receipt_path=receipt_path.relative_to(root).as_posix(),
+        )
+        if next_phase == "READY":
+            _write_rewrite_stage_log(root, rewrite)
+    print("WORKFLOWCTL: REWRITE_WORKER_FINISHED")
+    print(f"role={role}")
+    print(f"status={receipt_status}")
+    print(f"receipt={receipt_path.relative_to(root).as_posix()}")
+    if next_phase in REWRITE_ROLES:
+        print("next_command=python3 work/tools/workflowctl.py --root . next-rewrite-worker")
+    elif next_phase == "READY":
+        print(
+            "next_command=python3 work/tools/workflowctl.py --root . finish "
+            f"--run-id {parent.get('run_id')} --nonce {parent.get('nonce')}"
+        )
+    return 1 if receipt_status == "blocked" else 0
 
 
 def _matrix_all_pass(root: Path) -> bool:
@@ -873,6 +1372,12 @@ def cmd_finish(args: argparse.Namespace) -> int:
         raise WorkflowError(f"active stage run has unsupported stage: {stage}")
     if stage != str(active.get("stage") or ""):
         raise WorkflowError("active state and run receipt disagree on stage")
+    if stage == "REWRITE_CORE_MODULES":
+        rewrite = _load_rewrite_state(root)
+        if rewrite.get("parent_run_id") != args.run_id or rewrite.get("phase") != "READY":
+            raise WorkflowError("REWRITE_CORE_MODULES cannot finish before static CORE/FACADE workers pass")
+        if rewrite.get("active_worker"):
+            raise WorkflowError("REWRITE_CORE_MODULES cannot finish while a static worker is active")
     if run.get("root") != _root_identity(root):
         raise WorkflowError("stage was begun from a different worktree/root identity")
     if run.get("run_id") != args.run_id or run.get("nonce") != args.nonce:
@@ -966,6 +1471,18 @@ def cmd_finish(args: argparse.Namespace) -> int:
         )
         if path not in expected_controller_changes
     ]
+    if stage == "REWRITE_CORE_MODULES":
+        rewrite_outputs = [
+            "logs/trace/rewrite-state.json",
+            "logs/trace/rewrite-worker-runs/**",
+            "logs/trace/rewrite-worker-receipts/**",
+            "logs/trace/rewrite-check/**",
+            "logs/trace/core_rewrite_batches.jsonl",
+            "logs/trace/implementation-audit.json",
+            "logs/trace/06-rewrite-core-modules.md",
+            "logs/trace/task-packets/rewrite_core_modules-*.json",
+        ]
+        controller_changes = [path for path in controller_changes if not _matches(path, rewrite_outputs)]
     if controller_changes:
         raise WorkflowError("stage modified controller-owned metadata: " + ", ".join(controller_changes))
 
@@ -1133,6 +1650,10 @@ def cmd_abort(args: argparse.Namespace) -> int:
     if not run_file.is_file() or run_file.is_symlink() or _sha256(run_file) != active.get("run_sha256"):
         raise WorkflowError("controller stage-run record was modified")
     run = _json(run_file)
+    if active.get("stage") == "REWRITE_CORE_MODULES" and _rewrite_state_path(root).is_file():
+        rewrite = _load_rewrite_state(root)
+        if rewrite.get("active_worker"):
+            raise WorkflowError("finish the active static rewrite worker before aborting its parent stage")
     if run.get("run_id") != args.run_id or run.get("nonce") != args.nonce:
         raise WorkflowError("stage run file does not match the active run credentials")
     state_before = run.get("state_before")
@@ -1171,6 +1692,20 @@ def cmd_abort(args: argparse.Namespace) -> int:
         )
         if path not in expected_controller_changes
     ]
+    if active.get("stage") == "REWRITE_CORE_MODULES":
+        controller_changes = [
+            path for path in controller_changes
+            if not _matches(path, [
+                "logs/trace/rewrite-state.json",
+                "logs/trace/rewrite-worker-runs/**",
+                "logs/trace/rewrite-worker-receipts/**",
+                "logs/trace/rewrite-check/**",
+                "logs/trace/core_rewrite_batches.jsonl",
+                "logs/trace/implementation-audit.json",
+                "logs/trace/06-rewrite-core-modules.md",
+                "logs/trace/task-packets/rewrite_core_modules-*.json",
+            ])
+        ]
     if controller_changes:
         raise WorkflowError("stage modified controller-owned metadata: " + ", ".join(controller_changes))
     business_changes = changed
@@ -1296,7 +1831,25 @@ def cmd_status(args: argparse.Namespace) -> int:
         if isinstance(active, dict):
             run_id = active.get("run_id")
             nonce = active.get("nonce")
-            if isinstance(run_id, str) and isinstance(nonce, str):
+            if active.get("stage") == "REWRITE_CORE_MODULES" and _rewrite_state_path(root).is_file():
+                rewrite = _load_rewrite_state(root)
+                print(f"rewrite_phase={rewrite.get('phase')}")
+                worker = rewrite.get("active_worker")
+                if isinstance(worker, dict):
+                    print(f"rewrite_worker={worker.get('role')}")
+                    print(
+                        "next_command=python3 work/tools/workflowctl.py --root . finish-rewrite-worker "
+                        f"--worker-run-id {worker.get('worker_run_id')} --nonce {worker.get('nonce')} "
+                        "--status complete"
+                    )
+                elif rewrite.get("phase") in REWRITE_ROLES:
+                    print("next_command=python3 work/tools/workflowctl.py --root . next-rewrite-worker")
+                elif rewrite.get("phase") == "READY" and isinstance(run_id, str) and isinstance(nonce, str):
+                    print(
+                        "next_command=python3 work/tools/workflowctl.py --root . finish "
+                        f"--run-id {run_id} --nonce {nonce}"
+                    )
+            elif isinstance(run_id, str) and isinstance(nonce, str):
                 print(
                     "next_command=python3 work/tools/workflowctl.py --root . finish "
                     f"--run-id {run_id} --nonce {nonce}"
@@ -1337,6 +1890,29 @@ def build_parser() -> argparse.ArgumentParser:
     finish.add_argument("--run-id", required=True)
     finish.add_argument("--nonce", required=True)
     finish.set_defaults(handler=cmd_finish)
+
+    rewrite_next = subparsers.add_parser(
+        "next-rewrite-worker",
+        help="Begin the next fixed static REWRITE worker from scaffold ownership.",
+    )
+    rewrite_next.set_defaults(handler=cmd_next_rewrite_worker)
+
+    rewrite_finish = subparsers.add_parser(
+        "finish-rewrite-worker",
+        help="Validate and commit one static REWRITE worker attempt.",
+    )
+    rewrite_finish.add_argument("--worker-run-id", required=True)
+    rewrite_finish.add_argument("--nonce", required=True)
+    rewrite_finish.add_argument(
+        "--status",
+        choices=["complete", "missing_core_capability", "blocked"],
+        required=True,
+    )
+    rewrite_finish.add_argument(
+        "--reason",
+        help="Brief bounded handoff reason, required for missing_core_capability.",
+    )
+    rewrite_finish.set_defaults(handler=cmd_finish_rewrite_worker)
 
     abort = subparsers.add_parser("abort", help="Abort an active stage without declaring completion.")
     abort.add_argument("--run-id", required=True)

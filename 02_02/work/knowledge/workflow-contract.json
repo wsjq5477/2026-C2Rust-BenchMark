@@ -4,6 +4,12 @@
     "max_scenario_steps": 16,
     "max_scenarios": 3
   },
+  "rewrite_static": {
+    "max_command_output_bytes": 8192,
+    "max_packet_bytes": 24576,
+    "max_worker_failed_checks": 3,
+    "max_worker_retries": 3
+  },
   "protected_paths": [
     "INSTRUCTION.md",
     "work/**",
@@ -149,6 +155,10 @@
         "flashDB_rust/src/**",
         "logs/trace/implementation-audit.json",
         "logs/trace/core_rewrite_batches.jsonl",
+        "logs/trace/rewrite-check/**",
+        "logs/trace/rewrite-worker-receipts/**",
+        "logs/trace/rewrite-worker-runs/**",
+        "logs/trace/rewrite-state.json",
         "logs/trace/06-rewrite-core-modules.md"
       ],
       "required_outputs": [

@@ -2,119 +2,150 @@
 
 ## 目标
 
-实现 FlashDB 核心 Rust 逻辑，包括存储抽象、KVDB、TSDB、reload、gc 和记录语义。若 `rust_api_design.json` 声明了支持模块或扩展模块，本阶段也必须按设计处理其最小可用语义或记录未完成原因，不能只实现 KVDB/TSDB 后忽略扩展输入。
+在不改变生成期合同的前提下完成 Rust 内部实现和外部 facade 接线，同时把一次可能耗尽上下文的长任务固定拆成两个短 session。拆分依据来自 scaffold manifest 的文件所有权，不依赖业务模块名、用例名或模型自行推断的依赖图。
 
-本阶段必须按批次实现，并在每个批次后运行 `cargo check`。不要一次性写完全部核心模块后才构建；越早构建，错误越局部，repairer 越容易做最小修复。
+## 执行结构
 
-## 执行主体
-
-```text
-flashdb-orchestrator
-flashdb-migration Skill
-work/tools/gate.py
-```
-
-不新增固定模块名的 core subagent，避免 public API 和存储语义被多个上下文改散。本阶段仍可由独立的 `rust-implementer` session 执行，但只按 `rust_api_design.json` 当前声明的模块分批推进，不预置固定任务清单。
-
-## 输入
+外部仍是一个 `REWRITE_CORE_MODULES` 阶段，内部固定顺序如下：
 
 ```text
-logs/trace/rust_api_design.json 的必要局部片段
-logs/trace/c_project_model.json 的必要局部片段
-logs/trace/c_api_model.json 的必要局部片段
-flashDB_rust/src/
-work/knowledge/flashdb-rust-architecture.md
+workflowctl parent run
+  -> IMPLEMENT_CORE（全新 session）
+  -> controller bounded core check
+  -> WIRE_FACADE（全新 session）
+  -> controller bounded facade check + implementation audit
+  -> parent gate
 ```
 
-## 输出
+不存在第三种 `INTEGRATION_REPAIR` agent。失败按照文件所有权返回原角色；每次重试启动新 session，只注入角色 packet、当前 owner 文件和有界失败 tail。
 
-```text
-rust_api_design.json.modules 声明的 Rust 源文件
-logs/trace/06-rewrite-core-modules.md
-logs/trace/core_rewrite_batches.jsonl
-logs/trace/cargo-check-06-<batch>.log
-logs/trace/workflow_state.json
-```
+## 所有权合同
 
-## 细节实现
+`generate_rust_scaffold.py` 在 `logs/trace/scaffold-manifest.json.rewrite_ownership` 中生成四类互斥路径：
 
-必须按 `rust_api_design.json.modules`、`support_modules` 和 `extension_modules` 的当前声明分批实现。批次名称、目标文件和顺序从设计产物推导，不在阶段文档中预置固定函数、固定 case 或固定实现任务清单。
+| 类型 | 可写者 | 规则 |
+|---|---|---|
+| `core_owned_paths` | `IMPLEMENT_CORE` | 内部 placeholder、状态和行为实现 |
+| `facade_owned_paths` | `WIRE_FACADE` | 外部函数体及内部 API 接线 |
+| `frozen_contract_paths` | 无 | 生成期 ABI、布局和构建合同 |
+| `shared_readonly_paths` | 无 | 两个角色均可读取的共享文件 |
 
-每完成一个批次，主控 Agent 必须运行：
+函数体可写但签名不可改的 facade 函数由 `frozen_contract_symbols` 单独记录签名和 hash。四类路径必须覆盖 manifest 中全部生成文件且彼此无交集；worker packet 的写路径必须是其中一个 owner 集合的精确展开，不能使用通配符或临时扩权。
 
-```bash
-cd flashDB_rust
-cargo check
-```
+## 角色职责
 
-当一个或多个动态 suite 对应的实现批次完成时，可运行定向 C-cross 检查点：
+### IMPLEMENT_CORE
 
-```bash
-python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --mode full --suite <model-derived-suite> --attempt-kind checkpoint --trigger implementation_batch
-```
+- 只消费 task packet 中的 requirements 和必要内部文件；
+- 只修改 `core_owned_paths`；
+- 实现内部模型、状态、行为和供 facade 调用的 Rust API；
+- 不修改 facade、ABI/layout 合同或共享文件；
+- 只有 packet 事实不足时才可按规则局部读取 C 源码。
 
-`<model-derived-suite>` 必须来自当前模型，不预置 suite 名。检查点只提供局部反馈；阶段结束仍需执行 all-suite 中间验证。
+### WIRE_FACADE
 
-失败时先修当前批次，不进入下一批。修复可以由主控完成；如果错误复杂，可以调用 `repairer`，但主控必须复跑 `cargo check` 并归档日志。
+- 只消费 packet 中的 `facade_contracts`、冻结签名和必要内部 API；
+- 只修改 `facade_owned_paths`；
+- 完成参数/返回值转换、边界检查、panic 隔离和内部 API 调用；
+- 不修改 core，不重新设计外部接口，不系统性读取 C 工程；
+- 若现有 core 缺少必要能力，以 `missing_core_capability` 返回控制器。
 
-每批记录到：
+## 控制器状态与前向修订
 
-```text
-logs/trace/core_rewrite_batches.jsonl
-```
+`logs/trace/rewrite-state.json` 记录 `phase`、`core_revision`、`facade_revision`、`facade_based_on_core_revision`、当前 worker、重试次数和最新回执。
 
-每条记录包含：
+- core check 通过后，`core_revision += 1`，阶段进入 `FACADE`；
+- facade check 通过后，`facade_revision += 1`，并绑定当前 `core_revision`；
+- facade 报告缺 core 能力时，阶段回到 `CORE`；
+- 新 core revision 会使旧 facade 回执失效，随后必须重新执行 facade；
+- 不恢复历史源码，不创建源码备份，所有修复都基于当前工作树向前修改。
 
-```json
-{
-  "stage": "REWRITE_CORE_MODULES",
-  "batch": "kvdb",
-  "files": ["flashDB_rust/src/kvdb.rs"],
-  "command": "cargo check",
-  "status": "pass",
-  "log": "logs/trace/cargo-check-06-kvdb.log"
-}
-```
-
-推荐日志命名：
-
-```text
-<batch> -> logs/trace/cargo-check-06-<batch>.log
-```
+这里的“回到 CORE”只改变下一责任人和 revision，不做 `git reset`、文件复制、`/tmp` 备份或 scaffold 再生成。
 
 ## 执行命令
 
+父阶段开始：
+
 ```bash
-python3 work/tools/gate.py --stage GENERATE_RUST_SCAFFOLD
-# opencode 分批实现 Rust core
-# 每个 batch 后执行 cargo check 并记录到 core_rewrite_batches.jsonl
-python3 ../work/tools/gate.py --stage REWRITE_CORE_MODULES --root ..
+python3 work/tools/workflowctl.py --root . begin --stage REWRITE_CORE_MODULES --agent rust-implementer
+python3 work/tools/workflowctl.py --root . next-rewrite-worker
 ```
+
+worker 完成后执行其 task packet 中带 nonce 的命令：
+
+```bash
+python3 work/tools/workflowctl.py --root . finish-rewrite-worker \
+  --worker-run-id <WORKER_RUN_ID> --nonce <WORKER_NONCE> --status complete
+```
+
+facade 确认缺少内部能力时：
+
+```bash
+python3 work/tools/workflowctl.py --root . finish-rewrite-worker \
+  --worker-run-id <WORKER_RUN_ID> --nonce <WORKER_NONCE> \
+  --status missing_core_capability --reason '<缺失的内部能力>'
+```
+
+按 `workflowctl status` 或命令输出继续 `next-rewrite-worker`。状态进入 `READY` 后，执行输出中的父阶段 `finish --run-id ... --nonce ...`。
+
+## 控制器检查
+
+`IMPLEMENT_CORE` 完成时，控制器运行：
+
+```text
+cargo fmt --check
+cargo check --all-targets
+```
+
+`WIRE_FACADE` 完成时，控制器运行：
+
+```text
+cargo fmt --check
+cargo build --release
+core_impl_audit.py
+```
+
+完整 stdout/stderr 写入 `logs/trace/rewrite-check/<role>/<attempt>/`；反馈给 worker 的内容受 `workflow-contract.json.rewrite_static.max_command_output_bytes` 限制，避免把重复构建日志重新注入上下文。
+
+## 机器证据
+
+控制器生成并维护：
+
+```text
+logs/trace/rewrite-state.json
+logs/trace/rewrite-worker-runs/
+logs/trace/rewrite-worker-receipts/
+logs/trace/rewrite-check/
+logs/trace/core_rewrite_batches.jsonl
+logs/trace/implementation-audit.json
+logs/trace/06-rewrite-core-modules.md
+```
+
+worker 不手写这些证据。`changed_files` 来自控制器对 worker 前后快照的真实 diff，且必须全部属于该 worker 的精确 owner 路径。
 
 ## Gate 检查
 
-`gate.py --stage REWRITE_CORE_MODULES` 必须检查：
+父阶段 gate 至少验证：
 
-- core Rust 文件存在且非空；
-- `rust_api_design.json.modules` 声明的支持/扩展模块存在且有实现或有明确未完成记录；
-- 不存在 `todo!()`、`unimplemented!()`；
-- `core_rewrite_batches.jsonl` 存在；
-- `core_rewrite_batches.jsonl` 覆盖 `rust_api_design.json.modules` 当前声明的模块；
-- 每个批次的 `status == pass`；
-- 最近一次 `cargo check` 证据存在且通过；
-- 不存在 `.c` 文件被放进 `flashDB_rust/src/`；
-- `workflow_state.json.current_stage == REWRITE_CORE_MODULES`。
+- ownership schema 有效、四类路径互斥并完整覆盖生成文件；
+- placeholder 文件属于 core，FFI function 文件属于 facade；
+- frozen symbol 签名与生成期合同一致；
+- rewrite 状态为 `READY`；
+- 最新 core/facade 回执均为 `complete`；
+- facade 回执绑定最新 core revision；
+- worker 真实 diff 没有越权文件；
+- controller check 回执均通过；
+- implementation audit 通过，源码无 scaffold placeholder、`todo!()` 或 `unimplemented!()`；
+- Rust release build 通过，且没有 C 源码进入 Rust 项目。
 
 ## 约束
 
-- 不迁移完整测试套件。
-- 不删除或弱化后续测试目标。
-- 不链接 C 源码。
-- unsafe 必须极少且有注释；优先 safe Rust。
-- 不改变已固定 public API，除非回退到 `DESIGN_RUST_API` 并记录原因。
-- 默认不全文读取 C 源码或 trace 大 JSON。只有模型事实不足以指导实现时，才允许说明缺口后读取 C 源码局部窗口；超过 400 行的 C/Rust 文件禁止全文读取。
-- 运行时代理不得修改 `work/**`、`INSTRUCTION.md`、`.opencode/**`、设计文档、评测测试或平台 C 输入；工作台问题只写入 `logs/trace/workbench-issues.jsonl`。
+- 不按具体业务模块、测试 suite 或固定用例硬编码拆分。
+- 不让弱模型识别内外接口；生成工具依据 scaffold 的生成来源写 ownership。
+- 不允许 worker 修改 workflow state、回执、检查结果、工作台工具、说明文档、评测测试或平台 C 输入。
+- 不使用 Git、`/tmp`、`cp` 或重新生成 scaffold 来备份、回退或覆盖当前 Rust 源码。
+- 不迁移测试，不链接 C 实现，不以“能编译”代替语义完成。
 
 ## 下一阶段交接
 
-成功后进入 `VERIFY_RUST_WITH_C_TESTS`。该阶段先用原始 C 测试证据验证 Rust core，再进入 Rust 测试迁移。
+父 gate 通过后进入 `VERIFY_RUST_WITH_C_TESTS`，使用原始 C 测试证据验证完整 Rust 实现。REWRITE 内部 worker 的对话历史不传递到下一阶段。
