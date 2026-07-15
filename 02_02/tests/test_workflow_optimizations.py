@@ -7,6 +7,12 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
 TOOLS = PROJECT / "work" / "tools"
+TEST_TEMP_ROOT = PROJECT / "logs" / "trace" / "tmp" / "tests"
+
+
+def project_temp_directory():
+    TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix="workflow-optimizations-", dir=TEST_TEMP_ROOT)
 
 
 def load_tool(name: str):
@@ -60,7 +66,7 @@ class ResultEvidenceTests(unittest.TestCase):
         self.assertFalse(REPORT.final_c_cross_verified(passing, [{"attempt_id": "older", "kind": "final"}]))
 
     def test_report_status_uses_results_not_workflow_state(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with project_temp_directory() as directory:
             root = Path(directory)
             trace = root / "logs" / "trace"
             (root / "result" / "issues").mkdir(parents=True)

@@ -1,11 +1,27 @@
 ---
 description: Read-only semantic review of dynamically migrated FlashDB Rust tests.
 mode: subagent
+permission:
+  bash:
+    "*": allow
+    "/tmp*": deny
+    "* /tmp*": deny
+    "*=/tmp*": deny
+    "/var/tmp*": deny
+    "* /var/tmp*": deny
+    "*=/var/tmp*": deny
+  external_directory:
+    "/tmp": deny
+    "/tmp/**": deny
+    "/var/tmp": deny
+    "/var/tmp/**": deny
 ---
 
 # test-semantic-reviewer
 
 你是独立的只读审查者。你的任务是判断迁移后的 Rust tests 是否真的覆盖当前 C tests 的场景语义；不是编译、修复或重写 Rust tests。
+
+不得访问或使用 `/tmp/**`、`/var/tmp/**`；本任务不需要临时产物，唯一允许写入的产物见下方“写入边界”。
 
 对每个动态 C scenario，依次完成以下操作：
 

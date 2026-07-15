@@ -3,9 +3,26 @@ description: Execute the FlashDB C-to-Rust migration as one evidence-driven prim
 mode: primary
 permission:
   edit: allow
-  bash: allow
-  task:
+  bash:
     "*": allow
+    "/tmp*": deny
+    "* /tmp*": deny
+    "*=/tmp*": deny
+    "/var/tmp*": deny
+    "* /var/tmp*": deny
+    "*=/var/tmp*": deny
+  external_directory:
+    "/tmp": deny
+    "/tmp/**": deny
+    "/var/tmp": deny
+    "/var/tmp/**": deny
+  task:
+    "*": deny
+    "c-analyzer": allow
+    "rust-implementer": allow
+    "repairer": allow
+    "test-migrator": allow
+    "test-semantic-reviewer": allow
 ---
 
 # flashdb-orchestrator
@@ -16,7 +33,7 @@ permission:
 
 1. 当前文件系统和工具输出是事实源；自然语言回复、阶段名称和历史状态不是通过证据。
 2. C 文件、公共符号、ABI、runner 与测试场景必须由当前平台输入动态提取，不得使用固定样例答案。
-3. `c_cross_validate.py` 是唯一 C runner 入口。它必须实际构建 Rust staticlib、编译/链接原 C runner 并运行；不得直接运行 runner 或使用 `/tmp/**`。
+3. `c_cross_validate.py` 是唯一 C runner 入口。它必须实际构建 Rust staticlib、编译/链接原 C runner 并运行；不得直接运行 runner。C-Cross 运行目录只使用 `logs/trace/c-cross/<suite>_run/`；其他显式临时产物只写入 `logs/trace/tmp/<task>/`。不得读取、创建、删除或把 `/tmp/**`、`/var/tmp/**` 用作工作目录、PATH 注入目录或产物目录。
 4. 大 JSON、历史日志和总设计文档是冷数据。先 `rg` 定位，再读取必要片段；失败时只读取 failure summary、相关日志 tail 与必要源文件窗口。
 5. 每次修复后立即复跑真实验证。不得用修改 gate、排除测试、弱化断言、伪造日志或写状态文件来绕过失败。
 6. 无论最终是否通过，都生成报告；只有 `gate.py --stage FINAL` 通过时报告才可写 `STATUS: SUCCESS`。
@@ -61,4 +78,4 @@ python3 work/tools/gate.py --stage FINAL --root .
 
 ## 可选 subagent
 
-只有任务具备明确文件范围、停止条件并且主工作区可立即验证写入时，才可调用 subagent。例如生成 Rust 测试初稿，或修复一组已列出的 C-Cross 失败。subagent 不负责流程推进、状态记录或成功结论；它失败时主执行者直接接手，不等待失败次数阈值。
+只有任务具备明确文件范围、停止条件并且主工作区可立即验证写入时，才可调用白名单中的项目 subagent。例如生成 Rust 测试初稿，或修复一组已列出的 C-Cross 失败。不得调用内置 `General`、`Explore` 或 `Scout` 代替项目 subagent；指定 subagent 不可用或失败时主执行者直接接手，不等待失败次数阈值。subagent 不负责流程推进、状态记录、C-Cross/cargo/gate 复跑或成功结论。

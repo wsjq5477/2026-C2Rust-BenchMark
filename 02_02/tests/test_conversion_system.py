@@ -1,3 +1,4 @@
+import ast
 import importlib.util
 import json
 import shutil
@@ -8,6 +9,12 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
 TOOLS = PROJECT / "work" / "tools"
+TEST_TEMP_ROOT = PROJECT / "logs" / "trace" / "tmp" / "tests"
+
+
+def project_temp_directory():
+    TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix="conversion-system-", dir=TEST_TEMP_ROOT)
 
 
 def load_tool(name: str):
@@ -91,6 +98,50 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         self.assertNotIn("必须提供 task packet", orchestrator)
         self.assertIn("可选 subagent", orchestrator)
 
+    def test_agents_cannot_bypass_project_owned_temp_or_subagent_contracts(self):
+        instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
+        orchestrator = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        self.assertIn("logs/trace/tmp/<task>/", instruction)
+        self.assertIn("不得访问或使用 `/tmp/**`、`/var/tmp/**`", instruction)
+        self.assertIn('"*": deny', orchestrator)
+        self.assertIn('"rust-implementer": allow', orchestrator)
+        self.assertIn("不得调用内置 `General`、`Explore` 或 `Scout`", orchestrator)
+        for name in (
+            "flashdb-orchestrator.md",
+            "c-analyzer.md",
+            "rust-implementer.md",
+            "repairer.md",
+            "test-migrator.md",
+            "test-semantic-reviewer.md",
+        ):
+            agent = (PROJECT / "work" / "skills" / name).read_text(encoding="utf-8")
+            self.assertIn('"* /tmp*": deny', agent, name)
+            self.assertIn('"*=/tmp*": deny', agent, name)
+            self.assertIn('"* /var/tmp*": deny', agent, name)
+            self.assertIn('"*=/var/tmp*": deny', agent, name)
+            self.assertIn('"/tmp": deny', agent, name)
+            self.assertIn('"/tmp/**": deny', agent, name)
+            self.assertIn('"/var/tmp": deny', agent, name)
+            self.assertIn('"/var/tmp/**": deny', agent, name)
+
+    def test_abi_probe_uses_project_owned_temporary_directory(self):
+        extractor = (TOOLS / "abi_layout_extractor.py").read_text(encoding="utf-8")
+        model_builder = (TOOLS / "build_c_model.py").read_text(encoding="utf-8")
+        self.assertIn('dir=owned_temp_root', extractor)
+        self.assertIn('output_dir / "tmp" / "abi-layout"', model_builder)
+
+    def test_python_temporary_directories_always_use_project_owned_parent(self):
+        paths = sorted((PROJECT / "work").rglob("*.py")) + sorted((PROJECT / "tests").glob("*.py"))
+        for path in paths:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+                if node.func.attr != "TemporaryDirectory":
+                    continue
+                keywords = {item.arg for item in node.keywords}
+                self.assertIn("dir", keywords, f"{path} must place temporary directories under logs/trace/tmp")
+
     def test_q9_design_is_present_and_approved_for_this_branch(self):
         design = PROJECT.parent / "design_doc" / "Q9-转换工程架构简化设计.md"
         text = design.read_text(encoding="utf-8")
@@ -115,7 +166,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
                 "required_c_tests": ["test_extension"],
             }],
         }
-        with tempfile.TemporaryDirectory() as directory:
+        with project_temp_directory() as directory:
             mapping = migrator.generate_tests(
                 model,
                 {"unmapped_symbols": ["unimplemented_api"]},
@@ -128,7 +179,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
 
     def test_c_cross_failure_summary_is_not_a_controller_route(self):
         cross = load_tool("c_cross_validate.py")
-        with tempfile.TemporaryDirectory() as directory:
+        with project_temp_directory() as directory:
             output = Path(directory) / "c-cross"
             matrix = {
                 "execution_id": "fixture",
@@ -152,7 +203,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertEqual("dynamic_case", saved["failures"][0]["scenario_id"])
 
     def test_gate_exposes_only_result_stages(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with project_temp_directory() as directory:
             root = Path(directory)
             (root / "result" / "issues").mkdir(parents=True)
             (root / "logs" / "trace").mkdir(parents=True)
@@ -162,13 +213,13 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertTrue(callable(GATE.check_final))
 
     def test_semantic_review_is_required_for_dynamic_consistency(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with project_temp_directory() as directory:
             consistency = semantic_fixture(Path(directory))
             self.assertEqual("pass", consistency["status"])
             self.assertEqual(1, consistency["passed_scenarios"])
 
     def test_semantic_mismatch_fails_even_when_rust_test_has_assertion(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with project_temp_directory() as directory:
             consistency = semantic_fixture(Path(directory), review_status="fail")
             self.assertEqual("fail", consistency["status"])
             codes = {item["code"] for item in consistency["issues"]}
@@ -176,7 +227,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertIn("logic_mismatch", codes)
 
     def test_final_gate_rejects_stale_test_evidence(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with project_temp_directory() as directory:
             root = Path(directory)
             semantic_fixture(root)
             test_file = root / "flashDB_rust" / "tests" / "dynamic.rs"

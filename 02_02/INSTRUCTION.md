@@ -12,8 +12,11 @@
 - Rust 输出：`flashDB_rust/`。
 - 主执行说明：[work/skills/flashdb-orchestrator.md](work/skills/flashdb-orchestrator.md)。
 - 机器证据：`logs/trace/`；最终报告：`result/output.md` 与 `result/issues/00-summary.md`。
+- 项目临时目录：`logs/trace/tmp/<task>/`。所有显式临时文件、探针、复制品和一次性构建产物必须放在这里；任何 agent 都不得读取、创建、删除或把 `/tmp`、`/var/tmp` 用作工作目录、PATH 注入目录或产物目录。
 
 默认由一个 primary Agent 完成整个迁移。可选 subagent 只用于短、边界明确的辅助任务；它们不是阶段完成或修改 Rust 的前置条件。
+
+只能调用 `work/skills/` 中已注册并受本工程合同约束的 subagent。不得用内置 `General`、`Explore` 或 `Scout` 代替修复/实现 subagent；指定 subagent 不可用时由 primary Agent 直接接手。
 
 禁止修改平台 C 输入、预置或复制 `flashDB_rust/`、把 C 源码放入 Rust `src/`、删除测试、弱化断言、伪造通过或把未运行的 C 测试标为通过。
 
@@ -25,6 +28,7 @@
 
 ```bash
 mkdir -p logs/trace result/issues
+mkdir -p logs/trace/tmp
 : > logs/interaction.md
 ```
 
@@ -65,7 +69,7 @@ python3 work/tools/c_cross_validate.py \
 python3 work/tools/gate.py --stage VERIFY_AND_REPAIR --root .
 ```
 
-如有失败，只读取 `logs/trace/c-cross/failure-summary.json` 中列出的失败场景、日志和必要的 Rust/C 局部窗口。做最小修复后重跑同一条命令，并把本次修改的 Rust 源文件作为 `--changed-file` 传给 repair 运行。不得手工执行 runner，也不得使用 `/tmp/**` 作为 runner 目录。
+如有失败，只读取 `logs/trace/c-cross/failure-summary.json` 中列出的失败场景、日志和必要的 Rust/C 局部窗口。做最小修复后重跑同一条命令，并把本次修改的 Rust 源文件作为 `--changed-file` 传给 repair 运行。不得手工执行 runner；C-Cross 的运行隔离只使用 `logs/trace/c-cross/<suite>_run/`，其他临时产物只使用 `logs/trace/tmp/<task>/`，不得访问或使用 `/tmp/**`、`/var/tmp/**`。
 
 只有全量场景通过后，才运行最终确认：
 

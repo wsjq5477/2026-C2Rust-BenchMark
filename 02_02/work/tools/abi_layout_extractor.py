@@ -396,10 +396,13 @@ def extract_layouts(
     include_dirs: list[str],
     config_headers: list[str],
     struct_names: list[str],
+    temp_root: str | Path | None = None,
 ) -> dict[str, Any]:
     root = Path(project_root).resolve()
     names = sorted(dict.fromkeys(name for name in struct_names if re.fullmatch(IDENT, name)))
-    with tempfile.TemporaryDirectory() as td:
+    owned_temp_root = Path(temp_root or (Path.cwd() / "logs" / "trace" / "tmp" / "abi-layout")).resolve()
+    owned_temp_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="probe-", dir=owned_temp_root) as td:
         tmp = Path(td)
         preprocessed = _preprocess(root, include_dirs, config_headers, tmp)
         active_macros = _active_macros(root, include_dirs, config_headers, tmp)
@@ -449,14 +452,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-header", action="append", default=[], help="Config header relative to root.")
     parser.add_argument("--struct", action="append", default=[], help="Struct name without the struct keyword.")
     parser.add_argument("--output", required=True, help="Path to write layout JSON.")
+    parser.add_argument("--temp-root", help="Project-owned temporary directory (defaults beside output under tmp/abi-layout).")
     args = parser.parse_args(argv)
+    output = Path(args.output)
     result = extract_layouts(
         project_root=Path(args.root),
         include_dirs=args.include_dir or ["inc"],
         config_headers=args.config_header,
         struct_names=args.struct,
+        temp_root=Path(args.temp_root) if args.temp_root else output.parent / "tmp" / "abi-layout",
     )
-    output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print("ABI_LAYOUT_EXTRACTOR: LAYOUTS_WRITTEN")

@@ -862,7 +862,12 @@ def config_headers_for_abi(root: Path, headers: list[str]) -> list[str]:
     return sorted(dict.fromkeys(candidates))
 
 
-def extract_abi_layouts(root: Path, headers: list[str], structs: list[dict[str, str]]) -> list[dict[str, Any]]:
+def extract_abi_layouts(
+    root: Path,
+    headers: list[str],
+    structs: list[dict[str, str]],
+    temp_root: Path | None = None,
+) -> list[dict[str, Any]]:
     candidates = abi_struct_candidates(structs)
     if not candidates:
         return []
@@ -883,6 +888,7 @@ def extract_abi_layouts(root: Path, headers: list[str], structs: list[dict[str, 
             include_dirs=include_dirs or ["inc"],
             config_headers=config_headers,
             struct_names=candidates,
+            temp_root=temp_root,
         )
     except Exception as exc:
         return [
@@ -1280,7 +1286,7 @@ def build_scorer_standard_cases(
     return cases
 
 
-def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
+def build_models(manifest: dict[str, Any], temp_root: Path | None = None) -> dict[str, Any]:
     root = Path(manifest["source_root"]).resolve()
     source_files = list(manifest.get("core_sources", []))
     headers = list(manifest.get("headers", []))
@@ -1340,7 +1346,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
     kvdb_symbols = sorted([name for name in public_functions if "kv" in name or "kvdb" in name])
     tsdb_symbols = sorted([name for name in public_functions if "tsl" in name or "tsdb" in name])
     common_symbols = sorted(set(public_functions) - set(kvdb_symbols) - set(tsdb_symbols))
-    abi_layouts = extract_abi_layouts(root, headers, structs)
+    abi_layouts = extract_abi_layouts(root, headers, structs, temp_root=temp_root)
     macro_values: dict[str, dict[str, Any]] = {}
     for layout in abi_layouts:
         if not isinstance(layout, dict):
@@ -1594,8 +1600,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
-    models = build_models(manifest)
-    write_models(models, Path(args.output_dir))
+    output_dir = Path(args.output_dir)
+    models = build_models(manifest, temp_root=output_dir / "tmp" / "abi-layout")
+    write_models(models, output_dir)
     print("BUILD_C_MODEL: MODELS_WRITTEN")
     print(f"public_functions={len(models['c_api_model']['public_functions'])}")
     print(f"registered_tests={len(models['c_test_model']['registered_tests'])}")
