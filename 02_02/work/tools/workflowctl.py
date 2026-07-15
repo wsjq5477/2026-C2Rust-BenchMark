@@ -91,22 +91,16 @@ VERIFY_ACTIONS = {
 TERMINAL_ACTIONS = {"DONE", "DONE_WITH_FAILURES"}
 CONTROLLER_OWNED_PATTERNS = [
     "logs/trace/workflow_state.json",
-    "logs/trace/agent-registry.json",
-    "logs/trace/subagent-invocations.jsonl",
-    "logs/trace/stage-runs/**",
-    "logs/trace/stage-receipts/**",
-    "logs/trace/stage-receipts.jsonl",
-    "logs/trace/stage-aborts.jsonl",
-    "logs/trace/task-packets/**",
-    "logs/trace/input-source-baseline.json",
+    "logs/trace/workflow-events.jsonl",
+    "logs/trace/active-task.json",
+    # Transitional controller runtime files.  They are not gate evidence and
+    # are collapsed in a later compatibility pass, but must stay out of an
+    # agent's business-output change set while older commands still use them.
     "logs/trace/test-failure-triage.jsonl",
     "logs/trace/rewrite-state.json",
-    "logs/trace/rewrite-worker-runs/**",
-    "logs/trace/rewrite-worker-receipts/**",
     "logs/trace/rewrite-check/**",
-    "logs/trace/core_rewrite_batches.jsonl",
     "logs/trace/implementation-audit.json",
-    "logs/trace/06-rewrite-core-modules.md",
+    "logs/trace/rewrite-result.json",
 ]
 REWRITE_SETTINGS = WORKFLOW_CONTRACT.get("rewrite_static", {})
 REWRITE_ROLES = {"CORE": "IMPLEMENT_CORE", "FACADE": "WIRE_FACADE"}
@@ -308,26 +302,10 @@ def _find_input_source(root: Path, state: dict[str, Any]) -> Path | None:
 
 
 def _ensure_source_baseline(root: Path, state: dict[str, Any]) -> None:
-    """Capture the platform input before any delegated READ work begins."""
-    existing = state.get("input_source_baseline")
-    existing_hash = state.get("input_source_baseline_sha256")
-    if isinstance(existing, str) and isinstance(existing_hash, str) and (root / existing).is_file():
-        if _sha256(root / existing) != existing_hash:
-            raise WorkflowError("controller-owned input source baseline was modified")
-        return
+    """Remember the source root; input hashes are owned by input_manifest."""
     source = _find_input_source(root, state)
-    if source is None:
-        return
-    baseline_path = root / "logs" / "trace" / "input-source-baseline.json"
-    document = {
-        "schema_version": 1,
-        "source_root": str(source),
-        "files": _snapshot(source, ["**"]),
-    }
-    _atomic_json(baseline_path, document)
-    state["input_source_baseline"] = baseline_path.relative_to(root).as_posix()
-    state["input_source_baseline_sha256"] = _sha256(baseline_path)
-    state["input_source_root"] = str(source)
+    if source is not None:
+        state["input_source_root"] = str(source)
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -360,24 +338,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     state = _initial_state(root, args.max_c_cross_repairs, max_test_repairs)
     _ensure_source_baseline(root, state)
     _atomic_json(state_path, state)
-    _atomic_json(root / "logs" / "trace" / "agent-registry.json", {"subagents": DEFAULT_AGENTS})
-    (root / "logs" / "trace" / "subagent-invocations.jsonl").touch(exist_ok=True)
-    stage_log = root / "logs" / "trace" / "01-init-workspace.md"
-    baseline_rel = state.get("input_source_baseline")
-    baseline_path = root / baseline_rel if isinstance(baseline_rel, str) else None
-    baseline = _json(baseline_path) if baseline_path is not None and baseline_path.is_file() else {}
-    baseline_files = baseline.get("files") if isinstance(baseline.get("files"), dict) else {}
-    stage_log.write_text(
-        "# INIT_WORKSPACE 阶段日志\n\n"
-        "- 生成者：workflowctl\n"
-        "- workflow_state.json：已生成\n"
-        "- agent-registry.json：已生成（4 个 subagent）\n"
-        f"- 输入基线文件：{len(baseline_files)}\n"
-        f"- 输入基线 SHA256：`{state.get('input_source_baseline_sha256')}`\n"
-        "- flashDB_rust：未生成\n"
-        "- 下一阶段：READ_C_PROJECT\n",
-        encoding="utf-8",
-    )
+    (root / "logs" / "trace" / "workflow-events.jsonl").touch(exist_ok=True)
     gate = root / "work" / "tools" / "gate.py"
     if gate.is_file():
         checked = subprocess.run(
@@ -442,8 +403,9 @@ def _invoke_task_packet(
     tool = root / "work" / "tools" / "task_packet.py"
     if not tool.exists():
         return None
-    suffix = f"-{rewrite_role.lower().replace('_', '-')}" if rewrite_role else ""
-    output = root / "logs" / "trace" / "task-packets" / f"{stage.lower()}{suffix}.json"
+    # This is transient dispatch context.  Reuse one file instead of retaining
+    # a packet for every stage and rewrite-worker attempt.
+    output = root / "logs" / "trace" / "active-task.json"
     command = [
         sys.executable,
         str(tool),
@@ -643,7 +605,8 @@ def _prepare_static_rewrite(root: Path, parent_run_id: str) -> None:
         "active_worker": None,
         "failed_checks": {"IMPLEMENT_CORE": 0, "WIRE_FACADE": 0},
         "attempts": {"IMPLEMENT_CORE": 0, "WIRE_FACADE": 0},
-        "latest_receipts": {"IMPLEMENT_CORE": None, "WIRE_FACADE": None},
+        "latest_results": {"IMPLEMENT_CORE": None, "WIRE_FACADE": None},
+        "batch_results": [],
         "invalidated_receipts": [],
         "status": "running",
     }
@@ -655,9 +618,6 @@ def _active_rewrite_parent(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     active = state.get("active_stage_run")
     if not isinstance(active, dict) or active.get("stage") != "REWRITE_CORE_MODULES":
         raise WorkflowError("static rewrite worker requires an active REWRITE_CORE_MODULES parent run")
-    run_path = root / str(active.get("run_file") or "")
-    if not run_path.is_file() or _sha256(run_path) != active.get("run_sha256"):
-        raise WorkflowError("active REWRITE parent run record was modified")
     return state, active
 
 
@@ -724,8 +684,6 @@ def cmd_begin(args: argparse.Namespace) -> int:
             raise WorkflowError("task packet allowed paths exceed the stage contract")
     allowed = list(dict.fromkeys((packet_allowed or defaults) + requested))
     required = list(dict.fromkeys(STAGE_REQUIRED_OUTPUTS[stage] + [_relative(root, item) for item in args.require_output]))
-    if packet and packet not in required:
-        required.append(packet)
     # Snapshot the whole workbench so a stage cannot hide changes by writing
     # outside both its allow-list and the older explicit protected set.
     monitored = list(dict.fromkeys(["**", *PROTECTED_PATHS]))
@@ -741,19 +699,17 @@ def cmd_begin(args: argparse.Namespace) -> int:
         and entry_action.startswith(("RETRY_REWRITE_CORE_MODULES", "REPAIR_REWRITE_CORE_MODULES"))
     )
     if (entry_action.startswith("RETRY_") or reuse_rewrite_baseline) and isinstance(retry_origin, dict):
-        origin_file = root / str(retry_origin.get("run_file") or "")
-        if (
-            not origin_file.is_file()
-            or origin_file.is_symlink()
-            or _sha256(origin_file) != retry_origin.get("run_sha256")
-        ):
-            raise WorkflowError("retry baseline stage-run record was modified")
-        origin_run = _json(origin_file)
-        if origin_run.get("stage") != stage or origin_run.get("root") != _root_identity(root):
+        legacy_origin = retry_origin
+        if "run_file" in retry_origin:
+            origin_path = root / str(retry_origin.get("run_file") or "")
+            if not origin_path.is_file():
+                raise WorkflowError("legacy retry baseline run is missing")
+            legacy_origin = _json(origin_path)
+        if legacy_origin.get("stage") != stage or legacy_origin.get("root") != _root_identity(root):
             raise WorkflowError("retry baseline belongs to a different stage or workbench")
-        baseline = origin_run.get("baseline")
+        baseline = legacy_origin.get("baseline")
         if not isinstance(baseline, dict):
-            raise WorkflowError("retry baseline stage-run record is missing its snapshot")
+            raise WorkflowError("retry baseline is missing its snapshot")
         baseline = {str(key): str(value) for key, value in baseline.items()}
         baseline_origin = dict(retry_origin)
     else:
@@ -783,8 +739,6 @@ def cmd_begin(args: argparse.Namespace) -> int:
         },
         "task_packet": packet,
         "task_packet_sha256": _sha256(root / packet) if packet else None,
-        "input_source_baseline": state.get("input_source_baseline"),
-        "input_source_baseline_sha256": state.get("input_source_baseline_sha256"),
         "repair_run": bool(
             args.resume
             or str(state.get("next_action") or "").startswith(("REPAIR_", "REANALYZE_", "ISOLATE_"))
@@ -798,16 +752,10 @@ def cmd_begin(args: argparse.Namespace) -> int:
         ) if stage == "VERIFY_RUST_WITH_C_TESTS" else 0,
         "state_before": json.loads(json.dumps(state)),
     }
-    run_path = root / "logs" / "trace" / "stage-runs" / stage / f"{run_id}.json"
-    _atomic_json(run_path, run)
-    run_sha256 = _sha256(run_path)
-    state["active_stage_run"] = {
-        "run_id": run_id,
-        "nonce": nonce,
-        "stage": stage,
-        "run_file": run_path.relative_to(root).as_posix(),
-        "run_sha256": run_sha256,
-    }
+    # The active transaction is control state, not an artifact.  Keeping it in
+    # workflow_state avoids a second stage-run file solely to repeat the same
+    # baseline, scope, nonce and task context.
+    state["active_stage_run"] = run
     state["current_stage"] = stage
     state["checkpoint"] = stage
     state["next_action"] = f"COMPLETE_{stage}"
@@ -897,22 +845,20 @@ def cmd_next_rewrite_worker(args: argparse.Namespace) -> int:
     )
 
     retry_context: list[dict[str, Any]] = []
-    latest = rewrite.get("latest_receipts")
+    latest = rewrite.get("latest_results")
     candidate_roles = [role]
     if role == "IMPLEMENT_CORE":
         candidate_roles.append("WIRE_FACADE")
     for prior_role in candidate_roles:
-        receipt_rel = latest.get(prior_role) if isinstance(latest, dict) else None
-        if not isinstance(receipt_rel, str) or not (root / receipt_rel).is_file():
+        receipt = latest.get(prior_role) if isinstance(latest, dict) else None
+        if not isinstance(receipt, dict):
             continue
-        receipt = _json(root / receipt_rel)
         if receipt.get("status") not in {"retry_required", "blocked"}:
             continue
         context: dict[str, Any] = {
             "role": prior_role,
             "status": receipt.get("status"),
             "reason": receipt.get("reason"),
-            "receipt": receipt_rel,
         }
         check_rel = receipt.get("check_receipt")
         if isinstance(check_rel, str) and (root / check_rel).is_file():
@@ -953,17 +899,10 @@ def cmd_next_rewrite_worker(args: argparse.Namespace) -> int:
         "baseline": _snapshot(root, ["**"]),
         "started_at_ns": _now_ns(),
     }
-    run_path = root / "logs" / "trace" / "rewrite-worker-runs" / role.lower() / f"{worker_run_id}.json"
-    _atomic_json(run_path, record)
+    record["nonce"] = nonce
     attempts[role] = attempt
     rewrite["attempts"] = attempts
-    rewrite["active_worker"] = {
-        "worker_run_id": worker_run_id,
-        "nonce": nonce,
-        "role": role,
-        "run_file": run_path.relative_to(root).as_posix(),
-        "run_sha256": _sha256(run_path),
-    }
+    rewrite["active_worker"] = record
     _atomic_json(_rewrite_state_path(root), rewrite)
     print("WORKFLOWCTL: REWRITE_WORKER_BEGUN")
     print(f"role={role}")
@@ -1132,10 +1071,7 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
         raise WorkflowError("no active static rewrite worker")
     if active.get("worker_run_id") != args.worker_run_id or active.get("nonce") != args.nonce:
         raise WorkflowError("worker_run_id/nonce do not match active rewrite worker")
-    run_path = root / str(active.get("run_file") or "")
-    if not run_path.is_file() or _sha256(run_path) != active.get("run_sha256"):
-        raise WorkflowError("rewrite worker run record was modified")
-    run = _json(run_path)
+    run = active
     role = str(run.get("role") or "")
     if run.get("parent_run_id") != parent.get("run_id"):
         raise WorkflowError("rewrite worker belongs to another parent run")
@@ -1155,10 +1091,8 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
         raise WorkflowError("rewrite worker modified another owner/frozen path: " + ", ".join(unexpected))
     if any((root / item).is_symlink() for item in changed):
         raise WorkflowError("rewrite worker created or modified a symlink")
-    parent_run_path = root / str(parent.get("run_file") or "")
-    parent_run = _json(parent_run_path)
     parent_baseline = (
-        parent_run.get("baseline") if isinstance(parent_run.get("baseline"), dict) else {}
+        parent.get("baseline") if isinstance(parent.get("baseline"), dict) else {}
     )
     owner_before = {
         key: value for key, value in parent_baseline.items()
@@ -1233,7 +1167,7 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
                 rewrite["status"] = "blocked"
             next_phase = str(rewrite.get("phase") or "")
         elif role == "IMPLEMENT_CORE":
-            previous_facade = rewrite.get("latest_receipts", {}).get("WIRE_FACADE")
+            previous_facade = rewrite.get("latest_results", {}).get("WIRE_FACADE")
             if previous_facade:
                 rewrite.setdefault("invalidated_receipts", []).append(previous_facade)
             rewrite["core_revision"] = int(rewrite.get("core_revision", 0) or 0) + 1
@@ -1244,8 +1178,8 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
             rewrite["facade_revision"] = int(rewrite.get("facade_revision", 0) or 0) + 1
             rewrite["facade_based_on_core_revision"] = int(rewrite.get("core_revision", 0) or 0)
             batch = _current_requirement_batch(rewrite)
-            core_receipt_rel = rewrite.get("latest_receipts", {}).get("IMPLEMENT_CORE")
-            core_receipt = _json(root / core_receipt_rel) if isinstance(core_receipt_rel, str) else {}
+            core_receipt = rewrite.get("latest_results", {}).get("IMPLEMENT_CORE")
+            core_receipt = core_receipt if isinstance(core_receipt, dict) else {}
             batch_changed_files = sorted(set(
                 item for item in [
                     *core_receipt.get("changed_files", []),
@@ -1280,7 +1214,7 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
     elif status == "missing_core_capability":
         if role != "WIRE_FACADE":
             raise WorkflowError("missing_core_capability is only valid for WIRE_FACADE")
-        previous_facade = rewrite.get("latest_receipts", {}).get("WIRE_FACADE")
+        previous_facade = rewrite.get("latest_results", {}).get("WIRE_FACADE")
         if previous_facade:
             rewrite.setdefault("invalidated_receipts", []).append(previous_facade)
         rewrite["facade_based_on_core_revision"] = None
@@ -1297,7 +1231,6 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
         if role == "IMPLEMENT_CORE"
         else int(rewrite.get("facade_revision", 0) or 0)
     )
-    receipt_path = root / "logs" / "trace" / "rewrite-worker-receipts" / role.lower() / f"{args.worker_run_id}.json"
     receipt = {
         "schema_version": 1,
         "worker_run_id": args.worker_run_id,
@@ -1317,31 +1250,32 @@ def cmd_finish_rewrite_worker(args: argparse.Namespace) -> int:
         "reason": reason or None,
         "finished_at_ns": _now_ns(),
         "next_phase": next_phase,
-        "supersedes": rewrite.get("latest_receipts", {}).get(role),
+        "supersedes": rewrite.get("latest_results", {}).get(role),
     }
-    _atomic_json(receipt_path, receipt)
-    latest = rewrite.get("latest_receipts")
+    latest = rewrite.get("latest_results")
     if not isinstance(latest, dict):
         latest = {}
-    latest[role] = receipt_path.relative_to(root).as_posix()
-    rewrite["latest_receipts"] = latest
+    latest[role] = receipt
+    rewrite["latest_results"] = latest
     rewrite["active_worker"] = None
     _atomic_json(_rewrite_state_path(root), rewrite)
     if completed_batch is not None:
-        _append_rewrite_batch(
-            root,
-            batch=completed_batch,
-            changed=batch_changed_files,
-            receipt_path=receipt_path.relative_to(root).as_posix(),
-            verification_status=str(completed_batch.get("status")),
-            verification_receipt=batch_verification_receipt,
-        )
-    if next_phase == "READY":
-        _write_rewrite_stage_log(root, rewrite)
+        rewrite.setdefault("batch_results", []).append({
+            "stage": "REWRITE_CORE_MODULES",
+            "batch_id": completed_batch.get("id"),
+            "status": completed_batch.get("status"),
+            "verification_attempts": completed_batch.get("verification_attempts", 0),
+            "changed_files": batch_changed_files,
+            "obligations": completed_batch.get("requirement_ids", []),
+            "scenarios": completed_batch.get("scenario_ids", []),
+            "verification_status": batch_verification_status,
+            "verification_receipt": batch_verification_receipt,
+        })
+        _atomic_json(_rewrite_state_path(root), rewrite)
     print("WORKFLOWCTL: REWRITE_WORKER_FINISHED")
     print(f"role={role}")
     print(f"status={receipt_status}")
-    print(f"receipt={receipt_path.relative_to(root).as_posix()}")
+    print("result=rewrite-state.json")
     if next_phase in REWRITE_ROLES:
         print("next_command=python3 work/tools/workflowctl.py --root . next-rewrite-worker")
     elif next_phase == "READY":
@@ -1595,30 +1529,6 @@ def _write_stage_summary(root: Path, stage: str) -> None:
 
 def _verify_input_immutable(root: Path) -> None:
     state = _load_state(root)
-    baseline_rel = state.get("input_source_baseline")
-    baseline_hash = state.get("input_source_baseline_sha256")
-    baseline_source: Path | None = None
-    if isinstance(baseline_rel, str) and isinstance(baseline_hash, str):
-        baseline_path = root / baseline_rel
-        if not baseline_path.is_file() or baseline_path.is_symlink():
-            raise WorkflowError("controller-owned input source baseline is missing")
-        if _sha256(baseline_path) != baseline_hash:
-            raise WorkflowError("controller-owned input source baseline was modified")
-        baseline = _json(baseline_path)
-        source_root = baseline.get("source_root")
-        files = baseline.get("files")
-        if not isinstance(source_root, str) or not isinstance(files, dict):
-            raise WorkflowError("input source baseline is malformed")
-        baseline_source = Path(source_root).resolve()
-        current = _snapshot(baseline_source, ["**"])
-        if current != files:
-            differences = _diff(
-                {str(key): str(value) for key, value in files.items()},
-                current,
-            )
-            changed = differences["created"] + differences["modified"] + differences["deleted"]
-            raise WorkflowError("platform C input changed during conversion: " + ", ".join(changed[:20]))
-
     manifest_path = root / "logs" / "trace" / "input_manifest.json"
     if not manifest_path.exists():
         return
@@ -1628,8 +1538,9 @@ def _verify_input_immutable(root: Path) -> None:
     if not isinstance(source_root, str) or not isinstance(evidence, dict):
         return
     source = Path(source_root).resolve()
-    if baseline_source is not None and source != baseline_source:
-        raise WorkflowError("input_manifest.json source_root does not match controller-captured platform input")
+    expected_source = state.get("input_source_root")
+    if isinstance(expected_source, str) and source != Path(expected_source).resolve():
+        raise WorkflowError("input_manifest.json source_root does not match the initialized platform input")
     changed: list[str] = []
     for rel, expected in evidence.items():
         if not isinstance(rel, str) or not isinstance(expected, dict) or ".." in Path(rel).parts:
@@ -1685,15 +1596,12 @@ def cmd_finish(args: argparse.Namespace) -> int:
         raise WorkflowError("no active stage run")
     if active.get("run_id") != args.run_id or active.get("nonce") != args.nonce:
         raise WorkflowError("run_id/nonce do not match the active stage run")
-    run_file = root / str(active.get("run_file") or "")
-    if not run_file.is_file() or run_file.is_symlink() or _sha256(run_file) != active.get("run_sha256"):
-        raise WorkflowError("controller stage-run record was modified")
-    run = _json(run_file)
+    run = active
     stage = str(run.get("stage") or "")
     if stage not in STAGES:
         raise WorkflowError(f"active stage run has unsupported stage: {stage}")
     if stage != str(active.get("stage") or ""):
-        raise WorkflowError("active state and run receipt disagree on stage")
+        raise WorkflowError("active state and transaction disagree on stage")
     if stage == "REWRITE_CORE_MODULES":
         rewrite = _load_rewrite_state(root)
         if rewrite.get("parent_run_id") != args.run_id or rewrite.get("phase") != "READY":
@@ -1703,10 +1611,10 @@ def cmd_finish(args: argparse.Namespace) -> int:
     if run.get("root") != _root_identity(root):
         raise WorkflowError("stage was begun from a different worktree/root identity")
     if run.get("run_id") != args.run_id or run.get("nonce") != args.nonce:
-        raise WorkflowError("stage run file does not match the active run credentials")
+        raise WorkflowError("active transaction credentials do not match")
     state_before = run.get("state_before")
     if not isinstance(state_before, dict):
-        raise WorkflowError("stage run file is missing its controller state baseline")
+        raise WorkflowError("active transaction is missing its controller state baseline")
     expected_state = json.loads(json.dumps(state_before))
     expected_state["active_stage_run"] = active
     expected_state["current_stage"] = stage
@@ -1720,15 +1628,12 @@ def cmd_finish(args: argparse.Namespace) -> int:
         or not run_allowed
         or any(not isinstance(item, str) or not _pattern_within(item, STAGE_ALLOWED_PATHS[stage]) for item in run_allowed)
     ):
-        raise WorkflowError("stage run file contains paths outside the stage contract")
+        raise WorkflowError("active transaction contains paths outside the stage contract")
     run_required = run.get("required_outputs")
     if not isinstance(run_required, list) or not set(STAGE_REQUIRED_OUTPUTS[stage]).issubset(set(run_required)):
         raise WorkflowError("stage run file removed mandatory required outputs")
     if "**" not in run.get("monitored_patterns", []):
         raise WorkflowError("stage run file removed whole-workbench monitoring")
-    for key in ("input_source_baseline", "input_source_baseline_sha256"):
-        if run.get(key) != state.get(key):
-            raise WorkflowError(f"workflow state changed controller-owned {key}")
     packet_rel = run.get("task_packet")
     packet_hash = run.get("task_packet_sha256")
     if packet_rel:
@@ -1791,7 +1696,6 @@ def cmd_finish(args: argparse.Namespace) -> int:
         raise WorkflowError("stage created or modified symlink outputs: " + ", ".join(symlink_changes))
     expected_controller_changes = {
         "logs/trace/workflow_state.json",
-        run_file.relative_to(root).as_posix(),
     }
     if stage == "BUILD_TEST_REPAIR" and triage_refreshed:
         expected_controller_changes.add("logs/trace/test-failure-triage.jsonl")
@@ -1814,29 +1718,18 @@ def cmd_finish(args: argparse.Namespace) -> int:
         rewrite_outputs = [
             "logs/trace/rewrite-state.json",
             "logs/trace/rewrite-worker-runs/**",
-            "logs/trace/rewrite-worker-receipts/**",
             "logs/trace/rewrite-check/**",
-            "logs/trace/core_rewrite_batches.jsonl",
             "logs/trace/implementation-audit.json",
-            "logs/trace/06-rewrite-core-modules.md",
-            "logs/trace/task-packets/rewrite_core_modules-*.json",
+            "logs/trace/active-task.json",
         ]
         controller_changes = [path for path in controller_changes if not _matches(path, rewrite_outputs)]
     if controller_changes:
         raise WorkflowError("stage modified controller-owned metadata: " + ", ".join(controller_changes))
 
     required = [item for item in run.get("required_outputs", []) if isinstance(item, str)]
-    automatic_log = {
-        "READ_C_PROJECT": "logs/trace/02-read-c-project.md",
-        "BUILD_C_MODEL": "logs/trace/03-build-c-model.md",
-        "DESIGN_RUST_API": "logs/trace/04-design-rust-api.md",
-    }.get(stage)
-    prerequisites = [item for item in required if item != automatic_log]
-    _, prerequisite_missing = _artifact_hashes(root, prerequisites)
+    _, prerequisite_missing = _artifact_hashes(root, required)
     if prerequisite_missing:
         raise WorkflowError("stage is missing required outputs: " + ", ".join(prerequisite_missing))
-    if automatic_log is not None:
-        _write_stage_summary(root, stage)
     artifact_hashes, missing = _artifact_hashes(root, required)
     if missing:
         raise WorkflowError("stage is missing required outputs: " + ", ".join(missing))
@@ -1886,40 +1779,17 @@ def cmd_finish(args: argparse.Namespace) -> int:
     state["next_action"] = f"RUN_GATE_{stage}"
     _atomic_json(_state_path(root), state)
 
-    receipt_path = root / "logs" / "trace" / "stage-receipts" / f"{stage}.json"
-    immutable_receipt_path = (
-        root / "logs" / "trace" / "stage-receipts" / stage / f"{args.run_id}.json"
-    )
-    receipt = {
+    event = {
         "contract_version": CONTRACT_VERSION,
         "run_id": args.run_id,
-        "nonce_sha256": hashlib.sha256(args.nonce.encode("utf-8")).hexdigest(),
         "stage": stage,
         "agent": run.get("agent"),
-        "root": _root_identity(root),
         "started_at_ns": run.get("started_at_ns"),
         "finished_at_ns": _now_ns(),
-        "status": "ready_for_gate",
-        "allowed_paths": allowed,
-        "required_outputs": required,
-        "artifact_hashes": artifact_hashes,
         "changed_files": changed,
-        "changed_file_hashes": {
-            rel: _sha256(root / rel)
-            for rel in changed
-            if (root / rel).is_file()
-        },
-        "change_set": changes,
-        "unexpected_changes": [],
         "baseline_digest": run.get("baseline_digest"),
         "after_digest": _snapshot_digest(after),
-        "task_packet": run.get("task_packet"),
-        "task_packet_sha256": run.get("task_packet_sha256"),
-        "run_file": run_file.relative_to(root).as_posix(),
-        "run_file_sha256": _sha256(run_file),
-        "receipt_path": immutable_receipt_path.relative_to(root).as_posix(),
     }
-    _atomic_json(receipt_path, receipt)
 
     gate_command = [sys.executable, str(root / "work" / "tools" / "gate.py"), "--stage", stage, "--root", str(root)]
     completed_gate = subprocess.run(gate_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -1931,28 +1801,8 @@ def cmd_finish(args: argparse.Namespace) -> int:
         state["report_repair_rounds"] = int(state.get("report_repair_rounds", 0) or 0) + 1
         _atomic_json(_state_path(root), state)
         _invalidate_report_candidate(root, completed_gate.stdout)
-        receipt["artifact_hashes"], _ = _artifact_hashes(root, required)
-        receipt["changed_file_hashes"] = {
-            rel: _sha256(root / rel)
-            for rel in changed
-            if (root / rel).is_file()
-        }
-        receipt["after_digest"] = _snapshot_digest(_snapshot(root, patterns))
-    rewrite_ready_for_recheck = (
-        stage == "REWRITE_CORE_MODULES"
-        and rewrite.get("phase") == "READY"
-        and rewrite.get("status") == "ready_for_finish"
-        and not rewrite.get("active_worker")
-    ) if stage == "REWRITE_CORE_MODULES" else False
-    next_action = (
-        "RECHECK_REWRITE_CORE_MODULES"
-        if (
-            not gate_ok
-            and rewrite_ready_for_recheck
-            and "stage receipt must reference a bounded task packet" in completed_gate.stdout
-        )
-        else _next_after(stage, state, root, gate_ok)
-    )
+        event["after_digest"] = _snapshot_digest(_snapshot(root, patterns))
+    next_action = _next_after(stage, state, root, gate_ok)
     rewrite_retry_origin: dict[str, Any] | None = None
     if (
         stage == "REWRITE_CORE_MODULES"
@@ -1970,17 +1820,12 @@ def cmd_finish(args: argparse.Namespace) -> int:
         rewrite_retry_origin = (
             dict(origin)
             if isinstance(origin, dict)
-            else {
-                "run_file": run_file.relative_to(root).as_posix(),
-                "run_sha256": _sha256(run_file),
-            }
+            else {"stage": stage, "root": _root_identity(root), "baseline": run["baseline"]}
         )
-    receipt["status"] = "pass" if gate_ok else "failed"
-    receipt["gate_exit_code"] = completed_gate.returncode
-    receipt["gate_output_tail"] = "\n".join(completed_gate.stdout.splitlines()[-40:])
-    receipt["next_action"] = next_action
-    _atomic_json(receipt_path, receipt)
-    _atomic_json(immutable_receipt_path, receipt)
+    event["status"] = "pass" if gate_ok else "failed"
+    event["gate_exit_code"] = completed_gate.returncode
+    event["gate_output_tail"] = "\n".join(completed_gate.stdout.splitlines()[-40:])
+    event["next_action"] = next_action
 
     state = _load_state(root)
     if rewrite_retry_origin is not None:
@@ -1988,7 +1833,7 @@ def cmd_finish(args: argparse.Namespace) -> int:
     state["last_gate"] = {
         "stage": stage,
         "status": "pass" if gate_ok else "fail",
-        "receipt": immutable_receipt_path.relative_to(root).as_posix(),
+        "run_id": args.run_id,
     }
     state["next_action"] = next_action
     if next_action in TERMINAL_ACTIONS:
@@ -2005,11 +1850,10 @@ def cmd_finish(args: argparse.Namespace) -> int:
             state["c_cross_functional_status"] = "repair_required"
     _atomic_json(_state_path(root), state)
 
-    _append_jsonl(root / "logs" / "trace" / "stage-receipts.jsonl", receipt)
+    _append_jsonl(root / "logs" / "trace" / "workflow-events.jsonl", event)
     print(completed_gate.stdout, end="" if completed_gate.stdout.endswith("\n") else "\n")
     print("WORKFLOWCTL: STAGE_FINISHED")
-    print(f"receipt={immutable_receipt_path.relative_to(root).as_posix()}")
-    print(f"latest_receipt={receipt_path.relative_to(root).as_posix()}")
+    print("event=logs/trace/workflow-events.jsonl")
     print(f"next_action={next_action}")
     return completed_gate.returncode
 
@@ -2023,24 +1867,19 @@ def cmd_recheck_rewrite(args: argparse.Namespace) -> int:
     if state.get("next_action") != "RECHECK_REWRITE_CORE_MODULES":
         raise WorkflowError("RECHECK_REWRITE_CORE_MODULES is not the current controller action")
 
-    receipt_path = root / "logs" / "trace" / "stage-receipts" / "REWRITE_CORE_MODULES.json"
-    receipt = _json(receipt_path)
-    if receipt.get("stage") != "REWRITE_CORE_MODULES" or receipt.get("status") != "failed":
-        raise WorkflowError("RECHECK_REWRITE_CORE_MODULES requires the latest failed REWRITE receipt")
+    last_gate = state.get("last_gate")
+    if not isinstance(last_gate, dict) or last_gate.get("stage") != "REWRITE_CORE_MODULES" or last_gate.get("status") != "fail":
+        raise WorkflowError("RECHECK_REWRITE_CORE_MODULES requires the latest failed REWRITE gate")
     rewrite = _load_rewrite_state(root)
     if (
         rewrite.get("phase") != "READY"
         or rewrite.get("status") != "ready_for_finish"
         or rewrite.get("active_worker")
-        or rewrite.get("parent_run_id") != receipt.get("run_id")
+        or rewrite.get("parent_run_id") != last_gate.get("run_id")
     ):
         raise WorkflowError("RECHECK_REWRITE_CORE_MODULES requires completed workers from the failed parent")
 
-    # The canonical receipt is the active gate candidate.  The immutable
-    # per-run receipt remains failed, preserving the original audit trail.
-    receipt["status"] = "ready_for_gate"
-    receipt["recheck_count"] = int(receipt.get("recheck_count", 0) or 0) + 1
-    _atomic_json(receipt_path, receipt)
+    recheck_count = int(last_gate.get("recheck_count", 0) or 0) + 1
     completed = subprocess.run(
         [
             sys.executable,
@@ -2056,36 +1895,28 @@ def cmd_recheck_rewrite(args: argparse.Namespace) -> int:
     )
     gate_ok = completed.returncode == 0
     next_action = _next_after("REWRITE_CORE_MODULES", state, root, gate_ok)
-    receipt["status"] = "pass" if gate_ok else "failed"
-    receipt["gate_exit_code"] = completed.returncode
-    receipt["gate_output_tail"] = "\n".join(completed.stdout.splitlines()[-40:])
-    receipt["next_action"] = next_action
-    _atomic_json(receipt_path, receipt)
-
-    record = {
+    event = {
         "schema_version": 1,
         "stage": "REWRITE_CORE_MODULES",
-        "receipt": receipt_path.relative_to(root).as_posix(),
-        "recheck_count": receipt["recheck_count"],
+        "run_id": last_gate.get("run_id"),
+        "recheck_count": recheck_count,
         "status": "pass" if gate_ok else "failed",
         "gate_exit_code": completed.returncode,
-        "gate_output_tail": receipt["gate_output_tail"],
+        "gate_output_tail": "\n".join(completed.stdout.splitlines()[-40:]),
+        "next_action": next_action,
     }
-    record_path = (
-        root / "logs" / "trace" / "rewrite-gate-rechecks"
-        / f"{_now_ns()}-recheck.json"
-    )
-    _atomic_json(record_path, record)
+    _append_jsonl(root / "logs" / "trace" / "workflow-events.jsonl", event)
     state["last_gate"] = {
         "stage": "REWRITE_CORE_MODULES",
         "status": "pass" if gate_ok else "fail",
-        "receipt": receipt_path.relative_to(root).as_posix(),
+        "run_id": last_gate.get("run_id"),
+        "recheck_count": recheck_count,
     }
     state["next_action"] = next_action
     _atomic_json(_state_path(root), state)
     print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
     print("WORKFLOWCTL: REWRITE_GATE_RECHECKED")
-    print(f"record={record_path.relative_to(root).as_posix()}")
+    print("event=logs/trace/workflow-events.jsonl")
     print(f"next_action={next_action}")
     return completed.returncode
 
@@ -2098,19 +1929,16 @@ def cmd_abort(args: argparse.Namespace) -> int:
         raise WorkflowError("no active stage run")
     if active.get("run_id") != args.run_id or active.get("nonce") != args.nonce:
         raise WorkflowError("run_id/nonce do not match the active stage run")
-    run_file = root / str(active.get("run_file") or "")
-    if not run_file.is_file() or run_file.is_symlink() or _sha256(run_file) != active.get("run_sha256"):
-        raise WorkflowError("controller stage-run record was modified")
-    run = _json(run_file)
+    run = active
     if active.get("stage") == "REWRITE_CORE_MODULES" and _rewrite_state_path(root).is_file():
         rewrite = _load_rewrite_state(root)
         if rewrite.get("active_worker"):
             raise WorkflowError("finish the active static rewrite worker before aborting its parent stage")
     if run.get("run_id") != args.run_id or run.get("nonce") != args.nonce:
-        raise WorkflowError("stage run file does not match the active run credentials")
+        raise WorkflowError("active transaction credentials do not match")
     state_before = run.get("state_before")
     if not isinstance(state_before, dict):
-        raise WorkflowError("stage run file is missing its controller state baseline")
+        raise WorkflowError("active transaction is missing its controller state baseline")
     monitored = run.get("monitored_patterns")
     patterns = [item for item in monitored if isinstance(item, str)] if isinstance(monitored, list) else []
     before = run.get("baseline") if isinstance(run.get("baseline"), dict) else {}
@@ -2127,7 +1955,6 @@ def cmd_abort(args: argparse.Namespace) -> int:
     changed = sorted(changes["created"] + changes["modified"] + changes["deleted"])
     expected_controller_changes = {
         "logs/trace/workflow_state.json",
-        run_file.relative_to(root).as_posix(),
     }
     controller_before = run.get("controller_baseline")
     if not isinstance(controller_before, dict):
@@ -2150,12 +1977,9 @@ def cmd_abort(args: argparse.Namespace) -> int:
             if not _matches(path, [
                 "logs/trace/rewrite-state.json",
                 "logs/trace/rewrite-worker-runs/**",
-                "logs/trace/rewrite-worker-receipts/**",
                 "logs/trace/rewrite-check/**",
-                "logs/trace/core_rewrite_batches.jsonl",
                 "logs/trace/implementation-audit.json",
-                "logs/trace/06-rewrite-core-modules.md",
-                "logs/trace/task-packets/rewrite_core_modules-*.json",
+                "logs/trace/active-task.json",
             ])
         ]
     if controller_changes:
@@ -2178,7 +2002,7 @@ def cmd_abort(args: argparse.Namespace) -> int:
         "checkpoint": active.get("stage"),
         "next_action": f"COMPLETE_{active.get('stage')}",
     }
-    _append_jsonl(root / "logs" / "trace" / "stage-aborts.jsonl", {
+    _append_jsonl(root / "logs" / "trace" / "workflow-events.jsonl", {
         "run_id": args.run_id,
         "stage": active.get("stage"),
         "agent": run.get("agent"),
@@ -2195,8 +2019,9 @@ def cmd_abort(args: argparse.Namespace) -> int:
         restored["retry_baseline_run"] = state_before["retry_baseline_run"]
     else:
         restored["retry_baseline_run"] = {
-            "run_file": run_file.relative_to(root).as_posix(),
-            "run_sha256": _sha256(run_file),
+            "stage": active.get("stage"),
+            "root": _root_identity(root),
+            "baseline": run.get("baseline"),
         }
     _atomic_json(_state_path(root), restored)
     print("WORKFLOWCTL: STAGE_ABORTED")
@@ -2211,33 +2036,12 @@ def cmd_record_agent(args: argparse.Namespace) -> int:
         raise WorkflowError(f"unsupported invocation stage: {stage}")
     if args.status not in {"pass", "success"}:
         raise WorkflowError("only successful agent invocations may satisfy stage evidence")
-    receipt_rel = _relative(root, args.receipt)
-    receipt = _json(root / receipt_rel)
-    if receipt.get("run_id") != args.run_id or receipt.get("status") != "pass":
-        raise WorkflowError("agent evidence must reference a matching, gate-passed stage receipt")
-    receipt_stage = receipt.get("stage")
-    expected_receipt_stage = "DESIGN_RUST_API" if stage == "C_ANALYSIS" else stage
-    expected_receipt_prefix = f"logs/trace/stage-receipts/{expected_receipt_stage}/"
-    if (
-        receipt_stage != expected_receipt_stage
-        or not receipt_rel.startswith(expected_receipt_prefix)
-        or receipt_rel != receipt.get("receipt_path")
-        or Path(receipt_rel).name != f"{args.run_id}.json"
-    ):
-        raise WorkflowError(
-            f"agent evidence for {stage} must reference its immutable {expected_receipt_prefix}<run_id>.json receipt"
-        )
-    receipt_agent = receipt.get("agent")
-    if receipt_agent not in {args.agent, "controller", None}:
-        raise WorkflowError("agent name does not match the stage receipt")
     row = {
         "agent": args.agent,
         "stage": stage,
         "mode": args.mode,
         "status": args.status,
         "run_id": args.run_id,
-        "artifact_receipt": receipt_rel,
-        "artifact_receipt_sha256": _sha256(root / receipt_rel),
         "recorded_at_ns": _now_ns(),
     }
     if args.mode == "primary_fallback":
@@ -2262,7 +2066,7 @@ def cmd_record_agent(args: argparse.Namespace) -> int:
         row["consecutive_failures"] = args.consecutive_failures
         row["fallback_to_primary_reason"] = args.reason
         row["fallback_abort_runs"] = [str(item.get("run_id")) for item in selected_aborts]
-    _append_jsonl(root / "logs" / "trace" / "subagent-invocations.jsonl", row)
+    _append_jsonl(root / "logs" / "trace" / "workflow-events.jsonl", row)
     print("WORKFLOWCTL: AGENT_INVOCATION_RECORDED")
     return 0
 

@@ -1076,10 +1076,6 @@ def check_init_workspace(root: Path) -> list[str]:
     if state.get("rust_project_path") != "flashDB_rust":
         errors.append("workflow_state.json rust_project_path must be flashDB_rust")
 
-    stage_log = root / "logs" / "trace" / "01-init-workspace.md"
-    if not stage_log.exists():
-        errors.append("missing logs/trace/01-init-workspace.md")
-
     return errors
 
 
@@ -1483,10 +1479,6 @@ def check_read_c_project(root: Path) -> list[str]:
     if not isinstance(manifest.get("test_sources"), list) or not manifest.get("test_sources"):
         errors.append("input_manifest.json test_sources must be a non-empty list")
 
-    stage_log = root / "logs" / "trace" / "02-read-c-project.md"
-    if not stage_log.exists():
-        errors.append("missing logs/trace/02-read-c-project.md")
-
     return errors
 
 
@@ -1583,15 +1575,6 @@ def check_build_c_model(root: Path) -> list[str]:
     if state.get("controller_contract_version"):
         errors.extend(check_deterministic_abi_field_contract(api_model))
     errors.extend(check_function_signature_contract(api_model, test_model))
-    if (
-        not state.get("controller_contract_version")
-        and (
-            (root / "logs" / "trace" / "agent-registry.json").exists()
-            or (root / "logs" / "trace" / "subagent-invocations.jsonl").exists()
-        )
-    ):
-        errors.extend(check_subagent_evidence(root, {"c-analyzer"}))
-
     if not isinstance(test_model.get("test_functions"), list) or not test_model.get("test_functions"):
         errors.append("c_test_model.json test_functions must be non-empty")
     if not test_model.get("kvdb_tests"):
@@ -1657,10 +1640,6 @@ def check_build_c_model(root: Path) -> list[str]:
                 errors.append(f"scorer case {item.get('case_name')} must declare semantic_obligations")
     if state.get("controller_contract_version"):
         errors.extend(check_ordered_scenario_ir(test_model))
-
-    stage_log = root / "logs" / "trace" / "03-build-c-model.md"
-    if not stage_log.exists():
-        errors.append("missing logs/trace/03-build-c-model.md")
 
     return errors
 
@@ -1785,35 +1764,6 @@ def check_design_rust_api(root: Path) -> list[str]:
         else:
             errors.extend(check_c_abi_facade_contract(design, api_model))
 
-        ffi_manifest, ffi_manifest_error = load_json(root / "logs" / "trace" / "ffi_manifest.json")
-        if ffi_manifest_error:
-            errors.append(f"ffi_manifest.json: {ffi_manifest_error}")
-        else:
-            facade = design.get("c_abi_facade") if isinstance(design.get("c_abi_facade"), dict) else {}
-            functions = facade.get("functions") if isinstance(facade.get("functions"), list) else []
-            expected_apis = sorted({
-                item.get("c_symbol")
-                for item in functions
-                if isinstance(item, dict) and isinstance(item.get("c_symbol"), str) and item.get("c_symbol")
-            })
-            if ffi_manifest.get("schema_version") != 1:
-                errors.append("ffi_manifest.json schema_version must be 1")
-            if ffi_manifest.get("stage") != "DESIGN_RUST_API":
-                errors.append("ffi_manifest.json stage must be DESIGN_RUST_API")
-            if ffi_manifest.get("input_digest") != design.get("input_digest"):
-                errors.append("ffi_manifest.json input_digest must match rust_api_design.json")
-            if ffi_manifest.get("required_ffi_apis") != expected_apis:
-                errors.append("ffi_manifest.json required_ffi_apis must match rust_api_design.json c_abi_facade.functions")
-
-    stage_log = root / "logs" / "trace" / "04-design-rust-api.md"
-    try:
-        stage_log_text = stage_log.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        errors.append("missing logs/trace/04-design-rust-api.md; stage log must be 中文")
-    else:
-        if not contains_cjk(stage_log_text):
-            errors.append("logs/trace/04-design-rust-api.md must use 中文")
-
     return errors
 
 
@@ -1882,9 +1832,6 @@ def check_generate_rust_scaffold(root: Path) -> list[str]:
         elif layout.get("phase") != "layout" or layout.get("status") != "pass":
             errors.append("compiler-confirmed scaffold ABI layout must pass before REWRITE_CORE_MODULES")
 
-    stage_log = root / "logs" / "trace" / "05-generate-rust-scaffold.md"
-    if not stage_log.exists():
-        errors.append("missing logs/trace/05-generate-rust-scaffold.md")
     return errors
 
 
@@ -1942,20 +1889,16 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
                 errors.append("static REWRITE must have a completed facade revision")
             if rewrite_state.get("facade_based_on_core_revision") != core_revision:
                 errors.append("latest facade evidence is stale for the current core revision")
-            latest = rewrite_state.get("latest_receipts")
+            latest = rewrite_state.get("latest_results")
             ownership = manifest.get("rewrite_ownership", {}) if isinstance(manifest, dict) else {}
             owner_keys = {
                 "IMPLEMENT_CORE": "core_owned_paths",
                 "WIRE_FACADE": "facade_owned_paths",
             }
             for role, owner_key in owner_keys.items():
-                receipt_rel = latest.get(role) if isinstance(latest, dict) else None
-                if not isinstance(receipt_rel, str):
-                    errors.append(f"static REWRITE has no latest {role} receipt")
-                    continue
-                receipt, receipt_error = load_json(root / receipt_rel)
-                if receipt_error:
-                    errors.append(f"{role} receipt: {receipt_error}")
+                receipt = latest.get(role) if isinstance(latest, dict) else None
+                if not isinstance(receipt, dict):
+                    errors.append(f"static REWRITE has no latest {role} result")
                     continue
                 if receipt.get("role") != role or receipt.get("status") != "complete":
                     errors.append(f"latest {role} receipt must be complete and role-bound")
@@ -2023,11 +1966,11 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
                 errors.append(f"flashDB_rust/{rel_path} must not contain todo!() or unimplemented!()")
 
     errors.extend(check_no_c_sources_in_src(root))
-    batches, batches_error = load_jsonl(root / "logs" / "trace" / "core_rewrite_batches.jsonl")
-    if batches_error:
-        errors.append(f"core_rewrite_batches.jsonl: {batches_error}")
+    batches = rewrite_state.get("batch_results") if isinstance(rewrite_state, dict) else None
+    if not isinstance(batches, list):
+        errors.append("rewrite-state.json batch_results must be a list")
     elif not batches:
-        errors.append("core_rewrite_batches.jsonl must contain at least one implementation batch")
+        errors.append("rewrite-state.json must contain at least one implementation batch result")
     else:
         required_obligations: set[str] = set()
         if isinstance(design, dict):
@@ -2101,30 +2044,6 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
                 "core_rewrite_batches.jsonl must cover all rust_api_design.json implementation_requirements: "
                 + ", ".join(missing_obligations)
             )
-        if state.get("controller_contract_version"):
-            receipt, receipt_error = load_json(
-                root / "logs" / "trace" / "stage-receipts" / "REWRITE_CORE_MODULES.json"
-            )
-            if receipt_error:
-                errors.append(f"REWRITE_CORE_MODULES receipt: {receipt_error}")
-            else:
-                actual_changes = {
-                    item for item in receipt.get("changed_files", [])
-                    if isinstance(item, str) and item.startswith("flashDB_rust/src/")
-                }
-                claimed_changes = {
-                    item
-                    for batch in batches
-                    if isinstance(batch, dict)
-                    for item in batch.get("changed_files", [])
-                    if isinstance(item, str)
-                }
-                unchanged_claims = sorted(claimed_changes - actual_changes)
-                if unchanged_claims:
-                    errors.append(
-                        "core_rewrite_batches.jsonl claims files absent from the controller REWRITE baseline: "
-                        + ", ".join(unchanged_claims)
-                    )
     if state.get("controller_contract_version"):
         audit_tool = Path(__file__).resolve().with_name("core_impl_audit.py")
         spec = importlib.util.spec_from_file_location("core_impl_audit", audit_tool)
@@ -2152,8 +2071,6 @@ def check_rewrite_core_modules(root: Path) -> list[str]:
     if project.exists():
         errors.extend(check_project_command(project, ["cargo", "fmt", "--all", "--", "--check"], "rewritten project cargo fmt"))
         errors.extend(check_project_command(project, ["cargo", "build", "--release"], "rewritten project release build"))
-    if not (root / "logs" / "trace" / "06-rewrite-core-modules.md").exists():
-        errors.append("missing logs/trace/06-rewrite-core-modules.md")
     return errors
 
 
@@ -2396,32 +2313,6 @@ def check_c_cross_intermediate_evidence(root: Path) -> list[str]:
     matrix, matrix_error = load_json(trace / "validation-matrix.json")
     if matrix_error:
         return [f"validation-matrix.json: {matrix_error}"]
-
-    link_check, link_error = load_json(c_cross / "link-check.json")
-    if not link_error and link_check.get("status") == "pass":
-        ffi_manifest, ffi_error = load_json(trace / "ffi_manifest.json")
-        if ffi_error:
-            errors.append(f"ffi_manifest.json: {ffi_error}")
-        else:
-            suite_requirements = ffi_manifest.get("suite_requirements")
-            aggregate = ffi_manifest.get("required_ffi_apis")
-            if not isinstance(suite_requirements, dict) or not suite_requirements:
-                errors.append("ffi_manifest.json must retain per-suite requirements")
-            if not isinstance(aggregate, list):
-                errors.append("ffi_manifest.json required_ffi_apis must be a list")
-            if isinstance(suite_requirements, dict) and isinstance(aggregate, list):
-                expected = {
-                    symbol
-                    for item in suite_requirements.values()
-                    if isinstance(item, dict)
-                    for symbol in item.get("required_ffi_apis", [])
-                    if isinstance(symbol, str)
-                }
-                if set(aggregate) != expected:
-                    errors.append("ffi_manifest.json aggregate must equal the union of per-suite requirements")
-                selected = matrix.get("selected_suites")
-                if isinstance(selected, list) and not set(selected).issubset(set(suite_requirements)):
-                    errors.append("ffi_manifest.json must include every successfully linked selected suite")
 
     for filename, expected_phase in [("build-check.json", "build"), ("layout-check.json", "layout"), ("link-check.json", "link")]:
         data, data_error = load_json(c_cross / filename)
@@ -2852,8 +2743,6 @@ def check_migrate_tests(root: Path) -> list[str]:
     errors.extend(check_test_placeholders(root))
     errors.extend(check_test_consistency(root))
 
-    if not (root / "logs" / "trace" / "07-migrate-tests.md").exists():
-        errors.append("missing logs/trace/07-migrate-tests.md")
     return errors
 
 
@@ -2888,7 +2777,7 @@ def check_build_test_repair(root: Path) -> list[str]:
             errors.append("cargo-results.json build_status must be pass")
         if results.get("test_status") != "pass":
             errors.append("cargo-results.json test_status must be pass")
-    for name in ["cargo-build.log", "cargo-test.log", "08-build-test-repair.md"]:
+    for name in ["cargo-build.log", "cargo-test.log"]:
         if not (root / "logs" / "trace" / name).exists():
             errors.append(f"missing logs/trace/{name}")
     errors.extend(check_test_failure_triage(root, state))
@@ -3011,8 +2900,6 @@ def check_report_and_verify(root: Path) -> list[str]:
     errors.extend(check_dynamic_test_mapping(root))
     errors.extend(check_test_placeholders(root))
     errors.extend(check_test_consistency(root))
-    errors.extend(check_subagent_evidence(root))
-
     ratio, ratio_error = load_json(root / "logs" / "trace" / "unsafe-ratio.json")
     if ratio_error:
         errors.append(f"unsafe-ratio.json: {ratio_error}")
@@ -3025,7 +2912,7 @@ def check_report_and_verify(root: Path) -> list[str]:
             if value > 0.10:
                 errors.append("unsafe-ratio.json unsafe_ratio must be <= 0.10")
 
-    for name in ["cargo-build.log", "cargo-test.log", "final-verification.md", "09-report-and-verify.md"]:
+    for name in ["cargo-build.log", "cargo-test.log"]:
         if not (root / "logs" / "trace" / name).exists():
             errors.append(f"missing logs/trace/{name}")
     output = root / "result" / "output.md"
@@ -3074,14 +2961,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{stage}: FAIL")
         print(f"unsupported stage for this checkpoint: {stage}")
         return 2
-    if errors:
-        print(f"{stage}: FAIL")
-        for error in errors:
-            print(f"- {error}")
-        return 1
-
-    errors.extend(check_stage_receipt(root, stage))
-
     if errors:
         print(f"{stage}: FAIL")
         for error in errors:

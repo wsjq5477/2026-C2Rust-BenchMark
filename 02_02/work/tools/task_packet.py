@@ -17,7 +17,6 @@ CONTRACT_PATH = Path(__file__).resolve().parents[1] / "knowledge" / "workflow-co
 VERIFY_TRACE_OUTPUTS = [
     "logs/trace/c-cross/**",
     "logs/trace/validation-matrix.json",
-    "logs/trace/ffi_manifest.json",
     "logs/trace/06-5-verify-rust-with-c-tests.md",
 ]
 BUILD_TRACE_OUTPUTS = [
@@ -204,22 +203,24 @@ def requirement_list(design: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def scenario_list(test_model: dict[str, Any]) -> list[dict[str, Any]]:
+    scenarios = test_model.get("standard_scenarios", [])
+    score_index = test_model.get("scorer_standard_cases", [])
+    scorer_by_scenario = {
+        str(item.get("scenario_id")): item
+        for item in score_index
+        if isinstance(item, dict) and isinstance(item.get("scenario_id"), str)
+    } if isinstance(score_index, list) else {}
     result: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for key in ["standard_scenarios", "scorer_standard_cases"]:
-        values = test_model.get(key, [])
-        if not isinstance(values, list):
+    for scenario in scenarios if isinstance(scenarios, list) else []:
+        if not isinstance(scenario, dict) or not isinstance(scenario.get("id"), str):
             continue
-        for item in values:
-            if not isinstance(item, dict):
-                continue
-            identifier = str(item.get("scenario_id", item.get("id", item.get("case_name", ""))))
-            if not identifier or identifier in seen:
-                continue
-            seen.add(identifier)
-            copy = dict(item)
-            copy.setdefault("id", identifier)
-            result.append(copy)
+        item = dict(scenario)
+        score = scorer_by_scenario.get(scenario["id"])
+        if isinstance(score, dict):
+            for key in ["case_id", "case_name", "required_c_tests", "semantic_obligations", "c_cross"]:
+                if key in score:
+                    item[key] = score[key]
+        result.append(item)
     return sorted(
         result,
         key=lambda item: (
@@ -561,7 +562,7 @@ def stage_profile(
         ]
     else:
         result["allowed_paths"] = ["logs/trace/**"]
-        result["evidence_paths"] = [f"logs/trace/task-packets/{stage}.json"]
+        result["evidence_paths"] = ["logs/trace/active-task.json"]
     if profile_stage == "VERIFY_RUST_WITH_C_TESTS":
         result["allowed_paths"] = [f"{rust_project}/src/**", *VERIFY_TRACE_OUTPUTS]
     result["prohibitions"] = common_prohibitions
@@ -947,7 +948,7 @@ def main(argv: list[str] | None = None) -> int:
             "test_model": test_model_path.as_posix() if test_model_path.is_file() else None,
             "repair_plan": repair_path.as_posix() if repair_path else None,
         }
-    output = rooted(args.output, str(Path(args.trace_dir) / "task-packets" / f"{stage}.json"))
+    output = rooted(args.output, str(Path(args.trace_dir) / "active-task.json"))
     write_json(output, packet)
     print("TASK_PACKET: WRITTEN")
     print(f"stage={stage}")

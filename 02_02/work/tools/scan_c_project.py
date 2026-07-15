@@ -70,7 +70,14 @@ def scan_project(source: Path | str) -> dict[str, Any]:
         if path.is_file() and path.name in BUILD_FILE_NAMES:
             build_files.append(rel(path, root))
     build_files.sort()
-    evidence_files = sorted(dict.fromkeys(core_sources + test_sources + headers + build_files))
+    # This is the one immutable input record.  The focused lists above drive
+    # modelling; this complete file list prevents other source-tree changes
+    # from escaping the input-integrity check.
+    evidence_files = sorted(
+        rel(path, root)
+        for path in root.rglob("*")
+        if path.is_file() and ".git" not in path.relative_to(root).parts
+    )
     file_evidence = {
         name: {
             "sha256": sha256_file(root / name),

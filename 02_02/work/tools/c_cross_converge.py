@@ -247,7 +247,7 @@ def build_task_packet(
 def _preserve_primary_evidence(trace: Path) -> tuple[dict[Path, bytes], set[Path]]:
     c_cross = trace / "c-cross"
     preserved: dict[Path, bytes] = {}
-    for path in [trace / "validation-matrix.json", trace / "ffi_manifest.json"]:
+    for path in [trace / "validation-matrix.json"]:
         if path.is_file():
             preserved[path] = path.read_bytes()
     excluded = {"attempts.jsonl", "isolation-results.jsonl", "task-packet.json"}

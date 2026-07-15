@@ -37,14 +37,12 @@
       "allowed_paths": [
         "logs/trace/c_project_model.json",
         "logs/trace/c_api_model.json",
-        "logs/trace/c_test_model.json",
-        "logs/trace/03-build-c-model.md"
+        "logs/trace/c_test_model.json"
       ],
       "required_outputs": [
         "logs/trace/c_project_model.json",
         "logs/trace/c_api_model.json",
-        "logs/trace/c_test_model.json",
-        "logs/trace/03-build-c-model.md"
+        "logs/trace/c_test_model.json"
       ]
     },
     "BUILD_TEST_REPAIR": {
@@ -57,41 +55,33 @@
         "logs/trace/cargo-test.log",
         "logs/trace/cargo-fmt.log",
         "logs/trace/test-repair/**",
-        "logs/trace/08-build-test-repair.md",
         "result/issues/repair_trace.jsonl"
       ],
       "required_outputs": [
         "logs/trace/cargo-results.json",
         "logs/trace/cargo-build.log",
-        "logs/trace/cargo-test.log",
-        "logs/trace/08-build-test-repair.md"
+        "logs/trace/cargo-test.log"
       ]
     },
     "DESIGN_RUST_API": {
       "allowed_paths": [
-        "logs/trace/rust_api_design.json",
-        "logs/trace/ffi_manifest.json",
-        "logs/trace/04-design-rust-api.md"
+        "logs/trace/rust_api_design.json"
       ],
       "required_outputs": [
-        "logs/trace/rust_api_design.json",
-        "logs/trace/ffi_manifest.json",
-        "logs/trace/04-design-rust-api.md"
+        "logs/trace/rust_api_design.json"
       ]
     },
     "GENERATE_RUST_SCAFFOLD": {
       "allowed_paths": [
         "flashDB_rust/**",
         "logs/trace/scaffold-manifest.json",
-        "logs/trace/c-cross/**",
-        "logs/trace/05-generate-rust-scaffold.md"
+        "logs/trace/c-cross/**"
       ],
       "required_outputs": [
         "flashDB_rust/Cargo.toml",
         "flashDB_rust/src/lib.rs",
         "logs/trace/scaffold-manifest.json",
-        "logs/trace/c-cross/scaffold-layout-check.json",
-        "logs/trace/05-generate-rust-scaffold.md"
+        "logs/trace/c-cross/scaffold-layout-check.json"
       ]
     },
     "INIT_WORKSPACE": {
@@ -101,8 +91,7 @@
         "result/**"
       ],
       "required_outputs": [
-        "logs/trace/workflow_state.json",
-        "logs/trace/01-init-workspace.md"
+        "logs/trace/workflow_state.json"
       ]
     },
     "MIGRATE_TESTS": {
@@ -110,36 +99,29 @@
         "flashDB_rust/tests/**",
         "logs/trace/rust_test_mapping.json",
         "logs/trace/test-placeholder-check.json",
-        "logs/trace/test-consistency.json",
-        "logs/trace/07-migrate-tests.md"
+        "logs/trace/test-consistency.json"
       ],
       "required_outputs": [
         "logs/trace/rust_test_mapping.json",
         "logs/trace/test-placeholder-check.json",
-        "logs/trace/test-consistency.json",
-        "logs/trace/07-migrate-tests.md"
+        "logs/trace/test-consistency.json"
       ]
     },
     "READ_C_PROJECT": {
       "allowed_paths": [
-        "logs/trace/input_manifest.json",
-        "logs/trace/02-read-c-project.md"
+        "logs/trace/input_manifest.json"
       ],
       "required_outputs": [
-        "logs/trace/input-source-baseline.json",
-        "logs/trace/input_manifest.json",
-        "logs/trace/02-read-c-project.md"
+        "logs/trace/input_manifest.json"
       ]
     },
     "REPORT_AND_VERIFY": {
       "allowed_paths": [
         "logs/trace/c-cross/**",
         "logs/trace/validation-matrix.json",
-        "logs/trace/ffi_manifest.json",
         "logs/trace/unsafe-ratio.json",
         "logs/trace/test-consistency.json",
-        "logs/trace/final-verification.md",
-        "logs/trace/09-report-and-verify.md",
+        "logs/trace/final-manifest.json",
         "result/**"
       ],
       "required_outputs": [
@@ -147,8 +129,7 @@
         "logs/trace/c-cross/attempts.jsonl",
         "logs/trace/unsafe-ratio.json",
         "logs/trace/test-consistency.json",
-        "logs/trace/final-verification.md",
-        "logs/trace/09-report-and-verify.md",
+        "logs/trace/final-manifest.json",
         "result/output.md",
         "result/issues/00-summary.md"
       ]
@@ -157,21 +138,15 @@
       "allowed_paths": [
         "flashDB_rust/src/**",
         "logs/trace/implementation-audit.json",
-        "logs/trace/core_rewrite_batches.jsonl",
         "logs/trace/c-cross/**",
-        "logs/trace/ffi_manifest.json",
         "logs/trace/validation-matrix.json",
         "logs/trace/rewrite-c-cross/**",
         "logs/trace/rewrite-check/**",
-        "logs/trace/rewrite-worker-receipts/**",
-        "logs/trace/rewrite-worker-runs/**",
-        "logs/trace/rewrite-state.json",
-        "logs/trace/06-rewrite-core-modules.md"
+        "logs/trace/rewrite-state.json"
       ],
       "required_outputs": [
         "logs/trace/implementation-audit.json",
-        "logs/trace/core_rewrite_batches.jsonl",
-        "logs/trace/06-rewrite-core-modules.md"
+        "logs/trace/rewrite-state.json"
       ]
     },
     "VERIFY_RUST_WITH_C_TESTS": {
@@ -183,14 +158,12 @@
         "logs/trace/rust_api_design.json",
         "logs/trace/c-cross/**",
         "logs/trace/validation-matrix.json",
-        "logs/trace/ffi_manifest.json",
-        "logs/trace/06-5-verify-rust-with-c-tests.md"
+        "logs/trace/c-cross-state.json"
       ],
       "required_outputs": [
         "logs/trace/validation-matrix.json",
         "logs/trace/c-cross/attempts.jsonl",
-        "logs/trace/c-cross/repair-plan.json",
-        "logs/trace/06-5-verify-rust-with-c-tests.md"
+        "logs/trace/c-cross/repair-plan.json"
       ]
     }
   }

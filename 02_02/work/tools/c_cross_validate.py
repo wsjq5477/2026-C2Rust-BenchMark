@@ -872,9 +872,6 @@ def _compile_suite_runner(
         if code != 0:
             return False, binary, "".join(output_parts) + f"cc exited with {code}\n"
         objects.append(obj)
-    trace = c_cross.parent
-    workbench_root = trace.parent.parent
-    output_parts.append(_write_ffi_manifest(suite, c_root, c_cross, trace, objects, workbench_root))
     command = [
         cc,
         "-O0",
@@ -1580,8 +1577,6 @@ def build_matrix(
     # stale artifact from older workbench runs so it cannot be mistaken for
     # current evidence.
     (c_cross / "deferred.jsonl").unlink(missing_ok=True)
-    (trace / "ffi_manifest.json").unlink(missing_ok=True)
-
     test_model = load_json(trace / "c_test_model.json")
     malformed = []
     valid_cases: list[dict[str, Any]] = []

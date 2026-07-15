@@ -104,8 +104,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "work/skills/rust-implementer.md",
             "work/skills/test-migrator.md",
             "work/skills/repairer.md",
-            "logs/trace/agent-registry.json",
-            "logs/trace/subagent-invocations.jsonl",
+            "logs/trace/workflow-events.jsonl",
             "work 目录仍为权威源",
             "opencode 不能在会话中把当前 primary agent 自切换为另一个 primary agent",
             "如果启动前已经选择 flashdb-orchestrator",
@@ -152,8 +151,7 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "BUILD_TEST_REPAIR",
             "REPORT_AND_VERIFY",
             "workflow_state.json",
-            "agent-registry.json",
-            "subagent-invocations.jsonl",
+            "workflow-events.jsonl",
             "input_manifest.json",
             "c_project_model.json",
             "c_api_model.json",
@@ -185,8 +183,8 @@ class FrameworkCheckpointTests(unittest.TestCase):
             "python3 work/tools/gate.py --stage MIGRATE_TESTS",
             "python3 work/tools/gate.py --stage BUILD_TEST_REPAIR",
             "python3 work/tools/gate.py --stage REPORT_AND_VERIFY",
-            "04-design-rust-api.md",
-            "09-report-and-verify.md",
+            "rust_api_design.json",
+            "final-manifest.json",
             "c-analyzer",
             "rust-implementer",
             "test-migrator",
@@ -702,11 +700,13 @@ class FrameworkCheckpointTests(unittest.TestCase):
     def test_build_c_model_does_not_emit_unregistered_fixed_scorer_cases(self):
         builder = load_tool("build_c_model.py")
         cases = builder.build_scorer_standard_cases(
-            registered_invocations=[
-                {"name": "test_dynamic_case", "source_file": "tests/custom.c", "source_index": 1}
-            ],
-            scenario_tags={"test_dynamic_case": ["extension"]},
-            test_semantics={"test_dynamic_case": builder.extract_test_semantics("custom_api_call(); TEST_ASSERT_TRUE(ok);")},
+            [{
+                "id": "test_dynamic_case",
+                "name": "test_dynamic_case",
+                "source_file": "tests/custom.c",
+                "tags": ["extension"],
+                "semantic_facts": builder.extract_test_semantics("custom_api_call(); TEST_ASSERT_TRUE(ok);"),
+            }],
         )
         self.assertEqual(1, len(cases))
         self.assertEqual("test_dynamic_case", cases[0]["scenario_id"])
@@ -2159,8 +2159,9 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
         self.assertIn("Result<T, Error>", design["error_model"]["result_alias"])
         public_symbols = set(models["c_api_model"]["public_functions"])
         self.assertTrue(set(design["c_to_rust_symbol_map"]).issubset(public_symbols))
-        self.assertIn("kvdb_tests", design["test_api"])
-        self.assertIn("tsdb_tests", design["test_api"])
+        self.assertEqual("c_test_model.json.standard_scenarios", design["test_api"]["scenario_source"])
+        self.assertIn("observables", design["test_api"])
+        self.assertIn("controls", design["test_api"])
         self.assertIn("c_abi_facade", design)
         facade_names = {item["c_name"] for item in design["c_abi_facade"]["structs"]}
         model_names = {item["name"] for item in models["c_api_model"]["abi_layouts"]}
@@ -2392,25 +2393,14 @@ pub extern "C" fn fdb_probe() -> i32 { 7 }
                 "unresolved": [],
             }
             (trace / "rust_api_design.json").write_text(json.dumps(valid_design), encoding="utf-8")
-            (trace / "04-design-rust-api.md").write_text("# API Design\n\nEnglish only log.\n", encoding="utf-8")
-            english_log = subprocess.run(
+            no_log_needed = subprocess.run(
                 [sys.executable, str(gate), "--stage", "DESIGN_RUST_API", "--root", str(root)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
             )
-            self.assertNotEqual(0, english_log.returncode)
-            self.assertIn("中文", english_log.stdout)
-
-            (trace / "04-design-rust-api.md").write_text("# Rust API 设计\n\n本阶段只设计 API，不生成 Rust 项目。\n", encoding="utf-8")
-            passed = subprocess.run(
-                [sys.executable, str(gate), "--stage", "DESIGN_RUST_API", "--root", str(root)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            self.assertEqual(0, passed.returncode, passed.stdout)
-            self.assertIn("DESIGN_RUST_API: PASS", passed.stdout)
+            self.assertEqual(0, no_log_needed.returncode, no_log_needed.stdout)
+            self.assertIn("DESIGN_RUST_API: PASS", no_log_needed.stdout)
 
     def test_generate_scaffold_and_migrate_tests_create_task_map_without_overwriting_tests(self):
         scaffold = PROJECT / "work" / "tools" / "generate_rust_scaffold.py"

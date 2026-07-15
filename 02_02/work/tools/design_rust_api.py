@@ -556,12 +556,9 @@ def derive_implementation_requirements(c_test_model: dict[str, Any]) -> list[dic
 
 
 def design_test_api(
-    kvdb_tests: list[Any],
-    tsdb_tests: list[Any],
-    standard_scenarios: list[Any],
-    scorer_standard_cases: list[Any],
     obligations: set[str],
     owner_type: str,
+    test_model_digest: str | None,
 ) -> dict[str, Any]:
     observables: list[dict[str, Any]] = []
     controls: list[dict[str, Any]] = []
@@ -594,11 +591,9 @@ def design_test_api(
         )
 
     return {
-        "kvdb_tests": kvdb_tests,
-        "tsdb_tests": tsdb_tests,
-        "standard_scenarios": standard_scenarios,
-        "scorer_standard_cases": scorer_standard_cases,
-        "rust_test_files": [],
+        "test_model_digest": test_model_digest,
+        "scenario_source": "c_test_model.json.standard_scenarios",
+        "scorer_case_source": "c_test_model.json.scorer_standard_cases",
         "observables": observables,
         "controls": controls,
         "coverage_levels": {
@@ -765,12 +760,9 @@ def design_api(
         "kvdb_api": kvdb_api,
         "tsdb_api": tsdb_api,
         "test_api": design_test_api(
-            kvdb_tests,
-            tsdb_tests,
-            standard_scenarios,
-            scorer_standard_cases,
             obligations,
             test_api_owner_type(modules),
+            c_test_model.get("input_digest") if isinstance(c_test_model.get("input_digest"), str) else None,
         ),
         "c_to_rust_symbol_map": c_to_rust_symbol_map,
         "semantic_requirements": [
@@ -815,39 +807,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     write_json(Path(args.output), design)
 
-    # Generate ffi_manifest.json from c_abi_facade
-    facade = design.get("c_abi_facade", {})
-    functions = facade.get("functions", [])
-    required_ffi_apis = sorted([f.get("c_symbol") for f in functions if isinstance(f, dict) and f.get("c_symbol")])
-    observation_apis = sorted([
-        f.get("c_symbol") for f in functions
-        if isinstance(f, dict) and f.get("safe_role", "").startswith("observation_")
-    ])
-    ffi_manifest = {
-        "schema_version": 1,
-        "stage": "DESIGN_RUST_API",
-        "input_digest": design.get("input_digest"),
-        "required_ffi_apis": required_ffi_apis,
-        "observation_apis": observation_apis,
-        "ffi_mappings": [
-            {
-                f.get("c_symbol"): {
-                    "rust_wrapper": f.get("rust_export"),
-                    "rust_target": f.get("safe_target", ""),
-                }
-            }
-            for f in functions
-            if isinstance(f, dict) and f.get("c_symbol") and f.get("rust_export")
-        ],
-    }
-    output_dir = Path(args.output).parent
-    write_json(output_dir / "ffi_manifest.json", ffi_manifest)
-
     print("DESIGN_RUST_API: DESIGN_WRITTEN")
     print(f"crate_name={design['crate_name']}")
     print(f"kvdb_api={len(design['kvdb_api'])}")
     print(f"tsdb_api={len(design['tsdb_api'])}")
-    print(f"ffi_manifest_apis={len(required_ffi_apis)}")
+    facade = design.get("c_abi_facade", {})
+    functions = facade.get("functions", []) if isinstance(facade, dict) else []
+    print(f"ffi_facade_apis={len(functions) if isinstance(functions, list) else 0}")
     return 0
 
 

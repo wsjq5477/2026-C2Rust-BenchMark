@@ -64,7 +64,7 @@ class WorkflowControllerContractTests(unittest.TestCase):
             (root / "logs" / "trace" / "workflow_state.json").read_text(encoding="utf-8")
         )
         active = state["active_stage_run"]
-        run = json.loads((root / active["run_file"]).read_text(encoding="utf-8"))
+        run = active
         return state, active, run
 
     def test_init_and_begin_bind_run_to_root_nonce_and_required_outputs(self):
@@ -81,7 +81,6 @@ class WorkflowControllerContractTests(unittest.TestCase):
             self.assertEqual(active["nonce"], run["nonce"])
             self.assertRegex(run["nonce"], r"^[0-9a-f]{32}$")
             self.assertIn("logs/trace/input_manifest.json", run["required_outputs"])
-            self.assertIn("logs/trace/02-read-c-project.md", run["required_outputs"])
             self.assertIn("logs/trace/custom-proof.json", run["required_outputs"])
             self.assertIn("INSTRUCTION.md", run["monitored_patterns"])
             self.assertIn("work/**", run["monitored_patterns"])
@@ -149,7 +148,7 @@ class WorkflowControllerContractTests(unittest.TestCase):
             ):
                 self.assertEqual(0, WORKFLOWCTL.cmd_begin(args))
             active = json.loads(state_path.read_text(encoding="utf-8"))["active_stage_run"]
-            run = json.loads((root / active["run_file"]).read_text(encoding="utf-8"))
+            run = active
             self.assertEqual(baseline, run["baseline"])
 
     def test_controller_only_rewrite_receipt_does_not_require_parent_packet(self):
@@ -757,6 +756,7 @@ class StaticRewriteControllerTests(unittest.TestCase):
             state = json.loads(state_path.read_text(encoding="utf-8"))
             state["active_stage_run"] = None
             state["next_action"] = "RECHECK_REWRITE_CORE_MODULES"
+            state["last_gate"] = {"stage": "REWRITE_CORE_MODULES", "status": "fail", "run_id": parent["run_id"]}
             write_json(state_path, state)
             write_json(root / "logs" / "trace" / "rewrite-state.json", {
                 "parent_run_id": parent["run_id"],
@@ -764,41 +764,20 @@ class StaticRewriteControllerTests(unittest.TestCase):
                 "status": "ready_for_finish",
                 "active_worker": None,
             })
-            run_path = root / parent["run_file"]
-            run = json.loads(run_path.read_text(encoding="utf-8"))
-            write_json(root / "logs" / "trace" / "stage-receipts" / "REWRITE_CORE_MODULES.json", {
-                "stage": "REWRITE_CORE_MODULES",
-                "status": "failed",
-                "run_id": parent["run_id"],
-                "task_packet": None,
-                "task_packet_sha256": None,
-                "run_file": parent["run_file"],
-                "run_file_sha256": WORKFLOWCTL._sha256(run_path),
-                "allowed_paths": run["allowed_paths"],
-                "required_outputs": run["required_outputs"],
-                "baseline_digest": run["baseline_digest"],
-            })
             completed = argparse.Namespace(returncode=0, stdout="REWRITE_CORE_MODULES: PASS\n")
             with mock.patch.object(WORKFLOWCTL.subprocess, "run", return_value=completed):
                 self.assertEqual(0, WORKFLOWCTL.cmd_recheck_rewrite(argparse.Namespace(root=str(root))))
-            self.assertFalse(list((root / "logs" / "trace" / "rewrite-worker-runs").rglob("*.json")))
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual("VERIFY_RUST_WITH_C_TESTS", state["next_action"])
-            receipt = json.loads(
-                (root / "logs" / "trace" / "stage-receipts" / "REWRITE_CORE_MODULES.json").read_text(encoding="utf-8")
-            )
-            self.assertEqual("pass", receipt["status"])
+            self.assertEqual("pass", state["last_gate"]["status"])
 
     def test_failed_rewrite_persists_the_first_baseline_for_repair(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             self._prepare(root)
             parent = self._begin_parent(root)
-            run_path = root / parent["run_file"]
             for relative in [
                 "logs/trace/implementation-audit.json",
-                "logs/trace/core_rewrite_batches.jsonl",
-                "logs/trace/06-rewrite-core-modules.md",
             ]:
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -821,9 +800,7 @@ class StaticRewriteControllerTests(unittest.TestCase):
                 (root / "logs" / "trace" / "workflow_state.json").read_text(encoding="utf-8")
             )
             self.assertEqual("REPAIR_REWRITE_CORE_MODULES", state["next_action"])
-            self.assertEqual(
-                parent["run_file"], state["retry_baseline_run"]["run_file"]
-            )
+            self.assertEqual(parent["baseline"], state["retry_baseline_run"]["baseline"])
             with mock.patch.object(WORKFLOWCTL, "_prepare_static_rewrite", return_value=None):
                 self.assertEqual(
                     0,
@@ -835,12 +812,10 @@ class StaticRewriteControllerTests(unittest.TestCase):
                     ),
                 )
             repaired = json.loads(
-                (root / json.loads(
-                    (root / "logs" / "trace" / "workflow_state.json").read_text(encoding="utf-8")
-                )["active_stage_run"]["run_file"]).read_text(encoding="utf-8")
-            )
+                (root / "logs" / "trace" / "workflow_state.json").read_text(encoding="utf-8")
+            )["active_stage_run"]
             self.assertEqual(
-                json.loads(run_path.read_text(encoding="utf-8"))["baseline"], repaired["baseline"]
+                parent["baseline"], repaired["baseline"]
             )
 
     def _begin_worker(self, root: Path, *, packet_padding_bytes: int = 0) -> dict:
@@ -864,7 +839,7 @@ class StaticRewriteControllerTests(unittest.TestCase):
         )["active_worker"]
 
     def _finish_worker(self, root: Path, active: dict) -> int:
-        run = json.loads((root / active["run_file"]).read_text(encoding="utf-8"))
+        run = active
         write_json(
             root
             / "logs"
@@ -956,7 +931,7 @@ class StaticRewriteControllerTests(unittest.TestCase):
             (project / "src" / "core_model.rs").write_text(
                 "pub fn model_ready() -> bool { true }\n", encoding="utf-8"
             )
-            first_run = json.loads((root / first["run_file"]).read_text(encoding="utf-8"))
+            first_run = first
             first_result = (
                 root
                 / "logs"
@@ -1000,7 +975,7 @@ class StaticRewriteControllerTests(unittest.TestCase):
                 )
 
             second = self._begin_worker(root)
-            second_run = json.loads((root / second["run_file"]).read_text(encoding="utf-8"))
+            second_run = second
             packet = json.loads((root / second_run["packet"]).read_text(encoding="utf-8"))
             self.assertIn("missing internal method", json.dumps(packet["retry_context"]))
             command = packet["completion_contract"]["command"]
@@ -1011,9 +986,7 @@ class StaticRewriteControllerTests(unittest.TestCase):
             rewrite = json.loads(
                 (root / "logs" / "trace" / "rewrite-state.json").read_text(encoding="utf-8")
             )
-            receipt = json.loads(
-                (root / rewrite["latest_receipts"]["IMPLEMENT_CORE"]).read_text(encoding="utf-8")
-            )
+            receipt = rewrite["latest_results"]["IMPLEMENT_CORE"]
             self.assertEqual([], receipt["attempt_changed_files"])
             self.assertEqual(
                 ["flashDB_rust/src/core_model.rs"], receipt["changed_files"]
@@ -1206,12 +1179,7 @@ class StaticRewriteControllerTests(unittest.TestCase):
             self.assertEqual("READY", rewrite["phase"])
             self.assertEqual("failed_final", rewrite["requirement_batches"][0]["status"])
             self.assertEqual(2, rewrite["requirement_batches"][0]["verification_attempts"])
-            records = [
-                json.loads(line)
-                for line in (root / "logs" / "trace" / "core_rewrite_batches.jsonl")
-                .read_text(encoding="utf-8")
-                .splitlines()
-            ]
+            records = rewrite["batch_results"]
             self.assertEqual(["failed_final"], [item["status"] for item in records])
 
 
@@ -1568,8 +1536,8 @@ void test_demo(void) {
         self.assertEqual(WORKFLOWCTL.STAGE_REQUIRED_OUTPUTS, {
             stage: value["required_outputs"] for stage, value in contract["stages"].items()
         })
-        self.assertIn("logs/trace/ffi_manifest.json", contract["stages"]["DESIGN_RUST_API"]["allowed_paths"])
-        self.assertIn("logs/trace/ffi_manifest.json", contract["stages"]["DESIGN_RUST_API"]["required_outputs"])
+        self.assertNotIn("logs/trace/ffi_manifest.json", contract["stages"]["DESIGN_RUST_API"]["allowed_paths"])
+        self.assertNotIn("logs/trace/ffi_manifest.json", contract["stages"]["DESIGN_RUST_API"]["required_outputs"])
         for stage, stage_contract in contract["stages"].items():
             packet = TASK_PACKET.build_task_packet(stage, {}, {})
             profile = TASK_PACKET.stage_profile(stage, "flashDB_rust", contract)

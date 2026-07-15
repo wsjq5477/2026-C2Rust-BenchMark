@@ -1238,43 +1238,37 @@ def enrich_callback_paths(test_semantics: dict[str, dict[str, Any]]) -> None:
 
 
 def build_scorer_standard_cases(
-    registered_invocations: list[dict[str, Any]],
-    scenario_tags: dict[str, list[str]],
-    test_semantics: dict[str, dict[str, Any]],
-    function_records: dict[str, dict[str, Any]] | None = None,
-    public_symbols: set[str] | None = None,
+    standard_scenarios: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    """Build the scorer-facing index without duplicating the scenario IR.
+
+    ``standard_scenarios`` is the sole owner of C call order, assertions and
+    semantic facts.  Scoring only needs a stable case identity and the IDs of
+    obligations that must be covered by the Rust test mapping.
+    """
     cases: list[dict[str, Any]] = []
-    occurrences: dict[str, int] = {}
-    for index, invocation in enumerate(registered_invocations, start=1):
-        name = _invocation_test_function(invocation)
-        occurrences[name] = occurrences.get(name, 0) + 1
-        scenario_id = _invocation_scenario_id(invocation, occurrences[name])
-        tags = scenario_tags.get(name, tag_test(name))
-        facts = merge_semantic_facts(related_test_names(name, test_semantics), test_semantics)
+    for index, scenario in enumerate(standard_scenarios, start=1):
+        scenario_id = str(scenario.get("id") or "")
+        name = str(scenario.get("name") or scenario_id)
+        tags = [item for item in scenario.get("tags", []) if isinstance(item, str)]
+        facts = scenario.get("semantic_facts") if isinstance(scenario.get("semantic_facts"), dict) else {}
+        if not scenario_id:
+            continue
         cases.append(
             {
                 "case_id": str(index),
                 "case_name": scorer_case_name(scenario_id),
                 "scenario_id": scenario_id,
-                "suite": scenario_suite(name, tags),
+                "suite": scenario.get("suite") if isinstance(scenario.get("suite"), str) else scenario_suite(name, tags),
                 "required_c_tests": [name],
                 "order": index,
                 "source": "registered_c_tests",
                 "present_c_tests": [name],
                 "missing_c_tests": [],
-                "semantic_facts": facts,
                 "semantic_obligations": semantic_obligations_from_facts(tags, facts),
-                "scenario_ir": build_scenario_ir(
-                    scenario_id,
-                    name,
-                    invocation,
-                    function_records or {},
-                    public_symbols or set(),
-                ),
                 "tags": tags,
-                "source_file": invocation.get("source_file"),
-                "c_cross": determine_c_cross_enabled(name),
+                "source_file": scenario.get("source_file"),
+                "c_cross": bool(scenario.get("c_cross")),
             }
         )
     return cases
@@ -1494,13 +1488,7 @@ def build_models(manifest: dict[str, Any]) -> dict[str, Any]:
         test_function_records,
         public_function_set,
     )
-    scorer_standard_cases = build_scorer_standard_cases(
-        registered_invocations,
-        scenario_tags,
-        test_semantics,
-        test_function_records,
-        public_function_set,
-    )
+    scorer_standard_cases = build_scorer_standard_cases(standard_scenarios)
 
     c_project_model = {
         "input_digest": manifest.get("input_digest"),
