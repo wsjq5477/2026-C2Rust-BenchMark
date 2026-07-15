@@ -352,7 +352,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         state = _load_state(root)
         state["last_gate"] = {"stage": "INIT_WORKSPACE", "status": "pass", "receipt": None}
         _atomic_json(state_path, state)
-        with stage_log.open("a", encoding="utf-8") as handle:
+        init_log = root / "logs" / "trace" / "01-init-workspace.md"
+        init_log.parent.mkdir(parents=True, exist_ok=True)
+        with init_log.open("a", encoding="utf-8") as handle:
             handle.write("- INIT_WORKSPACE gate：PASS\n")
     print("WORKFLOWCTL: INITIALIZED")
     print("next_action=READ_C_PROJECT")

@@ -1269,6 +1269,8 @@ def build_scorer_standard_cases(
                 "tags": tags,
                 "source_file": scenario.get("source_file"),
                 "c_cross": bool(scenario.get("c_cross")),
+                "scenario_ir": scenario.get("scenario_ir", []),
+                "semantic_facts": scenario.get("semantic_facts", {}),
             }
         )
     return cases
