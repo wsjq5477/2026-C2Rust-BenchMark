@@ -18,6 +18,7 @@ permission:
     "/var/tmp/**": deny
   task:
     "*": deny
+    "general": allow
     "c-analyzer": allow
     "rust-implementer": allow
     "repairer": allow
@@ -37,6 +38,8 @@ permission:
 4. 大 JSON、历史日志和总设计文档是冷数据。先 `rg` 定位，再读取必要片段；失败时只读取 failure summary、相关日志 tail 与必要源文件窗口。
 5. 每次修复后立即复跑真实验证。不得用修改 gate、排除测试、弱化断言、伪造日志或写状态文件来绕过失败。
 6. 无论最终是否通过，都生成报告；只有 `gate.py --stage FINAL` 通过时报告才可写 `STATUS: SUCCESS`。
+7. primary Agent 只保留调度、工具结果和短交接；不得要求 subagent 返回源码全文，也不得自己全文读取大模型 JSON、源码、历史日志或 runner 输出。每个 dispatch 只携带动态失败、允许文件和停止条件。
+8. subagent 是一次运行内的自动接力，不限制总数。一次实现或 repair 完成后必须返回；primary Agent 验证后仍失败时启动新的短 session。不得依赖用户第二次输入、人工 continuation、新 primary session 或 compact 才能继续。
 
 ## 四阶段
 
@@ -52,11 +55,11 @@ python3 work/tools/gate.py --stage ANALYZE --root .
 
 ### IMPLEMENT
 
-运行 scaffold generator 与 layout-only checker。随后直接实现 `flashDB_rust/`：先建立可观察的 Rust 行为和 C ABI facade，再补需要的内部语义。不要人为拆 CORE/FACADE worker；若需要缩短上下文，可结束当前会话，并让下一会话从当前 Rust 文件、设计事实和验证摘要继续。
+运行 scaffold generator 与 layout-only checker。随后直接实现或调度实现 `flashDB_rust/`：先建立可观察的 Rust 行为和 C ABI facade，再补需要的内部语义。不要人为拆 CORE/FACADE worker；重任务可以顺序交给新的短期实现 session，但 primary Agent 本身不切换会话。每个实现 session 只修改指定文件，完成一次有界实现后返回。
 
 ### VERIFY_AND_REPAIR
 
-通过 `c_cross_validate.py --mode full` 运行全量 C-Cross。若失败，读取 `failure-summary.json` 中的最小失败集合，修改对应 Rust 文件并使用 `--attempt-kind repair --changed-file flashDB_rust/src/<file>` 重跑。所有失败都保留，不把未运行或解析失败当通过。
+通过 `c_cross_validate.py --mode full` 运行全量 C-Cross。若失败，读取 `failure-summary.json` 中的一个最小 failure cluster，交给新的 repair session 修改对应 Rust 文件；主 Agent 使用 `--attempt-kind repair --changed-file flashDB_rust/src/<file>` 重跑。仍失败时以更新后的 summary 启动新的 repair session，不让旧 session 自行循环验证、调试或扩大范围。所有失败都保留，不把未运行或解析失败当通过。
 
 全量通过后以 `--attempt-kind final` 重新确认，并运行：
 
@@ -78,4 +81,4 @@ python3 work/tools/gate.py --stage FINAL --root .
 
 ## 可选 subagent
 
-只有任务具备明确文件范围、停止条件并且主工作区可立即验证写入时，才可调用白名单中的项目 subagent。例如生成 Rust 测试初稿，或修复一组已列出的 C-Cross 失败。不得调用内置 `General`、`Explore` 或 `Scout` 代替项目 subagent；指定 subagent 不可用或失败时主执行者直接接手，不等待失败次数阈值。subagent 不负责流程推进、状态记录、C-Cross/cargo/gate 复跑或成功结论。
+只有任务具备明确文件范围、动态事实或 failure cluster、停止条件并且主工作区可立即验证写入时，才可调用 subagent。例如生成 Rust 测试初稿，或修复一组已列出的 C-Cross 失败。优先调用项目角色；若运行时只提供 `general`，其 prompt 第一条必须要求完整读取并执行对应 `work/skills/{subagent}.md`，其余内容只给动态路径、失败、允许文件和停止条件。不得调用 `Explore`、`Scout`，不得创建要求返回全文源码的 reader task。subagent 完成一次有界工作后返回，不负责流程推进、状态记录、C-Cross/cargo/gate 复跑或成功结论；指定角色失败时 primary Agent 以新的短 session 接力或直接接手，不等待失败次数阈值。

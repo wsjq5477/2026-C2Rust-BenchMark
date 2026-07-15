@@ -2,7 +2,7 @@
 
 > 分析对象：2026-07-15 从 `/home/nv_test/c2rust` 启动、执行 `02_02` 转换工程的 OpenCode 运行  
 > 分析快照：2026-07-15 20:58（Asia/Shanghai）  
-> 文档状态：分析与待审批方案，尚未实施
+> 文档状态：已批准实施 P0 上下文边界与自动短 session 接力；不依赖 compact、插件、人工 continuation 或新的 primary session
 
 ## 1. 结论
 
@@ -16,12 +16,12 @@
 2. 允许按实际失败数量启动多个短生命周期 subagent，不设置固定总数上限；
 3. 每个 subagent 只处理一个边界明确的工作单元，完成一次修改后立即退出；
 4. 新 session 通过工作区文件、最新 failure summary 和短交接继续，不继承旧 session 的全部对话；
-5. 在平台允许加载项目插件时，增加提前触发的自动 summarize/compact 兜底；插件不可用时，依靠主动 session 轮换保证任务不会因上下文耗尽停止。
+5. 所有接力均由 primary Agent 在同一次无人值守运行内自动创建 subagent 完成；不依赖用户第二次输入、人工 continuation 或新的 primary session。
 
 因此，目标执行模型不是“单 Agent”或“限制只能启动一个 subagent”，而是：
 
 ```text
-薄主 Agent + 多个短期、边界明确的 subagent + 可选的项目级自动 compact 兜底
+薄主 Agent + 多个短期、边界明确且自动接力的 subagent
 ```
 
 ## 2. 证据范围与口径
@@ -221,87 +221,18 @@ isRetryable: false
 
 应该限制的是每个 session 的工作单元，而不是全局 subagent 数量。
 
-## 6. 问题三：为什么没有自动 compact
+## 6. 本轮边界：不依赖 compact
 
-### 6.1 事实证据
+评分平台是一次输入、无人交互的运行环境，且 OpenCode 版本、模型元数据和可加载扩展都不受提交工程控制。本轮不把 `/compact`、自动 summarize、项目插件、人工 continuation 或更换 primary session 作为恢复条件或验收条件。
 
-第六个 session：
+本方案只依赖一次运行内已经存在的 task/subagent 能力：primary Agent 在一个有界 worker 返回后，根据真实共享工作区和最新验证结果自动创建新的 worker。若平台原生 compact 恰好可用，它只能是额外保护，不能改变工程是否可完成的结论。
 
-- `time_compacting = null`；
-- 没有 `session.compacted` 事件；
-- 没有进入 summarize/compact 状态；
-- 最终错误类型是普通 `APIError`。
-
-当前解析后的自定义模型 `csi-provider/GLM-5.1` 只配置了模型名称，没有配置：
-
-- `limit.context`；
-- `limit.input`；
-- `limit.output`。
-
-### 6.2 机制判断
-
-最符合现有证据的机制链是：
-
-1. OpenCode 的主动 overflow 判断需要模型元数据中的上下文上限；
-2. 当前是自定义 provider/model，OpenCode 不知道其真实上限为 202,745；
-3. 因此在 160K、180K、200K 时都没有主动触发 compact；
-4. 真正触顶后，LiteLLM/Dashscope 返回普通 HTTP 400；
-5. OpenCode 将它记录为 `APIError`，没有识别成可进入压缩恢复流程的上下文溢出错误；
-6. session 直接失败，而不是先 summarize 再继续。
-
-这不是“compact 执行失败”，而是 compact 根本没有被调度。
-
-### 6.3 能否在工程内增加自动压缩兜底
-
-可以尝试，但必须区分平台是否会加载项目插件。
-
-当前安装的 OpenCode 1.17.20 插件接口提供：
-
-- `message.updated` 事件；
-- `session.error` 事件；
-- `session.compacted` 事件；
-- `experimental.session.compacting` hook；
-- SDK `client.session.summarize(...)`。
-
-其中 `experimental.session.compacting` 只能在压缩已经开始后修改压缩提示词，不能主动触发压缩。真正的主动兜底需要项目插件监听 token，并调用 `client.session.summarize(...)`。
-
-建议的 context guard 行为：
-
-1. 只处理已经完成、没有运行中 tool call 的 assistant message；
-2. 读取该 message 的 `tokens.total`；
-3. 当上下文达到安全阈值时调用 `session.summarize`；
-4. 为每个 session 设置 in-flight 锁，避免同一批事件重复压缩；
-5. 收到 `session.compacted` 后释放状态；
-6. summarize 失败时只记录真实失败，不伪造已压缩或继续成功。
-
-针对本次已知上限，建议初始阈值为：
-
-```text
-140,000 tokens 左右
-```
-
-该阈值约为 202,745 的 69%，可以为 summary 生成、一次大工具输出和下一次模型调用保留空间。不能等到 190K 以后再触发，因为 summarize 自己也需要输入和输出余量。
-
-### 6.4 插件方案的限制
-
-项目插件不是无条件可用：
-
-1. 插件只在 OpenCode 启动时加载，不能补救当前已经运行的进程；
-2. 当前本地 OpenCode 从 `/home/nv_test/c2rust` 启动，只有该项目根下的 `.opencode/plugins/` 会自然进入候选范围；
-3. 比赛平台可能只打包或从 `02_02` 启动，也可能禁止提交方插件；
-4. SDK 和 compaction hook 包含实验接口，升级 OpenCode 后可能变化；
-5. summarize 本身也可能因为上下文过大或 provider 错误而失败。
-
-因此，实施前必须先做一个最小兼容性试验，确认评分平台是否加载提交工程中的项目插件。插件只能作为第二层兜底，不能替代短 session 设计。
-
-如果评分平台不加载项目插件，仅靠 `INSTRUCTION.md` 或 subagent Skill 无法实现真正的自动 compact，因为普通 Agent 不能可靠获得剩余上下文，也不能强制调用 OpenCode session API。
-
-## 7. 问题四：当前工程为什么没有拦住
+## 7. 问题三：当前工程为什么没有拦住
 
 当前工程合同实际上已经写了正确方向：
 
 - 默认主 Agent，subagent 只用于短、边界明确的辅助任务；
-- 禁止使用内置 `General` 代替项目 subagent；
+- 项目 subagent 规则在 `work/skills/*.md`；
 - 大 JSON 和历史日志是冷数据；
 - C-Cross 失败时只读 failure summary、日志 tail 和相关源码窗口；
 - subagent 不负责 C-Cross、cargo、gate 复跑或成功结论；
@@ -318,7 +249,7 @@ isRetryable: false
 6. 主 Agent 自己又重复读取大 JSON 和源码；
 7. subagent 自己运行验证、standalone runner 和 `/tmp` 探针。
 
-`work/skills/*.md` 是比赛工程内的权威合同，但本次 OpenCode 没有把这些文件注册成实际命名 subagent。于是 Markdown frontmatter 中的 permission 没有成为 General session 的工具层权限，只剩自然语言约束。
+`work/skills/*.md` 是比赛工程内的权威合同，但本次 OpenCode 没有把这些文件注册成实际命名 subagent。于是 Markdown frontmatter 中的 permission 没有成为 General session 的工具层权限，只剩自然语言约束。可执行的 fallback 不是禁止 General，而是要求 General 的第一步完整读取对应权威 Markdown，之后只接收动态路径、失败和文件范围。
 
 核心缺口不是“规则没写”，而是：
 
@@ -335,7 +266,7 @@ isRetryable: false
 3. 每个 subagent 都有明确输入、文件范围、修改次数和退出条件；
 4. 主 Agent 不读取全文大模型产物和不必要源码；
 5. subagent 失败后可由新 session 从共享工作区继续；
-6. 平台支持时自动 compact，平台不支持时仍能依靠 session 轮换完成任务；
+6. 不依赖 compact 也能通过自动 worker 轮换完成任务；
 7. 不削弱真实 C-Cross、测试一致性、最终 gate 和失败报告要求。
 
 ### 8.2 非目标
@@ -362,10 +293,6 @@ flowchart TD
     V -->|"失败"| F["读取 failure summary 和必要 tail"]
     F --> W2["新的短期 repair subagent"]
     W2 --> V
-    P -.-> G["项目 context guard"]
-    G -. "达到安全阈值时 summarize" .-> P
-    G -. "同样保护" .-> W1
-    G -. "同样保护" .-> W2
 ```
 
 ### 9.1 主 Agent 职责
@@ -477,84 +404,9 @@ flowchart TD
 - 不要求 subagent 返回源码全文；
 - subagent 自然语言交接只包含修改文件、根因、未解决点，不回传源码和完整日志。
 
-## 11. 项目级自动 compact 兜底设计
+## 11. 拟修改范围
 
-### 11.1 前置兼容性试验
-
-实施 context guard 前，先确认评分平台：
-
-1. 从哪个目录启动 OpenCode；
-2. 是否打包提交工程中的 `.opencode/plugins/`；
-3. 是否允许项目插件；
-4. `message.updated` 是否携带 `tokens.total`；
-5. `client.session.summarize` 在 GLM-5.1 自定义 provider 上是否成功；
-6. summarize 后是否能正常 auto-continue。
-
-最小试验插件只记录“已加载”和接收到的事件，不修改会话。兼容性确认后再加入主动 summarize。
-
-### 11.2 触发规则
-
-建议规则：
-
-```text
-默认安全阈值：140,000 tokens
-触发时机：assistant message 完成且没有 tool 正在运行
-每个 session 同时最多一个 summarize
-成功依据：收到 session.compacted
-失败依据：summarize API 返回错误或 session.error
-```
-
-如果以后模型元数据能提供真实 context limit，可改为动态阈值：
-
-```text
-threshold = context_limit * 0.65 ~ 0.70
-```
-
-若无法获得 limit，则使用经过当前 GLM-5.1 实测的保守 fallback，不能假设 OpenCode 会自动推断。
-
-### 11.3 伪代码
-
-```ts
-const compacting = new Set<string>()
-
-on("message.updated", async (event) => {
-  const message = event.info
-  if (message.role !== "assistant") return
-  if (!messageCompleted(message)) return
-  if (message.tokens.total < SAFE_THRESHOLD) return
-  if (compacting.has(message.sessionID)) return
-
-  compacting.add(message.sessionID)
-  try {
-    await client.session.summarize({
-      path: { id: message.sessionID },
-      body: {
-        providerID: message.providerID,
-        modelID: message.modelID,
-      },
-    })
-  } finally {
-    // 实际实现应结合 session.compacted/session.error 释放并防抖
-  }
-})
-```
-
-伪代码只说明机制，实际实现必须以 OpenCode 1.17.20 本地 SDK 类型和兼容性试验为准。
-
-### 11.4 失败兜底
-
-如果主动 summarize 不可用或失败：
-
-- 不继续向该高风险 session 分派新工作；
-- 当前 subagent 尽快返回短交接；
-- 主 Agent 创建新的 session 从共享工作区继续；
-- 如果主 Agent 自身达到高风险阈值，应在阶段边界 compact，或由新的主会话从当前产物和验证摘要继续。
-
-自动 compact 是减少意外停止的第二层保护，session 轮换才是对平台差异更稳健的第一层保护。
-
-## 12. 拟修改范围
-
-方案获批后，预计按最小范围修改：
+本轮按最小范围修改：
 
 1. `02_02/INSTRUCTION.md`
    - 明确“薄主 Agent + 多个短期 subagent”；
@@ -578,22 +430,15 @@ on("message.updated", async (event) => {
    - 超出允许文件时返回 unresolved；
    - 不负责复跑和成功结论。
 
-5. 项目插件（仅在兼容性试验通过后）
-   - 新增 context guard；
-   - 140K 左右提前 summarize；
-   - 加入 session 级防重入；
-   - 不修改全局 OpenCode 配置。
-
-6. `02_02/tests/`
+5. `02_02/tests/`
    - 检查合同中不再要求全文读取；
    - 检查 General fallback 必须引用权威 Skill；
    - 检查 subagent 不负责 runner/gate；
    - 检查不设置固定 subagent 总数；
-   - 插件可用时增加低阈值触发的隔离测试。
 
 当前比赛目录要求 subagent Markdown 继续放在 `work/skills/{subagent}.md`，本方案不新增 `work/agents/`。
 
-## 13. 实施顺序
+## 12. 实施顺序
 
 ### P0：先修正执行模型
 
@@ -602,30 +447,20 @@ on("message.updated", async (event) => {
 3. 明确一次补丁后退出、主 Agent 验证、新 session 接力；
 4. 增加合同回归测试。
 
-P0 不依赖 OpenCode 插件，必须先完成。
-
-### P1：验证并实现 context guard
-
-1. 在与评分平台一致的启动目录做插件加载试验；
-2. 使用低测试阈值验证 `session.summarize`；
-3. 验证 `session.compacted`、auto-continue 和防重入；
-4. 再启用 140K 左右的正式阈值。
-
-### P2：重新运行并对比
+### P1：重新运行并对比
 
 新运行至少记录：
 
 - primary 最大上下文；
 - 每个 subagent 最大上下文；
 - subagent 数量和每个任务职责；
-- 是否发生 compact；
 - 是否出现 context overflow；
 - 是否仍有全文读取、`/tmp` 或 standalone runner；
 - C-Cross、测试一致性与最终 gate 的真实结果。
 
 不能只以“没有爆上下文”作为成功；如果减少上下文导致实现或评分准确率下降，同样不算优化成功。
 
-## 14. 验收标准
+## 13. 验收标准
 
 方案实施后应满足：
 
@@ -637,20 +472,6 @@ P0 不依赖 OpenCode 插件，必须先完成。
 6. repair subagent 不访问 `/tmp/**`、`/var/tmp/**`；
 7. 每个 repair session 完成一次有界补丁后退出；
 8. 主 Agent 只读取 failure summary、日志 tail 和局部源码窗口；
-9. 插件可用时，在安全阈值附近产生真实 `session.compacted` 事件；
-10. 插件不可用时，工作流仍能通过新 session 接力继续，不因单 session 达到 202,745 而整体停止；
-11. 最终 C-Cross、semantic review、consistency 和 gate 仍使用真实结果，不能通过流程简化伪造成功；
-12. 对比运行的最终迁移质量和评分准确率不低于当前 q9 基线。
-
-## 15. 对当前仍在运行任务的判断
-
-当前运行无法通过新增项目插件热修复，因为插件只在 OpenCode 启动时加载。
-
-若需要保住本次运行，最安全的人工策略是：
-
-1. 不让第七个继续无限调试；
-2. 尽快让它只返回当前修改和未解决点；
-3. 主 Agent 在继续测试迁移和报告前执行一次手动 compact；
-4. 后续失败改用新的短 session，不恢复第六个或第五个高上下文 session。
-
-以上属于当前运行的人工止损建议，不是本方案已执行的改动。
+9. 工作流无需 compact、插件、人工 continuation 或新的 primary session，仍能通过自动新 worker 接力继续；
+10. 最终 C-Cross、semantic review、consistency 和 gate 仍使用真实结果，不能通过流程简化伪造成功；
+11. 对比运行的最终迁移质量和评分准确率不低于当前 q9 基线。

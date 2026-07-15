@@ -87,7 +87,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         } & present)
         self.assertFalse((PROJECT / "work" / "knowledge" / "workflow-contract.json").exists())
 
-    def test_primary_contract_is_single_agent_four_stage_flow(self):
+    def test_primary_contract_is_thin_agent_four_stage_flow(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
         orchestrator = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
         for stage in ("ANALYZE", "IMPLEMENT", "VERIFY_AND_REPAIR", "TEST_AND_REPORT"):
@@ -97,6 +97,9 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         self.assertNotIn("workflowctl", instruction)
         self.assertNotIn("必须提供 task packet", orchestrator)
         self.assertIn("可选 subagent", orchestrator)
+        self.assertIn("同一次无人值守运行内的自动上下文隔离手段", instruction)
+        self.assertIn("不限制总数", instruction)
+        self.assertIn("启动新的短 session", orchestrator)
 
     def test_agents_cannot_bypass_project_owned_temp_or_subagent_contracts(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
@@ -104,8 +107,9 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         self.assertIn("logs/trace/tmp/<task>/", instruction)
         self.assertIn("不得访问或使用 `/tmp/**`、`/var/tmp/**`", instruction)
         self.assertIn('"*": deny', orchestrator)
-        self.assertIn('"rust-implementer": allow', orchestrator)
-        self.assertIn("不得调用内置 `General`、`Explore` 或 `Scout`", orchestrator)
+        self.assertIn('"general": allow', orchestrator)
+        self.assertIn("若运行时只提供 `general`", orchestrator)
+        self.assertIn("完整读取并执行对应 `work/skills/{subagent}.md`", orchestrator)
         for name in (
             "flashdb-orchestrator.md",
             "c-analyzer.md",
@@ -123,6 +127,25 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertIn('"/tmp/**": deny', agent, name)
             self.assertIn('"/var/tmp": deny', agent, name)
             self.assertIn('"/var/tmp/**": deny', agent, name)
+
+    def test_context_contract_uses_bounded_automatic_worker_handoffs(self):
+        instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
+        orchestrator = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        implementer = (PROJECT / "work" / "skills" / "rust-implementer.md").read_text(encoding="utf-8")
+        repairer = (PROJECT / "work" / "skills" / "repairer.md").read_text(encoding="utf-8")
+        design = (PROJECT.parent / "design_doc" / "Q11-OpenCode上下文爆炸分析与优化方案.md").read_text(encoding="utf-8")
+        self.assertIn("不得要求或接收 C/Rust 源码全文", instruction)
+        self.assertIn("一个 failure cluster", instruction)
+        self.assertIn("新的 repair session", instruction)
+        self.assertIn("不得依赖用户第二次输入", orchestrator)
+        self.assertIn("不得创建要求返回全文源码的 reader task", orchestrator)
+        self.assertIn("完成一次最小实现或修复后立即返回", implementer)
+        self.assertIn("不得自行进入下一轮验证、调试或扩大到其他 failure cluster", implementer)
+        self.assertIn("完成一次修改后立即返回", repairer)
+        self.assertIn("新的 repair session 接力", repairer)
+        self.assertIn("不依赖 compact、插件、人工 continuation 或新的 primary session", design)
+        self.assertNotIn("FULL content", instruction + orchestrator)
+        self.assertNotIn("do not summarize", instruction + orchestrator)
 
     def test_abi_probe_uses_project_owned_temporary_directory(self):
         extractor = (TOOLS / "abi_layout_extractor.py").read_text(encoding="utf-8")

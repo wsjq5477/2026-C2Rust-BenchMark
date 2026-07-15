@@ -66,7 +66,7 @@ permission:
 python3 work/tools/test_consistency_check.py --root . --print-input-fingerprint
 ```
 
-4. 对每个 scenario 使用 `rg` 定位 C test、必要 helper 和 Rust test，再读取函数窗口。不要默认全文读取大 JSON、全部 C 源码或历史报告。
+4. 对每个 scenario 使用 `rg` 定位 C test、必要 helper 和 Rust test，再读取函数窗口。不要默认全文读取大 JSON、全部 C 源码或历史报告；审查只负责当前分配范围，不在同一 session 中转入修复、编译或 runner 排障。
 5. 审查所有动态 scenario；不能仅审查高风险或失败过的 case。
 
 ## 审查规则

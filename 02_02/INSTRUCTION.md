@@ -14,9 +14,11 @@
 - 机器证据：`logs/trace/`；最终报告：`result/output.md` 与 `result/issues/00-summary.md`。
 - 项目临时目录：`logs/trace/tmp/<task>/`。所有显式临时文件、探针、复制品和一次性构建产物必须放在这里；任何 agent 都不得读取、创建、删除或把 `/tmp`、`/var/tmp` 用作工作目录、PATH 注入目录或产物目录。
 
-默认由一个 primary Agent 完成整个迁移。可选 subagent 只用于短、边界明确的辅助任务；它们不是阶段完成或修改 Rust 的前置条件。
+primary Agent 负责一次运行内的阶段推进、确定性工具、共享工作区验证和最终报告。它必须保持轻量：不得要求或接收 C/Rust 源码全文、全文大 JSON、完整历史日志或完整 runner 输出。
 
-只能调用 `work/skills/` 中已注册并受本工程合同约束的 subagent。不得用内置 `General`、`Explore` 或 `Scout` 代替修复/实现 subagent；指定 subagent 不可用时由 primary Agent 直接接手。
+可选 subagent 是同一次无人值守运行内的自动上下文隔离手段，不需要第二次用户输入，也不限制总数。每个 subagent 只能处理一个有明确文件范围、动态事实或 failure cluster、停止条件的短任务；完成一次最小修改或只读产物后立即返回。primary Agent 验证结果仍失败时，可自动启动一个新的同角色 session，从共享工作区、最新 failure summary 和局部证据继续；不得恢复高上下文旧 session，也不得要求新的 primary session 或人工 continuation。
+
+优先调用 `work/skills/` 中受本工程合同约束的命名 subagent。若运行时只提供内置 `General`，可把它作为承载角色，但 dispatch 的第一条要求必须是完整读取并执行对应 `work/skills/{subagent}.md`；prompt 只提供动态路径、失败和文件范围，不得重写业务规则、返回源码全文或预置实现方案。不得使用 `Explore`、`Scout` 或全文 reader task。
 
 禁止修改平台 C 输入、预置或复制 `flashDB_rust/`、把 C 源码放入 Rust `src/`、删除测试、弱化断言、伪造通过或把未运行的 C 测试标为通过。
 
@@ -49,14 +51,14 @@ python3 work/tools/gate.py --stage ANALYZE --root .
 
 ### 2. IMPLEMENT
 
-根据设计生成骨架，然后由主执行者实现 Rust 行为：
+根据设计生成骨架，然后由 primary Agent 调度或直接实现 Rust 行为：
 
 ```bash
 python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust
 python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --scaffold-layout-only
 ```
 
-实现时优先满足 C-Cross 可观察语义。不要为了复刻不可观察的 C 内部结构而引入完整存储引擎；只有当前输入事实和失败证据要求时，才扩展实现复杂度。写入 `05-generate-rust-scaffold.md` 与 `06-rewrite-core-modules.md`。
+实现时优先满足 C-Cross 可观察语义。不要为了复刻不可观察的 C 内部结构而引入完整存储引擎；只有当前输入事实和失败证据要求时，才扩展实现复杂度。重实现可由多个短任务顺序接力，但每个任务只修改主执行者指定的 Rust 文件并立即返回。写入 `05-generate-rust-scaffold.md` 与 `06-rewrite-core-modules.md`。
 
 ### 3. VERIFY_AND_REPAIR
 
@@ -69,7 +71,7 @@ python3 work/tools/c_cross_validate.py \
 python3 work/tools/gate.py --stage VERIFY_AND_REPAIR --root .
 ```
 
-如有失败，只读取 `logs/trace/c-cross/failure-summary.json` 中列出的失败场景、日志和必要的 Rust/C 局部窗口。做最小修复后重跑同一条命令，并把本次修改的 Rust 源文件作为 `--changed-file` 传给 repair 运行。不得手工执行 runner；C-Cross 的运行隔离只使用 `logs/trace/c-cross/<suite>_run/`，其他临时产物只使用 `logs/trace/tmp/<task>/`，不得访问或使用 `/tmp/**`、`/var/tmp/**`。
+如有失败，只读取 `logs/trace/c-cross/failure-summary.json` 中列出的失败场景、日志和必要的 Rust/C 局部窗口。每次只把一个 failure cluster 交给一个新的 repair session；repairer 完成一次最小修改后立即返回，由 primary Agent 重跑同一条命令，并把本次修改的 Rust 源文件作为 `--changed-file` 传给 repair 运行。仍失败时以最新 failure summary 自动启动新的 repair session，不让同一个 repair session 自行反复验证和调试。不得手工执行 runner；C-Cross 的运行隔离只使用 `logs/trace/c-cross/<suite>_run/`，其他临时产物只使用 `logs/trace/tmp/<task>/`，不得访问或使用 `/tmp/**`、`/var/tmp/**`。
 
 只有全量场景通过后，才运行最终确认：
 
