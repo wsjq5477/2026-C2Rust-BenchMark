@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,37 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
         if isinstance(data, dict):
             rows.append(data)
     return rows
+
+
+def load_tool(filename: str):
+    path = Path(__file__).resolve().with_name(filename)
+    spec = importlib.util.spec_from_file_location("report_" + path.stem, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load {filename}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_evidence_is_current(root: Path, placeholders: dict[str, Any], consistency: dict[str, Any]) -> bool:
+    try:
+        placeholder_tool = load_tool("placeholder_check.py")
+        consistency_tool = load_tool("test_consistency_check.py")
+        expected_placeholder = placeholder_tool.analyze_placeholders(
+            root,
+            root / "flashDB_rust" / "tests",
+            root / "logs" / "trace" / "rust_test_mapping.json",
+        )
+        expected_consistency = consistency_tool.analyze_consistency(root)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError, RuntimeError):
+        return False
+    return all(
+        placeholders.get(key) == expected_placeholder.get(key)
+        for key in ("status", "issue_count", "input_fingerprint")
+    ) and all(
+        consistency.get(key) == expected_consistency.get(key)
+        for key in ("status", "issue_count", "input_fingerprint", "semantic_review")
+    )
 
 
 def validation_matrix_summary(matrix: dict[str, Any]) -> list[str]:
@@ -130,6 +162,8 @@ def write_report(root: Path, output: Path, issues: Path) -> None:
     mapping = load_json(trace / "rust_test_mapping.json")
     placeholders = load_json(trace / "test-placeholder-check.json")
     consistency = load_json(trace / "test-consistency.json")
+    semantic_review = load_json(trace / "test-semantic-review.json")
+    evidence_current = test_evidence_is_current(root, placeholders, consistency)
     matrix_lines = "\n".join(validation_matrix_summary(matrix))
     diagnostics_lines = "\n".join(cross_diagnostics_summary(matrix, diagnostics))
     convergence_lines = "\n".join(cross_convergence_summary(matrix, attempts, workbench_issues))
@@ -139,6 +173,7 @@ def write_report(root: Path, output: Path, issues: Path) -> None:
         and cargo.get("test_status") == "pass"
         and placeholders.get("status") == "pass"
         and consistency.get("status") == "pass"
+        and evidence_current
         and float(ratio.get("unsafe_ratio", 1.0)) <= 0.10
         and final_c_cross_verified(matrix, attempts)
     )
@@ -184,6 +219,10 @@ STATUS: {status}
 - semantic_consistency_status: `{consistency.get('status', 'missing')}`
 - semantic_consistency_issue_count: `{consistency.get('issue_count', 'unknown')}`
 - semantic_scenarios: `passed={consistency.get('passed_scenarios', 'unknown')}, failed={consistency.get('failed_scenarios', 'unknown')}`
+- semantic_review_status: `{semantic_review.get('status', 'missing')}`
+- semantic_reviewer_mode: `{semantic_review.get('reviewer_mode', 'missing')}`
+- semantic_reviewed_scenarios: `{semantic_review.get('reviewed_scenarios', 'unknown')}/{semantic_review.get('total_c_scenarios', 'unknown')}`
+- test_evidence_fresh: `{'yes' if evidence_current else 'no'}`
 
 ## Cross Validation Matrix
 
@@ -209,6 +248,13 @@ STATUS: {status}
         f"- {item.get('scenario_id')}: {item.get('reason', item.get('diagnosis', 'failed'))}"
         for item in failures
     ) if failures else "- None"
+    semantic_differences = semantic_review.get("logic_mismatch") if isinstance(semantic_review.get("logic_mismatch"), list) else []
+    if semantic_differences:
+        issue_lines += "\n" + "\n".join(
+            f"- semantic review {item.get('scenario_id', item.get('c_func', '<unknown>'))}: {item.get('detail', 'logic mismatch')}"
+            for item in semantic_differences
+            if isinstance(item, dict)
+        )
     issues.write_text(
         f"""# 00 - Summary
 

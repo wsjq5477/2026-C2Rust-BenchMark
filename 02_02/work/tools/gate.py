@@ -205,10 +205,10 @@ def check_dynamic_test_mapping(root: Path) -> list[str]:
     for item in scenarios:
         if not isinstance(item, dict):
             continue
-        obligations = item.get("semantic_obligations")
-        validated = item.get("validated_obligations")
-        if item.get("coverage") != "semantic" or not isinstance(obligations, list) or not obligations or not isinstance(validated, list) or set(obligations) - set(validated):
-            errors.append(f"Rust mapping lacks semantic evidence: {item.get('id', '<unknown>')}")
+        if not isinstance(item.get("rust_file"), str) or not isinstance(item.get("rust_test"), str):
+            errors.append(f"Rust mapping lacks Rust test location: {item.get('id', '<unknown>')}")
+        if not isinstance(item.get("source_file"), str) or not item["source_file"]:
+            errors.append(f"Rust mapping lacks dynamic C source location: {item.get('id', '<unknown>')}")
     if mapping.get("unmapped") not in ([], None):
         errors.append("rust_test_mapping.json unmapped must be empty")
     return errors
@@ -233,13 +233,21 @@ def check_test_quality(root: Path) -> list[str]:
     if placeholder_error or placeholder is None:
         errors.append(placeholder_error or "placeholder check failed to return a report")
     else:
-        (root / "logs" / "trace" / "test-placeholder-check.json").write_text(json.dumps(placeholder, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        persisted, persisted_error = load_json(root / "logs" / "trace" / "test-placeholder-check.json")
+        if persisted_error or persisted is None:
+            errors.append(f"test-placeholder-check.json: {persisted_error}")
+        elif any(persisted.get(key) != placeholder.get(key) for key in ("status", "issue_count", "input_fingerprint")):
+            errors.append("test-placeholder-check.json is stale or does not match current inputs")
         if placeholder.get("status") != "pass":
             errors.append("test placeholder check failed")
     if consistency_error or consistency is None:
         errors.append(consistency_error or "consistency check failed to return a report")
     else:
-        (root / "logs" / "trace" / "test-consistency.json").write_text(json.dumps(consistency, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        persisted, persisted_error = load_json(root / "logs" / "trace" / "test-consistency.json")
+        if persisted_error or persisted is None:
+            errors.append(f"test-consistency.json: {persisted_error}")
+        elif any(persisted.get(key) != consistency.get(key) for key in ("status", "issue_count", "input_fingerprint", "semantic_review")):
+            errors.append("test-consistency.json is stale or does not match current inputs")
         if consistency.get("status") != "pass":
             errors.append("test consistency failed")
     return errors

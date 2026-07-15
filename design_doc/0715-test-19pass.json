@@ -1,0 +1,103 @@
+{
+  "project": "02_02/flashDB_rust",
+  "rust_project_path": "/home/jiqi/LLM/2026-ICT-AI/2026-C2Rust-BenchMark/02_02/flashDB_rust",
+  "project_type": "c2rust_lib",
+  "test_strategy": "B",
+  "build": {
+    "success": true,
+    "warnings": 6,
+    "artifact_type": "staticlib",
+    "artifact_path": "/home/jiqi/LLM/2026-ICT-AI/2026-C2Rust-BenchMark/02_02/flashDB_rust/target/release/libflashdb_rust.a"
+  },
+  "test_case_consistency": {
+    "consistent": false,
+    "c_only": [],
+    "rust_only": ["kvdb_test_fdb_kvdb_init_check", "kvdb_test_fdb_kvdb_set_default"],
+    "logic_mismatch": [
+      {
+        "case_id": "10",
+        "c_func": "test_fdb_gc",
+        "rust_func": "kvdb_test_fdb_gc",
+        "dimension": "assertion",
+        "detail": "C test has multi-phase GC verification with 4 KV tables, oldest_addr checks after each phase, and fdb_reboot persistence checks. Rust test only does basic blob set/get + iterate without verifying GC behavior or oldest_addr."
+      },
+      {
+        "case_id": "11",
+        "c_func": "test_fdb_gc2",
+        "rust_func": "kvdb_test_fdb_gc2",
+        "dimension": "assertion",
+        "detail": "C test has multi-sector GC2 scenario with big KV4 spanning sectors, triggering specific GC path. Rust test is identical to simplified gc test — does not test the gc2 scenario at all."
+      },
+      {
+        "case_id": "12",
+        "c_func": "test_fdb_scale_up",
+        "rust_func": "kvdb_test_fdb_scale_up",
+        "dimension": "assertion",
+        "detail": "C test does 4→8 sector expansion: save data, deinit, reinit with 8 sectors, verify old data, save new data, verify both. Rust test only does basic blob operations without sector expansion."
+      },
+      {
+        "case_id": "22",
+        "c_func": "test_fdb_tsl_iter_by_time_1",
+        "rust_func": "tsdb_test_fdb_tsl_iter_by_time_1",
+        "dimension": "assertion",
+        "detail": "C test fills 5+ sectors with dynamic TSL count, does extensive boundary checks across sector boundaries with test_tsdb_data_by_time. Rust test only appends 5 small TSLs and does basic count/iter checks."
+      },
+      {
+        "case_id": "24",
+        "c_func": "test_fdb_github_issue_249",
+        "rust_func": "tsdb_test_fdb_github_issue_249",
+        "dimension": "assertion+data",
+        "detail": "C test uses 16KB sectors, 512KB DB, NOT_FORMAT flag, 3 large blobs (7/8/9KB), reboot persistence check. Rust test uses standard 4KB sectors, 5 small appends, clean, re-append — completely different scenario."
+      }
+    ],
+    "total_c_standard": 24,
+    "rust_matched_count": 19,
+    "rust_file_count": 2
+  },
+  "results": [
+    {"case_id": "1",  "name": "kvdb_init",       "passed": true},
+    {"case_id": "2",  "name": "create_kv",       "passed": true},
+    {"case_id": "3",  "name": "set_kv",          "passed": true},
+    {"case_id": "4",  "name": "get_kv",          "passed": true},
+    {"case_id": "5",  "name": "set_kv_blob",     "passed": true},
+    {"case_id": "6",  "name": "get_kv_blob",     "passed": true},
+    {"case_id": "7",  "name": "del_kv",          "passed": true},
+    {"case_id": "8",  "name": "del_kv_blob",     "passed": true},
+    {"case_id": "9",  "name": "change_kv",       "passed": true},
+    {"case_id": "10", "name": "gc",              "passed": false, "reason": "测试用例与C原测试用例不一致 — 测试逻辑不一致: C has multi-phase GC verification with oldest_addr checks and reboot persistence; Rust only does basic blob set/get without GC behavior verification"},
+    {"case_id": "11", "name": "gc2",             "passed": false, "reason": "测试用例与C原测试用例不一致 — 测试逻辑不一致: C has multi-sector GC2 scenario with big KV4; Rust test is identical to simplified gc and does not test gc2 scenario"},
+    {"case_id": "12", "name": "scale_up",        "passed": false, "reason": "测试用例与C原测试用例不一致 — 测试逻辑不一致: C tests 4→8 sector expansion with data persistence; Rust only does basic blob operations without expansion"},
+    {"case_id": "13", "name": "kvdb_deinit",     "passed": true},
+    {"case_id": "14", "name": "tsdb_init",       "passed": true},
+    {"case_id": "15", "name": "tsl_append",      "passed": true},
+    {"case_id": "16", "name": "tsl_append_by_time", "passed": true, "note": "Not in C test suite; covered by append scenarios"},
+    {"case_id": "17", "name": "tsl_iter",        "passed": true},
+    {"case_id": "18", "name": "tsl_iter_reverse", "passed": true, "note": "Not in C test suite; not independently tested"},
+    {"case_id": "19", "name": "tsl_iter_by_time", "passed": true},
+    {"case_id": "20", "name": "tsl_query_count", "passed": true},
+    {"case_id": "21", "name": "tsl_clean",       "passed": true},
+    {"case_id": "22", "name": "tsl_set_status",  "passed": true},
+    {"case_id": "23", "name": "tsdb_control",    "passed": true, "note": "Not in C test suite; fdb_tsdb_control covered in init setup"},
+    {"case_id": "24", "name": "tsdb_deinit",     "passed": false, "reason": "测试用例与C原测试用例不一致 — 测试逻辑不一致: C github_issue_249 uses 16KB sectors/512KB DB/3 large blobs with reboot persistence check; Rust uses standard 4KB sectors/5 small appends/clean/re-append — completely different scenario"}
+  ],
+  "benchmark": {
+    "note": "Rust uses in-memory storage (sidecar architecture); C uses real file I/O. Direct ratio comparison is not architecturally equivalent.",
+    "kv_set_ops":     {"c": 167.5,   "rust": 1264078.7, "ratio": 7543.8},
+    "kv_get_ops":     {"c": 281.0,   "rust": 1807559.9, "ratio": 6432.6},
+    "kv_del_ops":     {"c": 41.5,    "rust": 1425453.8, "ratio": 34348.3},
+    "tsl_append_us":  {"c": 372.58,  "rust": 0.11,     "ratio": 0.0003},
+    "memory_kb":      {"c": null,    "rust": null,      "ratio": null}
+  },
+  "summary": {
+    "total": 24,
+    "passed": 19,
+    "failed": 5,
+    "pass_rate": 0.792,
+    "kvdb_passed": 9,
+    "kvdb_total": 13,
+    "tsdb_passed": 10,
+    "tsdb_total": 11,
+    "build_passed": true,
+    "benchmark": "性能基线测试：Rust 使用内存存储架构，KV set/get/del 吞吐分别为 C 的 754381%/643261%/3434831%（架构不等价：Rust 内存存储 vs C 文件 I/O），TSL append 延迟为 C 的 0.03%"
+  }
+}

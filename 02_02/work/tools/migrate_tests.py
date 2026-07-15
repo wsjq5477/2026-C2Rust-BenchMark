@@ -97,7 +97,7 @@ def standard_scenarios(test_model: dict[str, Any]) -> list[dict[str, Any]]:
                     "parent_test": scenario_id,
                     "suite": suite,
                     "source": "scorer_cases",
-                    "source_file": source.get("source_file") if isinstance(source, dict) else None,
+                    "source_file": case.get("source_file") if isinstance(case.get("source_file"), str) else source.get("source_file") if isinstance(source, dict) else None,
                     "order": case.get("order") if isinstance(case.get("order"), int) else index,
                     "tags": tags,
                     "semantic_facts": semantic_facts,
@@ -174,7 +174,6 @@ def generate_tests(test_model: dict[str, Any], design: dict[str, Any], project: 
         scenarios_by_suite.setdefault(suite, []).append(scenario)
     kvdb_scenarios = scenarios_by_suite.get("kvdb", [])
     tsdb_scenarios = scenarios_by_suite.get("tsdb", [])
-    extension_scenarios = [scenario for suite, items in scenarios_by_suite.items() if suite not in {"kvdb", "tsdb"} for scenario in items]
     kvdb_tests = [str(scenario["id"]) for scenario in kvdb_scenarios]
     tsdb_tests = [str(scenario["id"]) for scenario in tsdb_scenarios]
     extension_tests = as_list(test_model, "extension_tests")
@@ -206,6 +205,8 @@ def generate_tests(test_model: dict[str, Any], design: dict[str, Any], project: 
                 "present_c_tests": scenario.get("present_c_tests", []),
                 "missing_c_tests": scenario.get("missing_c_tests", []),
                 "semantic_obligations": scenario.get("semantic_obligations", []),
+                "semantic_review_status": "pending",
+                "semantic_review_notes": [],
                 "validated_obligations": [],
                 "assertion_evidence": [],
                 "api_evidence": [],
@@ -223,14 +224,18 @@ def generate_tests(test_model: dict[str, Any], design: dict[str, Any], project: 
             }
         )
 
-    unmapped = unclassified_tests + as_list(design, "unmapped_symbols")
-    unmapped.extend(str(scenario["id"]) for scenario in extension_scenarios)
+    # Every dynamic scorer scenario, including extension suites, receives a Rust
+    # mapping above.  Keep test gaps separate from design-level symbols so a
+    # mapped extension case cannot be reported as both covered and unmapped.
+    unmapped = unclassified_tests
+    unmapped_symbols = as_list(design, "unmapped_symbols")
 
     mapping = {
         "kvdb": kvdb_tests,
         "tsdb": tsdb_tests,
         "extension": extension_tests,
         "unmapped": sorted(dict.fromkeys(unmapped)),
+        "unmapped_symbols": sorted(dict.fromkeys(unmapped_symbols)),
         "scenarios": mapped_scenarios,
         "total_scenarios": len(mapped_scenarios),
         "total_scorer_cases": len(mapped_scenarios),

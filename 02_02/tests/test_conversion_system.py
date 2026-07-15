@@ -21,6 +21,38 @@ def load_tool(name: str):
 
 
 GATE = load_tool("gate.py")
+PLACEHOLDER = load_tool("placeholder_check.py")
+CONSISTENCY = load_tool("test_consistency_check.py")
+
+
+def semantic_fixture(root: Path, *, review_status: str = "pass") -> dict:
+    trace = root / "logs" / "trace"
+    c_source = root / "c_input" / "tests" / "fixture.c"
+    rust_test = root / "flashDB_rust" / "tests" / "dynamic.rs"
+    trace.mkdir(parents=True)
+    c_source.parent.mkdir(parents=True)
+    rust_test.parent.mkdir(parents=True)
+    c_source.write_text("void test_dynamic(void) {\n  assert(1);\n}\n", encoding="utf-8")
+    rust_test.write_text("#[test]\nfn rust_dynamic() {\n  let actual = 1;\n  assert_eq!(actual, 1);\n}\n", encoding="utf-8")
+    (trace / "input_manifest.json").write_text(json.dumps({"source_root": str(root / "c_input")}), encoding="utf-8")
+    (trace / "c_test_model.json").write_text(json.dumps({"scorer_standard_cases": [{"scenario_id": "dynamic-case", "case_id": "case-1", "source_file": "tests/fixture.c", "required_c_tests": ["test_dynamic"]}]}), encoding="utf-8")
+    (trace / "rust_api_design.json").write_text(json.dumps({"crate_name": "fixture", "modules": []}), encoding="utf-8")
+    mapping = {"total_scenarios": 1, "extension": [], "unmapped": [], "source_to_rust": {"fixture": "flashDB_rust/tests/dynamic.rs"}, "scenarios": [{"id": "dynamic-case", "source_file": "tests/fixture.c", "required_c_tests": ["test_dynamic"], "rust_file": "flashDB_rust/tests/dynamic.rs", "rust_test": "rust_dynamic", "implementation_status": "implemented"}]}
+    (trace / "rust_test_mapping.json").write_text(json.dumps(mapping), encoding="utf-8")
+    dimensions = {name: "pass" for name in CONSISTENCY.DIMENSIONS}
+    differences: list[dict[str, str]] = []
+    logic_mismatch: list[dict[str, str]] = []
+    if review_status != "pass":
+        dimensions["lifecycle"] = review_status
+        differences = [{"dimension": "lifecycle", "detail": "Rust test omits the C reopen boundary."}]
+        logic_mismatch = [{"scenario_id": "dynamic-case", "detail": differences[0]["detail"]}]
+    review = {"schema_version": 1, "status": review_status, "reviewer_mode": "primary_readonly_fallback", "input_fingerprint": CONSISTENCY.build_input_fingerprint(root), "total_c_scenarios": 1, "reviewed_scenarios": 1, "c_only": [], "rust_only": [], "logic_mismatch": logic_mismatch, "cases": [{"scenario_id": "dynamic-case", "c_function": "test_dynamic", "rust_test": "rust_dynamic", "status": review_status, "dimensions": dimensions, "c_evidence": [{"path": "c_input/tests/fixture.c", "function": "test_dynamic", "line_start": 1, "line_end": 3, "summary": "C case"}], "rust_evidence": [{"path": "flashDB_rust/tests/dynamic.rs", "function": "rust_dynamic", "line_start": 1, "line_end": 5, "summary": "Rust case"}], "differences": differences}]}
+    (trace / "test-semantic-review.json").write_text(json.dumps(review), encoding="utf-8")
+    placeholder = PLACEHOLDER.analyze_placeholders(root, rust_test.parent, trace / "rust_test_mapping.json")
+    consistency = CONSISTENCY.analyze_consistency(root)
+    (trace / "test-placeholder-check.json").write_text(json.dumps(placeholder), encoding="utf-8")
+    (trace / "test-consistency.json").write_text(json.dumps(consistency), encoding="utf-8")
+    return consistency
 
 
 class SimplifiedWorkbenchContractTests(unittest.TestCase):
@@ -62,9 +94,37 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
     def test_q9_design_is_present_and_approved_for_this_branch(self):
         design = PROJECT.parent / "design_doc" / "Q9-转换工程架构简化设计.md"
         text = design.read_text(encoding="utf-8")
-        self.assertIn("已批准", text)
+        self.assertIn("已实施", text)
         self.assertIn("workflowctl.py", text)
         self.assertIn("真实 C compile/link/run", text)
+
+    def test_semantic_reviewer_is_self_contained(self):
+        reviewer = (PROJECT / "work" / "skills" / "test-semantic-reviewer.md").read_text(encoding="utf-8")
+        self.assertIn("对每个动态 C scenario，依次完成以下操作", reviewer)
+        self.assertIn("关键 API、输入数据、初始化/控制配置、生命周期边界、操作顺序", reviewer)
+        self.assertNotIn("评分平台的方案 B", reviewer)
+
+    def test_extension_scorer_case_is_mapped_not_reported_as_unmapped(self):
+        migrator = load_tool("migrate_tests.py")
+        model = {
+            "scorer_standard_cases": [{
+                "scenario_id": "extension-case",
+                "case_id": "case-1",
+                "suite": "extension",
+                "source_file": "tests/fixture.c",
+                "required_c_tests": ["test_extension"],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            mapping = migrator.generate_tests(
+                model,
+                {"unmapped_symbols": ["unimplemented_api"]},
+                Path(directory) / "fixture",
+                Path(directory) / "mapping.json",
+            )
+            self.assertEqual([], mapping["unmapped"])
+            self.assertEqual(["unimplemented_api"], mapping["unmapped_symbols"])
+            self.assertEqual("extension-case", mapping["scenarios"][0]["id"])
 
     def test_c_cross_failure_summary_is_not_a_controller_route(self):
         cross = load_tool("c_cross_validate.py")
@@ -100,6 +160,30 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertTrue(callable(GATE.check_analyze))
             self.assertTrue(callable(GATE.check_verify_and_repair))
             self.assertTrue(callable(GATE.check_final))
+
+    def test_semantic_review_is_required_for_dynamic_consistency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            consistency = semantic_fixture(Path(directory))
+            self.assertEqual("pass", consistency["status"])
+            self.assertEqual(1, consistency["passed_scenarios"])
+
+    def test_semantic_mismatch_fails_even_when_rust_test_has_assertion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            consistency = semantic_fixture(Path(directory), review_status="fail")
+            self.assertEqual("fail", consistency["status"])
+            codes = {item["code"] for item in consistency["issues"]}
+            self.assertIn("semantic_review_lifecycle", codes)
+            self.assertIn("logic_mismatch", codes)
+
+    def test_final_gate_rejects_stale_test_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            semantic_fixture(root)
+            test_file = root / "flashDB_rust" / "tests" / "dynamic.rs"
+            test_file.write_text(test_file.read_text(encoding="utf-8") + "\n// changed after review\n", encoding="utf-8")
+            errors = GATE.check_test_quality(root)
+            self.assertIn("test-placeholder-check.json is stale or does not match current inputs", errors)
+            self.assertIn("test-consistency.json is stale or does not match current inputs", errors)
 
 
 if __name__ == "__main__":

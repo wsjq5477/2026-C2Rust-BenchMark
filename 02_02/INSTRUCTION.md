@@ -79,7 +79,7 @@ python3 work/tools/c_cross_validate.py \
 
 ### 4. TEST_AND_REPORT
 
-从动态 C 测试模型迁移 Rust 测试并验证：
+从动态 C 测试模型迁移 Rust 测试并验证。`migrate_tests.py` 只生成 mapping 骨架；必须根据对应 C 测试和 helper 实现 Rust test 体，再执行只读语义审查。不得把 mapping 自称的 coverage 或 evidence 当作通过结论。
 
 ```bash
 python3 work/tools/migrate_tests.py \
@@ -87,11 +87,30 @@ python3 work/tools/migrate_tests.py \
   --design logs/trace/rust_api_design.json \
   --project flashDB_rust \
   --mapping logs/trace/rust_test_mapping.json
+```
+
+每一轮测试迁移或 mapping 修改后，先运行确定性占位检查；随后按 [test-semantic-reviewer.md](work/skills/test-semantic-reviewer.md) 完成一次独立、只读的逐场景 C/Rust 审查，再汇总一致性结果：
+
+```bash
+python3 work/tools/placeholder_check.py \
+  --root . --tests flashDB_rust/tests \
+  --mapping logs/trace/rust_test_mapping.json \
+  --output logs/trace/test-placeholder-check.json
+# 按 work/skills/test-semantic-reviewer.md 只写 logs/trace/test-semantic-review.json
+python3 work/tools/test_consistency_check.py \
+  --root . --out logs/trace/test-consistency.json
+```
+
+若任一检查失败，只读取失败 scenario 的 C/Rust evidence 和 differences，最小修改测试或 mapping 后完整重跑上述三步；最多两轮修复。两轮后仍失败时保留失败 JSON，继续生成报告，不能伪造通过。
+
+全部检查完成后捕获 Rust 测试并计算 unsafe ratio：
+
+```bash
 python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace || true
 python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json
 ```
 
-补齐 `07-migrate-tests.md`、`08-build-test-repair.md`、`final-verification.md` 与 `09-report-and-verify.md`。运行报告生成，再做最终验证：
+补齐 `07-migrate-tests.md`、`08-build-test-repair.md`、`final-verification.md` 与 `09-report-and-verify.md`。报告只能使用与当前 C model、Rust tests 和 mapping 指纹相符的检查产物；先生成报告，再做只读最终验证：
 
 ```bash
 python3 work/tools/report_writer.py --root . --output result/output.md --issues result/issues/00-summary.md

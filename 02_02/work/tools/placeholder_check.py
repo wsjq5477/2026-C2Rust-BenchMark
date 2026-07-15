@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -29,6 +30,57 @@ def load_json(path: Path) -> dict[str, Any]:
     return data
 
 
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def relative_path(root: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
+
+
+def c_source_fingerprint(root: Path) -> dict[str, str]:
+    trace = root / "logs" / "trace"
+    try:
+        model = load_json(trace / "c_test_model.json")
+        manifest = load_json(trace / "input_manifest.json")
+    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+        return {}
+    source_root = Path(manifest.get("source_root", root)).resolve() if isinstance(manifest.get("source_root"), str) else root.resolve()
+    cases = model.get("scorer_standard_cases")
+    files = {
+        item.get("source_file")
+        for item in cases
+        if isinstance(item, dict) and isinstance(item.get("source_file"), str) and item["source_file"]
+    } if isinstance(cases, list) else set()
+    result: dict[str, str] = {}
+    for value in sorted(files):
+        path = Path(value)
+        path = path.resolve() if path.is_absolute() else (source_root / path).resolve()
+        if path.is_file():
+            result[relative_path(root, path)] = file_sha256(path)
+    return result
+
+
+def input_fingerprint(root: Path, tests: Path, mapping_path: Path) -> dict[str, Any]:
+    files = sorted(tests.rglob("*.rs")) if tests.is_dir() else []
+    trace = root / "logs" / "trace"
+    c_model = trace / "c_test_model.json"
+    design = trace / "rust_api_design.json"
+    return {
+        "c_test_model_sha256": file_sha256(c_model) if c_model.is_file() else "missing",
+        "rust_api_design_sha256": file_sha256(design) if design.is_file() else "missing",
+        "rust_test_mapping_sha256": file_sha256(mapping_path) if mapping_path.is_file() else "missing",
+        "c_source_files": c_source_fingerprint(root),
+        "rust_test_files": {
+            relative_path(root, path): file_sha256(path)
+            for path in files
+        },
+    }
+
+
 def issue(issues: list[dict[str, Any]], code: str, file: str, test_name: str | None, message: str) -> None:
     issues.append({"code": code, "file": file, "test_name": test_name, "message": message})
 
@@ -49,6 +101,7 @@ def analyze_placeholders(root: Path, tests: Path, mapping_path: Path) -> dict[st
     root = root.resolve()
     tests = tests if tests.is_absolute() else root / tests
     mapping_path = mapping_path if mapping_path.is_absolute() else root / mapping_path
+    fingerprint = input_fingerprint(root, tests, mapping_path)
     try:
         mapping = load_json(mapping_path)
     except FileNotFoundError:
@@ -62,6 +115,7 @@ def analyze_placeholders(root: Path, tests: Path, mapping_path: Path) -> dict[st
                 "test_name": None,
                 "message": "missing rust_test_mapping.json",
             }],
+            "input_fingerprint": fingerprint,
         }
     except json.JSONDecodeError as exc:
         return {
@@ -74,6 +128,7 @@ def analyze_placeholders(root: Path, tests: Path, mapping_path: Path) -> dict[st
                 "test_name": None,
                 "message": f"invalid rust_test_mapping.json: {exc}",
             }],
+            "input_fingerprint": fingerprint,
         }
     scenarios = mapping.get("scenarios", [])
     issues: list[dict[str, Any]] = []
@@ -121,7 +176,13 @@ def analyze_placeholders(root: Path, tests: Path, mapping_path: Path) -> dict[st
         if body is not None and not ASSERTION.search(body):
             issue(issues, "missing_assertion", rust_file, rust_test, "mapped test has no assertion macro")
 
-    return {"stage": "PLACEHOLDER_CHECK", "status": "pass" if not issues else "fail", "issue_count": len(issues), "issues": issues}
+    return {
+        "stage": "PLACEHOLDER_CHECK",
+        "status": "pass" if not issues else "fail",
+        "issue_count": len(issues),
+        "issues": issues,
+        "input_fingerprint": fingerprint,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
