@@ -11,6 +11,8 @@ from typing import Any
 
 
 VALID_CROSS_RESULTS = {"pass", "fail", "not_run", "not_supported", "parse_failed", "unresolved"}
+VALID_CONVERGENCE_STATES = {"repair_required", "ready_for_final", "success", "failed_final"}
+EXPECTED_C_CROSS_REPAIR_ATTEMPTS = 8
 
 
 def load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -179,10 +181,88 @@ def check_c_cross(root: Path, *, final: bool) -> list[str]:
     return errors
 
 
+def check_convergence(root: Path) -> tuple[dict[str, Any] | None, list[str]]:
+    errors: list[str] = []
+    cross = root / "logs" / "trace" / "c-cross"
+    summary, summary_error = load_json(cross / "failure-summary.json")
+    if summary_error or summary is None:
+        return None, [f"c-cross/failure-summary.json: {summary_error}"]
+    status = summary.get("status")
+    if status not in VALID_CONVERGENCE_STATES:
+        errors.append("c-cross/failure-summary.json has invalid convergence status")
+    if summary.get("terminal") is not (status in {"success", "failed_final"}):
+        errors.append("c-cross/failure-summary.json terminal flag does not match status")
+    matrix, matrix_error = load_json(root / "logs" / "trace" / "validation-matrix.json")
+    if matrix_error or matrix is None:
+        errors.append(f"validation-matrix.json: {matrix_error}")
+    elif summary.get("execution_id") != matrix.get("execution_id"):
+        errors.append("failure-summary.json must match the current validation matrix")
+    attempts, attempts_error = load_jsonl(cross / "attempts.jsonl")
+    if attempts_error:
+        errors.append(f"c-cross/attempts.jsonl: {attempts_error}")
+    else:
+        repairs_used = sum(row.get("kind") == "repair" for row in attempts or [])
+        if summary.get("repair_attempts_used") != repairs_used:
+            errors.append("failure-summary.json repair_attempts_used does not match attempts.jsonl")
+        maximum = summary.get("max_repair_attempts")
+        if maximum != EXPECTED_C_CROSS_REPAIR_ATTEMPTS:
+            errors.append(
+                f"failure-summary.json max_repair_attempts must be {EXPECTED_C_CROSS_REPAIR_ATTEMPTS}"
+            )
+        elif summary.get("remaining_repair_attempts") != max(0, maximum - repairs_used):
+            errors.append("failure-summary.json remaining_repair_attempts is inconsistent")
+        if status == "failed_final" and repairs_used < (maximum if isinstance(maximum, int) else repairs_used + 1):
+            errors.append("failed_final requires the complete repair budget to be consumed")
+        if attempts and isinstance(matrix, dict) and attempts[-1].get("attempt_id") != matrix.get("execution_id"):
+            errors.append("validation matrix must match the latest C-Cross attempt")
+        if isinstance(matrix, dict) and isinstance(maximum, int) and maximum > 0:
+            scenarios = matrix.get("scenarios")
+            rows = [row for row in scenarios if isinstance(row, dict)] if isinstance(scenarios, list) else []
+            all_pass = bool(rows) and all(row.get("rust_impl_c_test") == "pass" for row in rows)
+            full_scope = matrix.get("mode") == "full" and matrix.get("scope") == "all"
+            if all_pass and full_scope and matrix.get("attempt_kind") == "final":
+                expected_status = "success"
+                expected_next_action = "report_success"
+            elif all_pass and full_scope:
+                expected_status = "ready_for_final"
+                expected_next_action = "run_fresh_final"
+            elif repairs_used >= maximum and full_scope and matrix.get("attempt_kind") == "confirmation":
+                expected_status = "failed_final"
+                expected_next_action = "continue_to_test_and_report"
+            else:
+                expected_status = "repair_required"
+                expected_next_action = (
+                    "run_full_confirmation" if repairs_used >= maximum else "repair_next_failure_cluster"
+                )
+            if status != expected_status:
+                errors.append(
+                    f"failure-summary.json status {status!r} does not match current evidence {expected_status!r}"
+                )
+            if summary.get("next_action") != expected_next_action:
+                errors.append("failure-summary.json next_action does not match current evidence")
+            matrix_convergence = matrix.get("convergence")
+            if isinstance(matrix_convergence, dict):
+                for key in (
+                    "status", "terminal", "next_action", "repair_attempts_used",
+                    "max_repair_attempts", "remaining_repair_attempts",
+                ):
+                    if matrix_convergence.get(key) != summary.get(key):
+                        errors.append(f"validation-matrix convergence {key} does not match failure-summary.json")
+            else:
+                errors.append("validation-matrix.json must embed the current convergence decision")
+    return summary, errors
+
+
 def check_verify_and_repair(root: Path) -> list[str]:
     errors = check_workspace(root, requires_project=True)
     errors.extend(check_c_cross(root, final=False))
-    errors.extend(require_paths(root, ["logs/trace/c-cross/failure-summary.json"]))
+    convergence, convergence_errors = check_convergence(root)
+    errors.extend(convergence_errors)
+    if convergence is not None and convergence.get("status") == "repair_required":
+        errors.append(
+            "C-Cross convergence is repair_required; continue bounded repair "
+            f"({convergence.get('remaining_repair_attempts', '?')} attempts remaining)"
+        )
     errors.extend(check_no_c_sources_in_src(root))
     return errors
 
@@ -225,11 +305,15 @@ def _run_analysis_tool(filename: str, function: str, *args: Any) -> tuple[dict[s
     return result if isinstance(result, dict) else None, None
 
 
-def check_test_quality(root: Path) -> list[str]:
+def check_test_quality(
+    root: Path,
+    *,
+    require_pass: bool = True,
+    require_consistency: bool = True,
+) -> list[str]:
     errors: list[str] = []
     mapping = root / "logs" / "trace" / "rust_test_mapping.json"
     placeholder, placeholder_error = _run_analysis_tool("placeholder_check.py", "analyze_placeholders", root, root / "flashDB_rust" / "tests", mapping)
-    consistency, consistency_error = _run_analysis_tool("test_consistency_check.py", "analyze_consistency", root)
     if placeholder_error or placeholder is None:
         errors.append(placeholder_error or "placeholder check failed to return a report")
     else:
@@ -238,61 +322,153 @@ def check_test_quality(root: Path) -> list[str]:
             errors.append(f"test-placeholder-check.json: {persisted_error}")
         elif any(persisted.get(key) != placeholder.get(key) for key in ("status", "issue_count", "input_fingerprint")):
             errors.append("test-placeholder-check.json is stale or does not match current inputs")
-        if placeholder.get("status") != "pass":
+        if require_pass and placeholder.get("status") != "pass":
             errors.append("test placeholder check failed")
-    if consistency_error or consistency is None:
-        errors.append(consistency_error or "consistency check failed to return a report")
+    if require_consistency:
+        consistency, consistency_error = _run_analysis_tool("test_consistency_check.py", "analyze_consistency", root)
+        if consistency_error or consistency is None:
+            errors.append(consistency_error or "consistency check failed to return a report")
+        else:
+            persisted, persisted_error = load_json(root / "logs" / "trace" / "test-consistency.json")
+            if persisted_error or persisted is None:
+                errors.append(f"test-consistency.json: {persisted_error}")
+            elif any(persisted.get(key) != consistency.get(key) for key in ("status", "issue_count", "input_fingerprint", "semantic_review")):
+                errors.append("test-consistency.json is stale or does not match current inputs")
+            if require_pass and consistency.get("status") != "pass":
+                errors.append("test consistency failed")
+    return errors
+
+
+def evaluate_test_stage(root: Path) -> tuple[str, list[str], dict[str, Any]]:
+    errors: list[str] = []
+    cargo, cargo_error = load_json(root / "logs" / "trace" / "cargo-results.json")
+    if cargo_error or cargo is None:
+        errors.append(f"cargo-results.json: {cargo_error}")
+        cargo = {}
+    test_attempts, test_attempt_error = load_jsonl(root / "logs" / "trace" / "test-repair-attempts.jsonl")
+    test_repairs: dict[str, Any] = {}
+    if test_attempt_error:
+        errors.append(f"test-repair-attempts.jsonl: {test_attempt_error}")
     else:
-        persisted, persisted_error = load_json(root / "logs" / "trace" / "test-consistency.json")
-        if persisted_error or persisted is None:
-            errors.append(f"test-consistency.json: {persisted_error}")
-        elif any(persisted.get(key) != consistency.get(key) for key in ("status", "issue_count", "input_fingerprint", "semantic_review")):
-            errors.append("test-consistency.json is stale or does not match current inputs")
-        if consistency.get("status") != "pass":
-            errors.append("test consistency failed")
+        test_repairs, test_repair_error = _run_analysis_tool(
+            "report_writer.py", "test_repair_evidence", root, cargo, test_attempts or []
+        )
+        if test_repair_error or test_repairs is None:
+            errors.append(test_repair_error or "test repair evidence could not be validated")
+            test_repairs = {}
+        elif not test_repairs.get("valid"):
+            errors.append("test repair evidence is stale or inconsistent with current inputs")
+
+    placeholders, _ = load_json(root / "logs" / "trace" / "test-placeholder-check.json")
+    consistency, _ = load_json(root / "logs" / "trace" / "test-consistency.json")
+    test_execution = cargo.get("test_execution") if isinstance(cargo.get("test_execution"), dict) else {}
+    placeholder_pass = isinstance(placeholders, dict) and placeholders.get("status") == "pass"
+    cargo_pass = (
+        cargo.get("build_status") == "pass"
+        and cargo.get("test_status") == "pass"
+        and test_execution.get("status") == "pass"
+    )
+    test_success = (
+        cargo_pass
+        and placeholder_pass
+        and isinstance(consistency, dict) and consistency.get("status") == "pass"
+    )
+    if test_success:
+        status = "success"
+    elif test_repairs.get("exhausted"):
+        status = "failed_final"
+    else:
+        status = "repair_required"
+
+    errors.extend(check_test_quality(
+        root,
+        require_pass=status == "success",
+        require_consistency=cargo_pass and placeholder_pass,
+    ))
+    if status == "success" and not cargo_pass:
+        errors.append("cargo-results.json must prove every dynamically mapped Rust test executed")
+    if status == "repair_required":
+        remaining = None
+        maximum = test_repairs.get("max_repair_attempts")
+        used = test_repairs.get("repair_attempts_used")
+        if isinstance(maximum, int) and isinstance(used, int):
+            remaining = max(0, maximum - used)
+        errors.append(
+            "TEST_AND_REPORT convergence is repair_required; return to test-migrator"
+            + (f" ({remaining} repairs remaining)" if remaining is not None else "")
+        )
+    return status, errors, test_repairs
+
+
+def check_test_and_report(root: Path) -> list[str]:
+    errors = check_workspace(root, requires_project=True)
+    convergence, convergence_errors = check_convergence(root)
+    errors.extend(convergence_errors)
+    cross_status = convergence.get("status") if convergence is not None else None
+    if cross_status not in {"success", "failed_final"}:
+        errors.append("TEST_AND_REPORT requires terminal C-Cross status success or failed_final")
+    cross_failed_final = cross_status == "failed_final"
+    errors.extend(check_c_cross(root, final=not cross_failed_final))
+    errors.extend(check_dynamic_test_mapping(root))
+    _, test_errors, _ = evaluate_test_stage(root)
+    errors.extend(test_errors)
+    errors.extend(require_paths(root, ["logs/trace/cargo-build.log", "logs/trace/cargo-test.log"]))
+    errors.extend(check_no_c_sources_in_src(root))
     return errors
 
 
 def check_final(root: Path) -> list[str]:
-    errors = check_workspace(root, requires_project=True)
-    errors.extend(check_c_cross(root, final=True))
-    errors.extend(check_dynamic_test_mapping(root))
-    errors.extend(check_test_quality(root))
-    cargo, cargo_error = load_json(root / "logs" / "trace" / "cargo-results.json")
-    if cargo_error or cargo is None:
-        errors.append(f"cargo-results.json: {cargo_error}")
-    elif cargo.get("build_status") != "pass" or cargo.get("test_status") != "pass":
-        errors.append("cargo-results.json build_status and test_status must be pass")
+    errors = check_test_and_report(root)
+    convergence, _ = check_convergence(root)
+    cross_status = convergence.get("status") if convergence is not None else None
+    test_status, _, test_repairs = evaluate_test_stage(root)
     ratio, ratio_error = load_json(root / "logs" / "trace" / "unsafe-ratio.json")
     if ratio_error or ratio is None:
         errors.append(f"unsafe-ratio.json: {ratio_error}")
-    else:
-        try:
-            if float(ratio.get("unsafe_ratio")) > 0.10:
-                errors.append("unsafe-ratio.json unsafe_ratio must be <= 0.10")
-        except (TypeError, ValueError):
-            errors.append("unsafe-ratio.json unsafe_ratio must be numeric")
+        ratio = {}
+    try:
+        ratio_pass = float(ratio.get("unsafe_ratio")) <= 0.10
+    except (TypeError, ValueError):
+        ratio_pass = False
+        errors.append("unsafe-ratio.json unsafe_ratio must be numeric")
+    unsafe_failed_final = bool(not ratio_pass and test_repairs.get("exhausted"))
+    if not ratio_pass and not unsafe_failed_final and ratio:
+        errors.append("unsafe ratio is repair_required while test repair budget remains")
+    failed_final = bool(
+        (cross_status == "failed_final" or test_status == "failed_final" or unsafe_failed_final)
+        and (ratio_pass or unsafe_failed_final)
+    )
     errors.extend(require_paths(root, [
         "logs/trace/cargo-build.log", "logs/trace/cargo-test.log",
         "logs/trace/final-verification.md", "logs/trace/09-report-and-verify.md",
         "result/output.md", "result/issues/00-summary.md",
     ]))
     output = root / "result" / "output.md"
-    if output.is_file() and "STATUS: SUCCESS" not in output.read_text(encoding="utf-8", errors="ignore"):
-        errors.append("result/output.md must contain STATUS: SUCCESS")
+    expected_output_status = (
+        "STATUS: FAILED" if failed_final
+        else "STATUS: SUCCESS" if ratio_pass and cross_status == "success" and test_status == "success"
+        else "STATUS: INCOMPLETE"
+    )
+    if output.is_file() and expected_output_status not in output.read_text(encoding="utf-8", errors="ignore"):
+        errors.append(f"result/output.md must contain {expected_output_status}")
     errors.extend(check_no_c_sources_in_src(root))
     return errors
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate observable FlashDB migration results.")
-    parser.add_argument("--stage", required=True, choices=["ANALYZE", "VERIFY_AND_REPAIR", "FINAL"])
+    parser.add_argument(
+        "--stage",
+        required=True,
+        choices=["ANALYZE", "VERIFY_AND_REPAIR", "TEST_AND_REPORT", "FINAL"],
+    )
     parser.add_argument("--root", default=".")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     checks = {
         "ANALYZE": check_analyze,
         "VERIFY_AND_REPAIR": check_verify_and_repair,
+        "TEST_AND_REPORT": check_test_and_report,
         "FINAL": check_final,
     }
     errors = checks[args.stage](root)
@@ -301,6 +477,25 @@ def main(argv: list[str] | None = None) -> int:
         for error in errors:
             print(f"- {error}")
         return 1
+    if args.stage == "FINAL":
+        output = root / "result" / "output.md"
+        if output.is_file() and "STATUS: FAILED" in output.read_text(encoding="utf-8", errors="ignore"):
+            print("FINAL: FAILED_FINAL")
+            return 0
+    if args.stage == "TEST_AND_REPORT":
+        convergence, _ = check_convergence(root)
+        test_status, _, _ = evaluate_test_stage(root)
+        if (
+            convergence is not None
+            and (convergence.get("status") == "failed_final" or test_status == "failed_final")
+        ):
+            print("TEST_AND_REPORT: FAILED_FINAL")
+            return 0
+    if args.stage == "VERIFY_AND_REPAIR":
+        convergence, _ = check_convergence(root)
+        if convergence is not None and convergence.get("status") == "failed_final":
+            print(f"{args.stage}: FAILED_FINAL")
+            return 0
     print(f"{args.stage}: PASS")
     return 0
 

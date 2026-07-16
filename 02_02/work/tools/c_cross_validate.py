@@ -14,6 +14,13 @@ from pathlib import Path
 from typing import Any
 
 
+MAX_REPAIR_ATTEMPTS = 8
+MAX_CLUSTER_SCENARIOS = 3
+MAX_LOCAL_CHANGED_FILES = 3
+MAX_ARCHITECTURE_CHANGED_FILES = 6
+LOCAL_STALLS_BEFORE_ARCHITECTURE = 2
+
+
 def load_json(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -305,6 +312,80 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _source_manifest(project_root: Path) -> dict[str, str]:
+    project_root = project_root.resolve()
+    source_root = project_root / "src"
+    if source_root.is_dir():
+        symlinks = sorted(path for path in source_root.rglob("*") if path.is_symlink())
+        if symlinks:
+            raise ValueError(
+                "flashDB_rust/src/** must not contain symlinks: "
+                + ", ".join(path.relative_to(project_root).as_posix() for path in symlinks)
+            )
+    return {
+        f"flashDB_rust/{path.relative_to(project_root).as_posix()}": _sha256(path)
+        for path in _project_snapshot_files(project_root)
+    }
+
+
+def _manifest_changed_files(before: dict[str, Any], after: dict[str, str]) -> list[str]:
+    return sorted(
+        path
+        for path in set(before) | set(after)
+        if before.get(path) != after.get(path)
+    )
+
+
+def _repair_rows(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [row for row in attempts if row.get("kind") == "repair"]
+
+
+def validate_repair_request(
+    attempts: list[dict[str, Any]],
+    *,
+    repair_kind: str,
+    cluster_scenarios: list[str],
+    declared_changed_files: list[str],
+    current_source_manifest: dict[str, str],
+) -> list[str]:
+    errors: list[str] = []
+    if len(_repair_rows(attempts)) >= MAX_REPAIR_ATTEMPTS:
+        errors.append("C-Cross repair budget is exhausted; no further repair attempt is allowed")
+    if not cluster_scenarios:
+        errors.append("repair attempts require at least one dynamically selected --scenario")
+    elif len(cluster_scenarios) > MAX_CLUSTER_SCENARIOS:
+        errors.append(f"repair cluster may contain at most {MAX_CLUSTER_SCENARIOS} scenarios")
+    file_limit = MAX_LOCAL_CHANGED_FILES if repair_kind == "local" else MAX_ARCHITECTURE_CHANGED_FILES
+    if len(set(declared_changed_files)) > file_limit:
+        errors.append(f"{repair_kind} repair may change at most {file_limit} Rust source files")
+    if attempts and attempts[-1].get("regression") is True:
+        errors.append("latest repair regressed previously passing scenarios; restore best-known and confirm before another repair")
+    previous_manifest = attempts[-1].get("source_manifest") if attempts else None
+    if not isinstance(previous_manifest, dict):
+        errors.append("repair requires a prior checkpoint with a complete Rust source manifest")
+    else:
+        actual_changed = _manifest_changed_files(previous_manifest, current_source_manifest)
+        if set(actual_changed) != set(declared_changed_files):
+            errors.append(
+                "declared --changed-file values must exactly match the Rust source diff: "
+                + ", ".join(actual_changed or ["<none>"])
+            )
+    same_cluster = [
+        row for row in _repair_rows(attempts)
+        if row.get("cluster_scenarios") == cluster_scenarios
+    ]
+    stalled_local = same_cluster[-LOCAL_STALLS_BEFORE_ARCHITECTURE:]
+    local_escalation_ready = (
+        len(stalled_local) == LOCAL_STALLS_BEFORE_ARCHITECTURE
+        and all(row.get("repair_kind") == "local" and row.get("progress") is False for row in stalled_local)
+    )
+    if repair_kind == "architecture" and not local_escalation_ready:
+        errors.append("architecture repair requires two no-progress local repairs for the same cluster")
+    if repair_kind == "local" and local_escalation_ready:
+        errors.append("local strategy is stalled; run a fresh read-only architecture review before an architecture repair")
+    return errors
+
+
 def _attempt_score(matrix: dict[str, Any]) -> list[int]:
     outcomes = _matrix_outcomes(matrix)
     layer_rank = {
@@ -390,6 +471,70 @@ def _load_best_known(c_cross: Path) -> dict[str, Any] | None:
     return value
 
 
+def _load_best_matrix(c_cross: Path, best: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(best, dict) or not isinstance(best.get("attempt_id"), str):
+        return None
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", best["attempt_id"])
+    path = c_cross / "checkpoints" / f"{safe_id}.json"
+    if not path.is_file():
+        return None
+    try:
+        return load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def restore_best_known(c_cross: Path, project_root: Path) -> dict[str, Any]:
+    best = _load_best_known(c_cross)
+    if not isinstance(best, dict) or not isinstance(best.get("attempt_id"), str):
+        raise ValueError("no best-known Rust source snapshot is available")
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", best["attempt_id"])
+    snapshot_root = c_cross / "snapshots" / safe_id
+    manifest = load_json(snapshot_root / "manifest.json")
+    rows = manifest.get("files")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("best-known snapshot manifest has no source files")
+
+    expected: dict[Path, str] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("path"), str) or not isinstance(row.get("sha256"), str):
+            raise ValueError("best-known snapshot manifest contains an invalid file entry")
+        relative = Path(row["path"])
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts or relative.parts[0] != "src":
+            raise ValueError(f"best-known snapshot path is outside src/**: {relative}")
+        source = snapshot_root / "files" / relative
+        if not source.is_file() or _sha256(source) != row["sha256"]:
+            raise ValueError(f"best-known snapshot file is missing or corrupt: {relative}")
+        expected[relative] = row["sha256"]
+
+    project_root = project_root.resolve()
+    current_files = _project_snapshot_files(project_root)
+    restored_files: list[str] = []
+    removed_files: list[str] = []
+    for current in current_files:
+        relative = current.relative_to(project_root)
+        if relative not in expected:
+            current.unlink()
+            removed_files.append(f"flashDB_rust/{relative.as_posix()}")
+    for relative in sorted(expected):
+        source = snapshot_root / "files" / relative
+        destination = project_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        restored_files.append(f"flashDB_rust/{relative.as_posix()}")
+
+    evidence = {
+        "status": "restored",
+        "best_attempt_id": best["attempt_id"],
+        "restored_files": restored_files,
+        "removed_files": removed_files,
+        "next_action": "run_full_confirmation",
+        "source_manifest": _source_manifest(project_root),
+    }
+    _write_json(c_cross / "restore-best.json", evidence)
+    return evidence
+
+
 def record_attempt(
     c_cross: Path,
     previous: dict[str, Any] | None,
@@ -399,6 +544,10 @@ def record_attempt(
     trigger: str,
     changed_files: list[str],
     project_root: Path | None = None,
+    repair_kind: str | None = None,
+    cluster_scenarios: list[str] | None = None,
+    source_manifest: dict[str, str] | None = None,
+    actual_changed_files: list[str] | None = None,
 ) -> dict[str, Any]:
     changed_file_hashes: dict[str, str | None] = {}
     if attempt_kind == "repair":
@@ -453,7 +602,16 @@ def record_attempt(
 
     best_known = _load_best_known(c_cross)
     score = _attempt_score(current)
-    full_scope = current.get("scope", "all") == "all"
+    full_scope = current.get("mode") == "full" and current.get("scope", "all") == "all"
+    best_matrix = _load_best_matrix(c_cross, best_known) if full_scope else None
+    if best_matrix is not None:
+        best_comparison = compare_attempt(best_matrix, current)
+        if best_comparison["regression"]:
+            comparison["regression"] = True
+            comparison["progress"] = False
+            comparison["progress_reasons"] = []
+            comparison["fingerprints_before"] = best_comparison["fingerprints_before"]
+            comparison["comparable_fingerprints"] = best_comparison["comparable_fingerprints"]
     best_score = best_known.get("score") if isinstance(best_known, dict) else None
     best_scope_compatible = isinstance(best_known, dict) and best_known.get("source_scope") == "src/**"
     snapshot_error = None
@@ -486,6 +644,12 @@ def record_attempt(
         }),
         "changed_files": list(changed_files),
         "changed_file_hashes": changed_file_hashes,
+        "actual_changed_files": list(actual_changed_files or []),
+        "repair_kind": repair_kind if attempt_kind == "repair" else None,
+        "cluster_scenarios": list(cluster_scenarios or []),
+        "source_manifest": dict(source_manifest or {}),
+        "repair_attempts_used": len(_repair_rows(prior_attempts)) + (1 if attempt_kind == "repair" else 0),
+        "max_repair_attempts": MAX_REPAIR_ATTEMPTS,
         "result": "pass" if outcomes and set(outcomes) == {"pass"} else "continue_with_failures",
         "summary": dict(sorted(outcomes.items())),
         "matrix_snapshot": f"logs/trace/c-cross/checkpoints/{attempt_id}.json",
@@ -1488,16 +1652,44 @@ def _verification_results(scenarios: list[dict[str, Any]]) -> tuple[str, str]:
     return "CONTINUE_WITH_FAILURES", "failed"
 
 
+def convergence_status(
+    matrix: dict[str, Any],
+    attempts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    scenarios = matrix.get("scenarios")
+    rows = [row for row in scenarios if isinstance(row, dict)] if isinstance(scenarios, list) else []
+    all_pass = bool(rows) and all(row.get("rust_impl_c_test") == "pass" for row in rows)
+    full_scope = matrix.get("mode") == "full" and matrix.get("scope") == "all"
+    attempt_kind = matrix.get("attempt_kind")
+    repairs_used = len(_repair_rows(attempts))
+    if all_pass and full_scope and attempt_kind == "final":
+        status, terminal, next_action = "success", True, "report_success"
+    elif all_pass and full_scope:
+        status, terminal, next_action = "ready_for_final", False, "run_fresh_final"
+    elif repairs_used >= MAX_REPAIR_ATTEMPTS and full_scope and attempt_kind == "confirmation":
+        status, terminal, next_action = "failed_final", True, "continue_to_test_and_report"
+    else:
+        status, terminal, next_action = (
+            "repair_required",
+            False,
+            "run_full_confirmation" if repairs_used >= MAX_REPAIR_ATTEMPTS else "repair_next_failure_cluster",
+        )
+    return {
+        "status": status,
+        "terminal": terminal,
+        "next_action": next_action,
+        "repair_attempts_used": repairs_used,
+        "max_repair_attempts": MAX_REPAIR_ATTEMPTS,
+        "remaining_repair_attempts": max(0, MAX_REPAIR_ATTEMPTS - repairs_used),
+    }
+
+
 def _write_failure_summary(
     matrix: dict[str, Any],
     c_cross: Path,
+    attempts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Write the current actionable failures without routing the next agent action.
-
-    The validator owns observation, not workflow scheduling.  A primary agent
-    can use this small file to choose the next edit and immediately rerun the
-    same validator.
-    """
+    """Write actionable failures and the bounded convergence decision."""
     scenarios = matrix.get("scenarios")
     failures = []
     if isinstance(scenarios, list):
@@ -1511,15 +1703,22 @@ def _write_failure_summary(
                     "diagnosis", "reason", "log", "handoff",
                 )
             })
+    convergence = convergence_status(matrix, attempts or [])
     summary = {
         "stage": "VERIFY_RUST_WITH_C_TESTS",
-        "status": "pass" if not failures else "repair_required",
+        **convergence,
         "execution_id": matrix.get("execution_id"),
         "failures": failures,
         "guidance": (
-            "Inspect only the listed failure logs and relevant Rust files; "
-            "after a minimal edit rerun c_cross_validate.py."
-            if failures else "All observed C-Cross scenarios passed."
+            "Run a full confirmation to establish the terminal result; no further repair is allowed."
+            if convergence["next_action"] == "run_full_confirmation"
+            else "Repair one bounded failure cluster in a fresh session, then rerun targeted and full C-Cross."
+            if convergence["status"] == "repair_required"
+            else "Repair budget is exhausted; preserve failures and continue to test migration and final reporting."
+            if convergence["status"] == "failed_final"
+            else "Run a fresh full final verification."
+            if convergence["status"] == "ready_for_final"
+            else "Fresh full final verification passed."
         ),
     }
     _write_json(c_cross / "failure-summary.json", summary)
@@ -1998,9 +2197,37 @@ def main(argv: list[str] | None = None) -> int:
         default="checkpoint",
         help="Classify this execution for convergence and final-gate policy.",
     )
+    parser.add_argument(
+        "--repair-kind",
+        choices=["local", "architecture"],
+        default="local",
+        help="Bound a repair as a local edit or a post-stall architecture edit.",
+    )
     parser.add_argument("--trigger", default="manual", help="Machine-stable reason for this execution.")
     parser.add_argument("--changed-file", action="append", default=[], help="File changed before a repair execution. Repeatable.")
+    parser.add_argument(
+        "--restore-best",
+        action="store_true",
+        help="Restore the best-known src/** snapshot after regression, then exit. A full confirmation is required next.",
+    )
     args = parser.parse_args(argv)
+
+    root = Path(args.root).resolve()
+    out = (root / args.out).resolve()
+    c_cross = out / "c-cross"
+    project_root = (root / args.project).resolve()
+    if args.restore_best:
+        restore_attempts = _read_jsonl(c_cross / "attempts.jsonl")
+        if not restore_attempts or restore_attempts[-1].get("regression") is not True:
+            parser.error("--restore-best is only allowed immediately after a recorded regression")
+        try:
+            restored = restore_best_known(c_cross, project_root)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            parser.error(str(exc))
+        print("VERIFY_RUST_WITH_C_TESTS: BEST_KNOWN_RESTORED")
+        print(f"best_attempt_id={restored['best_attempt_id']}")
+        print("next_action=run_full_confirmation")
+        return 0
 
     if args.attempt_kind == "repair":
         if not args.changed_file:
@@ -2017,9 +2244,9 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if invalid_repair_paths:
             parser.error("repair --changed-file must stay under flashDB_rust/src/")
+    elif args.repair_kind != "local":
+        parser.error("--repair-kind architecture is only valid with --attempt-kind repair")
 
-    root = Path(args.root).resolve()
-    out = (root / args.out).resolve()
     if args.scaffold_layout_only:
         result = run_scaffold_layout_check(root, out, project_name=args.project)
         print("GENERATE_RUST_SCAFFOLD: LAYOUT_CHECK_WRITTEN")
@@ -2029,6 +2256,43 @@ def main(argv: list[str] | None = None) -> int:
 
     matrix_path = out / "validation-matrix.json"
     previous_matrix = load_json(matrix_path) if matrix_path.exists() else None
+    attempts_before = _read_jsonl(c_cross / "attempts.jsonl")
+    source_manifest = _source_manifest(project_root)
+    cluster_scenarios = sorted(set(args.scenarios or []))
+    actual_changed_files: list[str] = []
+    previous_manifest = attempts_before[-1].get("source_manifest") if attempts_before else None
+    source_changes = (
+        _manifest_changed_files(previous_manifest, source_manifest)
+        if isinstance(previous_manifest, dict)
+        else []
+    )
+    if args.attempt_kind == "repair":
+        if isinstance(previous_manifest, dict):
+            actual_changed_files = source_changes
+        request_errors = validate_repair_request(
+            attempts_before,
+            repair_kind=args.repair_kind,
+            cluster_scenarios=cluster_scenarios,
+            declared_changed_files=args.changed_file,
+            current_source_manifest=source_manifest,
+        )
+        if request_errors:
+            parser.error("; ".join(request_errors))
+    elif source_changes:
+        restore_evidence_path = c_cross / "restore-best.json"
+        restore_evidence = load_json(restore_evidence_path) if restore_evidence_path.is_file() else {}
+        restored_confirmation = (
+            args.attempt_kind == "confirmation"
+            and bool(attempts_before)
+            and attempts_before[-1].get("regression") is True
+            and restore_evidence.get("status") == "restored"
+            and restore_evidence.get("source_manifest") == source_manifest
+        )
+        if not restored_confirmation:
+            parser.error(
+                "Rust src/** changed since the latest C-Cross attempt; record a bounded targeted repair with "
+                "--attempt-kind repair --scenario ... --changed-file ..."
+            )
     matrix = build_matrix(
         root,
         out,
@@ -2042,20 +2306,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     execution_id = f"{time.time_ns()}-{_safe_c_suffix(args.attempt_kind)}-{_safe_c_suffix(args.trigger)}"
     matrix["execution_id"] = execution_id
-    final_complete = (
-        matrix.get("verification_result") == "pass"
-        and matrix.get("mode") == "full"
-        and matrix.get("scope") == "all"
-    )
-    _write_failure_summary(matrix, out / "c-cross")
     attempt = record_attempt(
-        out / "c-cross",
+        c_cross,
         previous_matrix,
         matrix,
         attempt_kind=args.attempt_kind,
         trigger=args.trigger,
         changed_files=args.changed_file,
-        project_root=(root / args.project).resolve(),
+        project_root=project_root,
+        repair_kind=args.repair_kind if args.attempt_kind == "repair" else None,
+        cluster_scenarios=cluster_scenarios,
+        source_manifest=source_manifest,
+        actual_changed_files=actual_changed_files,
     )
     matrix["attempt"] = {
         "attempt_id": attempt["attempt_id"],
@@ -2067,6 +2329,10 @@ def main(argv: list[str] | None = None) -> int:
         "stalled_rounds": attempt["stalled_rounds"],
         "best_known": attempt["best_known"],
     }
+    attempts_after = attempts_before + [attempt]
+    convergence = convergence_status(matrix, attempts_after)
+    matrix["convergence"] = convergence
+    _write_failure_summary(matrix, c_cross, attempts_after)
     _write_json(out / "c-cross" / "checkpoints" / f"{execution_id}.json", matrix)
     _write_json(matrix_path, matrix)
     counts = matrix["summary"]["rust_impl_c_test"]
@@ -2076,9 +2342,11 @@ def main(argv: list[str] | None = None) -> int:
     print("rust_impl_c_test=" + ",".join(f"{key}:{value}" for key, value in sorted(counts.items())))
     print(f"stage_result={matrix['stage_result']}")
     print(f"verification_result={matrix['verification_result']}")
-    if args.attempt_kind == "final":
-        return 0 if final_complete else 1
-    return 0 if _has_complete_attempt_evidence(matrix, root) else 1
+    print(f"convergence_status={convergence['status']}")
+    print(f"repair_budget={convergence['repair_attempts_used']}/{convergence['max_repair_attempts']}")
+    if not _has_complete_attempt_evidence(matrix, root):
+        return 1
+    return 1 if convergence["status"] == "repair_required" else 0
 
 
 if __name__ == "__main__":

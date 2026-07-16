@@ -2,6 +2,7 @@ import ast
 import importlib.util
 import json
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -126,7 +127,8 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         self.assertIn("c_cross_validate.py", instruction)
         self.assertNotIn("workflowctl", instruction)
         self.assertNotIn("必须提供 task packet", orchestrator)
-        self.assertIn("可选 subagent", orchestrator)
+        self.assertIn("subagent 调度", orchestrator)
+        self.assertIn("`test-migrator` 是必需步骤", instruction)
         self.assertIn("同一次无人值守运行内的自动上下文隔离手段", instruction)
         self.assertIn("不限制总数", instruction)
         self.assertIn("启动新的短 session", orchestrator)
@@ -227,7 +229,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertEqual(["unimplemented_api"], mapping["unmapped_symbols"])
             self.assertEqual("extension-case", mapping["scenarios"][0]["id"])
 
-    def test_c_cross_failure_summary_is_not_a_controller_route(self):
+    def test_c_cross_failure_summary_is_a_bounded_convergence_decision(self):
         cross = load_tool("c_cross_validate.py")
         with project_temp_directory() as directory:
             output = Path(directory) / "c-cross"
@@ -249,8 +251,396 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             saved = json.loads((output / "failure-summary.json").read_text(encoding="utf-8"))
             self.assertEqual("repair_required", summary["status"])
             self.assertEqual(summary, saved)
-            self.assertNotIn("next_action", saved)
+            self.assertFalse(saved["terminal"])
+            self.assertEqual("repair_next_failure_cluster", saved["next_action"])
+            self.assertEqual(8, saved["remaining_repair_attempts"])
             self.assertEqual("dynamic_case", saved["failures"][0]["scenario_id"])
+
+    def test_c_cross_convergence_distinguishes_required_ready_and_terminal(self):
+        cross = load_tool("c_cross_validate.py")
+        failed = {
+            "mode": "full",
+            "scope": "all",
+            "attempt_kind": "confirmation",
+            "scenarios": [{"rust_impl_c_test": "fail"}],
+        }
+        passing = {**failed, "scenarios": [{"rust_impl_c_test": "pass"}]}
+        self.assertEqual("repair_required", cross.convergence_status(failed, [])["status"])
+        self.assertEqual("ready_for_final", cross.convergence_status(passing, [])["status"])
+        self.assertEqual(
+            "success",
+            cross.convergence_status({**passing, "attempt_kind": "final"}, [])["status"],
+        )
+        repairs = [{"kind": "repair"} for _ in range(cross.MAX_REPAIR_ATTEMPTS)]
+        exhausted = cross.convergence_status(failed, repairs)
+        self.assertEqual("failed_final", exhausted["status"])
+        self.assertTrue(exhausted["terminal"])
+        selected = cross.convergence_status({**failed, "scope": "selected"}, repairs)
+        self.assertEqual("repair_required", selected["status"])
+        self.assertEqual("run_full_confirmation", selected["next_action"])
+
+    def test_c_cross_repair_scope_and_architecture_escalation_are_enforced(self):
+        cross = load_tool("c_cross_validate.py")
+        cluster = ["case-a"]
+        before = {"flashDB_rust/src/lib.rs": "old"}
+        after = {"flashDB_rust/src/lib.rs": "new"}
+        checkpoint = {"kind": "confirmation", "source_manifest": before, "regression": False}
+        self.assertEqual([], cross.validate_repair_request(
+            [checkpoint],
+            repair_kind="local",
+            cluster_scenarios=cluster,
+            declared_changed_files=["flashDB_rust/src/lib.rs"],
+            current_source_manifest=after,
+        ))
+        undeclared = cross.validate_repair_request(
+            [checkpoint],
+            repair_kind="local",
+            cluster_scenarios=cluster,
+            declared_changed_files=["flashDB_rust/src/other.rs"],
+            current_source_manifest=after,
+        )
+        self.assertTrue(any("exactly match" in error for error in undeclared))
+        stalled = [
+            checkpoint,
+            {"kind": "repair", "repair_kind": "local", "cluster_scenarios": cluster, "progress": False, "source_manifest": before},
+            {"kind": "repair", "repair_kind": "local", "cluster_scenarios": cluster, "progress": False, "source_manifest": before},
+        ]
+        local_errors = cross.validate_repair_request(
+            stalled,
+            repair_kind="local",
+            cluster_scenarios=cluster,
+            declared_changed_files=["flashDB_rust/src/lib.rs"],
+            current_source_manifest=after,
+        )
+        self.assertTrue(any("architecture review" in error for error in local_errors))
+        architecture_errors = cross.validate_repair_request(
+            stalled,
+            repair_kind="architecture",
+            cluster_scenarios=cluster,
+            declared_changed_files=["flashDB_rust/src/lib.rs"],
+            current_source_manifest=after,
+        )
+        self.assertEqual([], architecture_errors)
+
+    def test_full_confirmation_detects_regression_against_best_known_matrix(self):
+        cross = load_tool("c_cross_validate.py")
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            c_cross = root / "logs" / "trace" / "c-cross"
+            project = root / "flashDB_rust"
+            (project / "src").mkdir(parents=True)
+            (project / "src" / "lib.rs").write_text("pub fn fixture() {}\n", encoding="utf-8")
+            (c_cross / "snapshots").mkdir(parents=True)
+            (c_cross / "checkpoints").mkdir(parents=True)
+            best = {
+                "attempt_id": "best-1",
+                "score": [2, 0, 0, 0],
+                "source_scope": "src/**",
+            }
+            (c_cross / "snapshots" / "best.json").write_text(json.dumps(best), encoding="utf-8")
+            best_matrix = {
+                "mode": "full",
+                "scope": "all",
+                "scenarios": [
+                    {"scenario_id": "case-a", "rust_impl_c_test": "pass"},
+                    {"scenario_id": "case-b", "rust_impl_c_test": "pass"},
+                ],
+            }
+            (c_cross / "checkpoints" / "best-1.json").write_text(json.dumps(best_matrix), encoding="utf-8")
+            previous_selected = {
+                "mode": "full",
+                "scope": "selected",
+                "scenarios": [{"scenario_id": "case-b", "rust_impl_c_test": "fail"}],
+            }
+            current = {
+                "execution_id": "confirm-2",
+                "mode": "full",
+                "scope": "all",
+                "scenarios": [
+                    {"scenario_id": "case-a", "rust_impl_c_test": "fail"},
+                    {"scenario_id": "case-b", "rust_impl_c_test": "fail"},
+                ],
+            }
+            attempt = cross.record_attempt(
+                c_cross,
+                previous_selected,
+                current,
+                attempt_kind="confirmation",
+                trigger="fixture",
+                changed_files=[],
+                project_root=project,
+                source_manifest=cross._source_manifest(project),
+            )
+            self.assertTrue(attempt["regression"])
+            self.assertTrue(attempt["restore_best_available"])
+
+    def test_cargo_capture_counts_only_real_test_repairs_and_enforces_budget(self):
+        sys.path.insert(0, str(TOOLS))
+        try:
+            cargo = load_tool("cargo_capture.py")
+        finally:
+            sys.path.pop(0)
+        report = load_tool("report_writer.py")
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            project = root / "flashDB_rust"
+            out = root / "logs" / "trace"
+            (project / "src").mkdir(parents=True)
+            (project / "tests").mkdir(parents=True)
+            out.mkdir(parents=True)
+            source = project / "src" / "lib.rs"
+            source.write_text("pub fn value() -> u8 { 0 }\n", encoding="utf-8")
+            (project / "tests" / "fixture.rs").write_text("#[test]\nfn fixture() {}\n", encoding="utf-8")
+            (project / "Cargo.toml").write_text("[package]\nname='fixture'\nversion='0.1.0'\n", encoding="utf-8")
+            (out / "rust_test_mapping.json").write_text("{}\n", encoding="utf-8")
+            attempts_path = out / "test-repair-attempts.jsonl"
+
+            attempts, checkpoint = cargo.prepare_test_attempt(project, out)
+            self.assertEqual([], attempts)
+            self.assertEqual("checkpoint", checkpoint["kind"])
+            self.assertEqual(report.current_test_input_manifest(root), checkpoint["source_manifest"])
+            attempts_path.write_text(json.dumps(checkpoint) + "\n", encoding="utf-8")
+
+            source.write_text("pub fn value() -> u8 { 1 }\n", encoding="utf-8")
+            _, repair_one = cargo.prepare_test_attempt(project, out)
+            self.assertEqual("repair", repair_one["kind"])
+            self.assertEqual(1, repair_one["repair_attempts_used"])
+            with attempts_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(repair_one) + "\n")
+
+            source.write_text("pub fn value() -> u8 { 2 }\n", encoding="utf-8")
+            _, repair_two = cargo.prepare_test_attempt(project, out)
+            self.assertEqual(2, repair_two["repair_attempts_used"])
+            with attempts_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(repair_two) + "\n")
+
+            source.write_text("pub fn value() -> u8 { 3 }\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "budget is exhausted"):
+                cargo.prepare_test_attempt(project, out)
+
+    def test_cargo_capture_rejects_zero_or_unexecuted_mapped_tests(self):
+        sys.path.insert(0, str(TOOLS))
+        try:
+            cargo = load_tool("cargo_capture.py")
+        finally:
+            sys.path.pop(0)
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            project = root / "flashDB_rust"
+            out = root / "logs" / "trace"
+            (project / "tests").mkdir(parents=True)
+            out.mkdir(parents=True)
+            mapping = {
+                "scenarios": [{
+                    "id": "dynamic-case",
+                    "rust_file": "flashDB_rust/tests/dynamic.rs",
+                    "rust_test": "rust_dynamic",
+                }],
+            }
+            (out / "rust_test_mapping.json").write_text(json.dumps(mapping), encoding="utf-8")
+
+            zero = cargo.analyze_test_execution(
+                project,
+                out,
+                "running 0 tests\ntest result: ok. 0 passed; 0 failed\n",
+                0,
+            )
+            self.assertEqual("fail", zero["status"])
+            self.assertIn("rust_dynamic", zero["missing_expected_tests"])
+            self.assertIn("flashDB_rust/tests contains no Rust test files", zero["reason"])
+
+            (project / "tests" / "dynamic.rs").write_text(
+                "#[test]\nfn rust_dynamic() { assert!(true); }\n",
+                encoding="utf-8",
+            )
+            not_executed = cargo.analyze_test_execution(
+                project,
+                out,
+                "running 1 test\ntest unrelated ... ok\n",
+                0,
+            )
+            self.assertEqual("fail", not_executed["status"])
+            self.assertEqual(["rust_dynamic"], not_executed["missing_expected_tests"])
+
+            ignored = cargo.analyze_test_execution(
+                project,
+                out,
+                "running 1 test\ntest rust_dynamic ... ignored\n",
+                0,
+            )
+            self.assertEqual("fail", ignored["status"])
+            self.assertEqual(["rust_dynamic"], ignored["ignored_expected_tests"])
+
+            executed = cargo.analyze_test_execution(
+                project,
+                out,
+                "running 1 test\ntest suite::rust_dynamic ... ok\n",
+                0,
+            )
+            self.assertEqual("pass", executed["status"])
+            self.assertEqual(1, executed["matched_expected_count"])
+
+    def test_placeholder_rejects_empty_test_directory_and_mapping(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            tests = root / "flashDB_rust" / "tests"
+            mapping = root / "logs" / "trace" / "rust_test_mapping.json"
+            tests.mkdir(parents=True)
+            mapping.parent.mkdir(parents=True)
+            mapping.write_text(json.dumps({"scenarios": []}), encoding="utf-8")
+            report = PLACEHOLDER.analyze_placeholders(root, tests, mapping)
+            self.assertEqual("fail", report["status"])
+            self.assertEqual(
+                {"empty_mapping", "empty_test_directory"},
+                {issue["code"] for issue in report["issues"]},
+            )
+
+    def test_cargo_requires_fresh_placeholder_terminal_state(self):
+        sys.path.insert(0, str(TOOLS))
+        try:
+            cargo = load_tool("cargo_capture.py")
+            with project_temp_directory() as directory:
+                root = Path(directory)
+                project = root / "flashDB_rust"
+                tests = project / "tests"
+                out = root / "logs" / "trace"
+                tests.mkdir(parents=True)
+                out.mkdir(parents=True)
+                mapping = out / "rust_test_mapping.json"
+                mapping.write_text(json.dumps({
+                    "scenarios": [{
+                        "id": "dynamic-case",
+                        "rust_file": "flashDB_rust/tests/dynamic.rs",
+                        "rust_test": "rust_dynamic",
+                    }],
+                }), encoding="utf-8")
+
+                missing = PLACEHOLDER.analyze_placeholders(root, tests, mapping)
+                (out / "test-placeholder-check.json").write_text(json.dumps(missing), encoding="utf-8")
+                convergence = cargo.record_placeholder_attempt(project, out, missing)
+                self.assertEqual("repair_required", convergence["status"])
+                with self.assertRaisesRegex(ValueError, "return to test-migrator"):
+                    cargo.validate_placeholder_precondition(project, out)
+
+                (tests / "dynamic.rs").write_text(
+                    "#[test]\nfn rust_dynamic() { let actual = 1; assert_eq!(actual, 1); }\n",
+                    encoding="utf-8",
+                )
+                implemented = PLACEHOLDER.analyze_placeholders(root, tests, mapping)
+                (out / "test-placeholder-check.json").write_text(json.dumps(implemented), encoding="utf-8")
+                convergence = cargo.record_placeholder_attempt(project, out, implemented)
+                self.assertEqual("ready_for_cargo", convergence["status"])
+                precondition = cargo.validate_placeholder_precondition(project, out)
+                self.assertEqual("pass", precondition["status"])
+                self.assertEqual(1, precondition["repair_attempts_used"])
+        finally:
+            sys.path.pop(0)
+
+    @unittest.skipUnless(shutil.which("cargo"), "cargo is required for execution-evidence integration")
+    def test_cargo_capture_matches_real_mapped_test_execution(self):
+        sys.path.insert(0, str(TOOLS))
+        try:
+            cargo = load_tool("cargo_capture.py")
+            report_writer = load_tool("report_writer.py")
+            with project_temp_directory() as directory:
+                root = Path(directory)
+                project = root / "flashDB_rust"
+                out = root / "logs" / "trace"
+                (project / "src").mkdir(parents=True)
+                (project / "tests").mkdir(parents=True)
+                out.mkdir(parents=True)
+                (project / "Cargo.toml").write_text(
+                    "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+                    encoding="utf-8",
+                )
+                (project / "src" / "lib.rs").write_text("pub fn value() -> u8 { 1 }\n", encoding="utf-8")
+                (project / "tests" / "dynamic.rs").write_text(
+                    "#[test]\nfn rust_dynamic() {\n    let actual = 1;\n    assert_eq!(actual, 1);\n}\n",
+                    encoding="utf-8",
+                )
+                mapping = out / "rust_test_mapping.json"
+                mapping.write_text(json.dumps({
+                    "scenarios": [{
+                        "id": "dynamic-case",
+                        "rust_file": "flashDB_rust/tests/dynamic.rs",
+                        "rust_test": "rust_dynamic",
+                    }],
+                }), encoding="utf-8")
+                placeholder = PLACEHOLDER.analyze_placeholders(root, project / "tests", mapping)
+                self.assertEqual("pass", placeholder["status"])
+                (out / "test-placeholder-check.json").write_text(json.dumps(placeholder), encoding="utf-8")
+                cargo.record_placeholder_attempt(project, out, placeholder)
+
+                result = cargo.capture(project, out)
+                self.assertEqual("pass", result["test_status"])
+                self.assertEqual(1, result["test_execution"]["expected_count"])
+                self.assertEqual(1, result["test_execution"]["matched_expected_count"])
+                attempts = report_writer.load_jsonl(out / "test-repair-attempts.jsonl")
+                self.assertTrue(report_writer.test_repair_evidence(root, result, attempts)["valid"])
+        finally:
+            sys.path.pop(0)
+
+    def test_restore_best_known_replaces_regressed_source_tree(self):
+        cross = load_tool("c_cross_validate.py")
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            project = root / "flashDB_rust"
+            c_cross = root / "logs" / "trace" / "c-cross"
+            snapshot = c_cross / "snapshots" / "best-1"
+            (project / "src").mkdir(parents=True)
+            (snapshot / "files" / "src").mkdir(parents=True)
+            (c_cross / "snapshots").mkdir(parents=True, exist_ok=True)
+            current = project / "src" / "lib.rs"
+            current.write_text("regressed\n", encoding="utf-8")
+            (project / "src" / "extra.rs").write_text("remove me\n", encoding="utf-8")
+            saved = snapshot / "files" / "src" / "lib.rs"
+            saved.write_text("best known\n", encoding="utf-8")
+            (snapshot / "manifest.json").write_text(json.dumps({
+                "files": [{"path": "src/lib.rs", "sha256": cross._sha256(saved)}],
+            }), encoding="utf-8")
+            (c_cross / "snapshots" / "best.json").write_text(json.dumps({
+                "attempt_id": "best-1",
+                "source_scope": "src/**",
+            }), encoding="utf-8")
+            evidence = cross.restore_best_known(c_cross, project)
+            self.assertEqual("best known\n", current.read_text(encoding="utf-8"))
+            self.assertFalse((project / "src" / "extra.rs").exists())
+            self.assertEqual("run_full_confirmation", evidence["next_action"])
+
+    def test_gate_rejects_repair_required_convergence(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            cross_dir = root / "logs" / "trace" / "c-cross"
+            cross_dir.mkdir(parents=True)
+            (root / "logs" / "trace" / "validation-matrix.json").write_text(
+                json.dumps({
+                    "execution_id": "attempt-1",
+                    "convergence": {
+                        "status": "repair_required",
+                        "terminal": False,
+                        "next_action": "repair_next_failure_cluster",
+                        "repair_attempts_used": 0,
+                        "max_repair_attempts": 8,
+                        "remaining_repair_attempts": 8,
+                    },
+                }), encoding="utf-8"
+            )
+            (cross_dir / "attempts.jsonl").write_text(
+                json.dumps({"attempt_id": "attempt-1", "kind": "checkpoint"}) + "\n",
+                encoding="utf-8",
+            )
+            (cross_dir / "failure-summary.json").write_text(json.dumps({
+                "status": "repair_required",
+                "terminal": False,
+                "next_action": "repair_next_failure_cluster",
+                "execution_id": "attempt-1",
+                "repair_attempts_used": 0,
+                "max_repair_attempts": 8,
+                "remaining_repair_attempts": 8,
+            }), encoding="utf-8")
+            summary, errors = GATE.check_convergence(root)
+            self.assertEqual("repair_required", summary["status"])
+            self.assertEqual([], errors)
 
     def test_gate_exposes_only_result_stages(self):
         with project_temp_directory() as directory:
@@ -260,6 +650,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             (root / "logs" / "interaction.md").write_text("", encoding="utf-8")
             self.assertTrue(callable(GATE.check_analyze))
             self.assertTrue(callable(GATE.check_verify_and_repair))
+            self.assertTrue(callable(GATE.check_test_and_report))
             self.assertTrue(callable(GATE.check_final))
 
     def test_semantic_review_is_required_for_dynamic_consistency(self):
@@ -279,17 +670,30 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
 
     def test_test_and_report_contract_orders_real_repair_evidence(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
+        orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
         section = instruction.split("### 4. TEST_AND_REPORT", 1)[1]
+        migrate = section.index("migrate_tests.py")
+        test_migrator = section.index("必须立即调用命名角色 `test-migrator`")
         placeholder = section.index("placeholder_check.py")
         cargo = section.index("cargo_capture.py")
         reviewer = section.index("test-semantic-reviewer.md")
         consistency = section.index("test_consistency_check.py")
+        stage_gate = section.index("gate.py --stage TEST_AND_REPORT")
+        unsafe = section.index("unsafe_ratio.py")
+        report = section.index("report_writer.py")
+        self.assertLess(migrate, test_migrator)
+        self.assertLess(test_migrator, placeholder)
         self.assertLess(placeholder, cargo)
         self.assertLess(cargo, reviewer)
         self.assertLess(reviewer, consistency)
+        self.assertLess(consistency, stage_gate)
+        self.assertLess(stage_gate, unsafe)
+        self.assertLess(unsafe, report)
         self.assertIn("全部失败", section)
         self.assertIn("不能自动证明测试预言错误", section)
         self.assertIn("真实修改才消耗一轮", section)
+        self.assertIn("必须按动态 `rust_file` 分组调用新的 `test-migrator` session", orchestrator)
+        self.assertNotIn("cargo_capture.py --project flashDB_rust --out logs/trace || true", section)
 
     def test_placeholder_uses_source_evidence_not_mapping_status(self):
         with project_temp_directory() as directory:

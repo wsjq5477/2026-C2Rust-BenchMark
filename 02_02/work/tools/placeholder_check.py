@@ -134,6 +134,8 @@ def analyze_placeholders(root: Path, tests: Path, mapping_path: Path) -> dict[st
     issues: list[dict[str, Any]] = []
 
     files = sorted(tests.rglob("*.rs")) if tests.is_dir() else []
+    if not files:
+        issue(issues, "empty_test_directory", relative_path(root, tests), None, "flashDB_rust/tests contains no Rust test files")
     for path in files:
         text = path.read_text(encoding="utf-8", errors="ignore")
         rel = path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
@@ -151,6 +153,8 @@ def analyze_placeholders(root: Path, tests: Path, mapping_path: Path) -> dict[st
     if not isinstance(scenarios, list):
         issue(issues, "invalid_mapping", str(mapping_path), None, "scenarios must be a list")
         scenarios = []
+    elif not scenarios:
+        issue(issues, "empty_mapping", str(mapping_path), None, "scenarios must contain dynamically mapped Rust tests")
     cache: dict[Path, str] = {}
     for scenario in scenarios:
         if not isinstance(scenario, dict):
@@ -194,8 +198,24 @@ def main(argv: list[str] | None = None) -> int:
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        import cargo_capture
+
+        convergence = cargo_capture.record_placeholder_attempt(
+            Path(args.root) / "flashDB_rust",
+            output.parent,
+            report,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"PLACEHOLDER_CONVERGENCE: REFUSED: {exc}")
+        return 2
     print(f"PLACEHOLDER_CHECK: {report['status'].upper()}")
     print(f"issues={report['issue_count']}")
+    print(f"convergence_status={convergence['status']}")
+    print(
+        "repair_budget="
+        f"{convergence['repair_attempts_used']}/{convergence['max_repair_attempts']}"
+    )
     return 0 if report["status"] == "pass" else 1
 
 

@@ -4,11 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 from collections import Counter
+
+
+EXPECTED_C_CROSS_REPAIR_ATTEMPTS = 8
+EXPECTED_TEST_REPAIR_ATTEMPTS = 2
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -37,32 +43,136 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def current_test_input_manifest(root: Path) -> dict[str, str]:
+    root = root.resolve()
+    project = root / "flashDB_rust"
+    trace = root / "logs" / "trace"
+    files: set[Path] = set()
+    for directory_name in ("src", "tests"):
+        directory = project / directory_name
+        if directory.is_dir():
+            files.update(path for path in directory.rglob("*") if path.is_file() and not path.is_symlink())
+    for filename in ("Cargo.toml", "Cargo.lock"):
+        path = project / filename
+        if path.is_file() and not path.is_symlink():
+            files.add(path)
+    mapping = trace / "rust_test_mapping.json"
+    if mapping.is_file() and not mapping.is_symlink():
+        files.add(mapping)
+    return {path.relative_to(root).as_posix(): _sha256(path) for path in sorted(files)}
+
+
+def test_repair_evidence(
+    root: Path,
+    cargo: dict[str, Any],
+    attempts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    latest = attempts[-1] if attempts else {}
+    convergence = cargo.get("repair_convergence") if isinstance(cargo.get("repair_convergence"), dict) else {}
+    repairs_used = sum(row.get("kind") == "repair" for row in attempts)
+    maximum = convergence.get("max_repair_attempts")
+    current_manifest = current_test_input_manifest(root)
+    cargo_test_log = root / "logs" / "trace" / "cargo-test.log"
+    current_log_sha256 = _sha256(cargo_test_log) if cargo_test_log.is_file() else None
+    test_execution = cargo.get("test_execution") if isinstance(cargo.get("test_execution"), dict) else {}
+    _, test_execution_current = analyze_current_test_execution(root, cargo)
+    valid = (
+        bool(attempts)
+        and latest.get("attempt_id") == convergence.get("attempt_id")
+        and latest.get("source_manifest") == current_manifest
+        and convergence.get("source_manifest") == current_manifest
+        and latest.get("repair_attempts_used") == repairs_used
+        and convergence.get("repair_attempts_used") == repairs_used
+        and maximum == EXPECTED_TEST_REPAIR_ATTEMPTS
+        and latest.get("max_repair_attempts") == maximum
+        and latest.get("build_status") == cargo.get("build_status")
+        and latest.get("test_status") == cargo.get("test_status")
+        and latest.get("test_execution_status") == test_execution.get("status")
+        and convergence.get("test_execution_status") == test_execution.get("status")
+        and latest.get("cargo_test_log_sha256") == current_log_sha256
+        and convergence.get("cargo_test_log_sha256") == current_log_sha256
+        and test_execution.get("log_sha256") == current_log_sha256
+        and test_execution_current
+    )
+    return {
+        "valid": valid,
+        "repair_attempts_used": repairs_used,
+        "max_repair_attempts": maximum,
+        "exhausted": bool(valid and isinstance(maximum, int) and repairs_used >= maximum),
+        "test_execution_current": test_execution_current,
+    }
+
+
 def load_tool(filename: str):
     path = Path(__file__).resolve().with_name(filename)
     spec = importlib.util.spec_from_file_location("report_" + path.stem, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load {filename}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     return module
 
 
-def test_evidence_is_current(root: Path, placeholders: dict[str, Any], consistency: dict[str, Any]) -> bool:
+def analyze_current_test_execution(root: Path, cargo: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    log_path = root / "logs" / "trace" / "cargo-test.log"
+    test_result = cargo.get("test") if isinstance(cargo.get("test"), dict) else {}
+    returncode = test_result.get("returncode")
+    if not log_path.is_file() or not isinstance(returncode, int):
+        return {}, False
+    try:
+        cargo_tool = load_tool("cargo_capture.py")
+        expected = cargo_tool.analyze_test_execution(
+            root / "flashDB_rust",
+            root / "logs" / "trace",
+            log_path.read_text(encoding="utf-8", errors="replace"),
+            returncode,
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return {}, False
+    persisted = cargo.get("test_execution") if isinstance(cargo.get("test_execution"), dict) else {}
+    keys = (
+        "status", "reason", "expected_count", "executed_count", "matched_expected_count",
+        "expected_tests", "executed_tests", "missing_expected_tests", "ignored_expected_tests",
+        "failed_expected_tests", "invalid_mappings", "missing_test_files", "test_files",
+    )
+    return expected, all(persisted.get(key) == expected.get(key) for key in keys)
+
+
+def placeholder_evidence_is_current(root: Path, placeholders: dict[str, Any]) -> bool:
     try:
         placeholder_tool = load_tool("placeholder_check.py")
-        consistency_tool = load_tool("test_consistency_check.py")
         expected_placeholder = placeholder_tool.analyze_placeholders(
             root,
             root / "flashDB_rust" / "tests",
             root / "logs" / "trace" / "rust_test_mapping.json",
         )
-        expected_consistency = consistency_tool.analyze_consistency(root)
     except (FileNotFoundError, ValueError, json.JSONDecodeError, RuntimeError):
         return False
     return all(
         placeholders.get(key) == expected_placeholder.get(key)
         for key in ("status", "issue_count", "input_fingerprint")
-    ) and all(
+    )
+
+
+def test_evidence_is_current(root: Path, placeholders: dict[str, Any], consistency: dict[str, Any]) -> bool:
+    try:
+        consistency_tool = load_tool("test_consistency_check.py")
+        expected_consistency = consistency_tool.analyze_consistency(root)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError, RuntimeError):
+        return False
+    return placeholder_evidence_is_current(root, placeholders) and all(
         consistency.get(key) == expected_consistency.get(key)
         for key in ("status", "issue_count", "input_fingerprint", "semantic_review")
     )
@@ -127,10 +237,58 @@ def final_c_cross_verified(matrix: dict[str, Any], attempts: list[dict[str, Any]
     )
 
 
+def failed_c_cross_final_verified(
+    matrix: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    convergence: dict[str, Any],
+) -> bool:
+    scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else None
+    latest_attempt = attempts[-1] if attempts else {}
+    repairs_used = sum(row.get("kind") == "repair" for row in attempts)
+    maximum = convergence.get("max_repair_attempts")
+    return (
+        convergence.get("status") == "failed_final"
+        and convergence.get("terminal") is True
+        and maximum == EXPECTED_C_CROSS_REPAIR_ATTEMPTS
+        and repairs_used >= maximum
+        and convergence.get("repair_attempts_used") == repairs_used
+        and convergence.get("remaining_repair_attempts") == 0
+        and convergence.get("execution_id") == matrix.get("execution_id")
+        and matrix.get("mode") == "full"
+        and matrix.get("scope") == "all"
+        and matrix.get("attempt_kind") == "confirmation"
+        and isinstance(scenarios, list)
+        and bool(scenarios)
+        and any(isinstance(row, dict) and row.get("rust_impl_c_test") != "pass" for row in scenarios)
+        and latest_attempt.get("attempt_id") == matrix.get("execution_id")
+        and latest_attempt.get("kind") == "confirmation"
+    )
+
+
+def successful_convergence_verified(
+    matrix: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    convergence: dict[str, Any],
+) -> bool:
+    repairs_used = sum(row.get("kind") == "repair" for row in attempts)
+    maximum = convergence.get("max_repair_attempts")
+    return (
+        convergence.get("status") == "success"
+        and convergence.get("terminal") is True
+        and maximum == EXPECTED_C_CROSS_REPAIR_ATTEMPTS
+        and convergence.get("repair_attempts_used") == repairs_used
+        and convergence.get("remaining_repair_attempts") == max(0, maximum - repairs_used)
+        and convergence.get("execution_id") == matrix.get("execution_id")
+        and final_c_cross_verified(matrix, attempts)
+    )
+
+
 def cross_convergence_summary(
     matrix: dict[str, Any],
     attempts: list[dict[str, Any]],
     workbench_issues: list[dict[str, Any]],
+    convergence: dict[str, Any],
+    test_repairs: dict[str, Any],
 ) -> list[str]:
     scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else []
     per_test = Counter(
@@ -147,10 +305,33 @@ def cross_convergence_summary(
         f"- workbench_issues: `{len(workbench_issues)}`",
         f"- latest_attempt_kind: `{latest_attempt_kind}`",
         f"- final_c_cross: `{'verified' if final_c_cross_verified(matrix, attempts) else 'not_verified'}`",
+        f"- convergence_status: `{convergence.get('status', 'missing')}`",
+        "- repair_budget: `"
+        f"{convergence.get('repair_attempts_used', 'unknown')}/"
+        f"{convergence.get('max_repair_attempts', 'unknown')}`",
+        "- test_repair_budget: `"
+        f"{test_repairs.get('repair_attempts_used', 'unknown')}/"
+        f"{test_repairs.get('max_repair_attempts', 'unknown')}`",
+        f"- test_repair_evidence_fresh: `{'yes' if test_repairs.get('valid') else 'no'}`",
     ]
 
 
-def write_report(root: Path, output: Path, issues: Path) -> None:
+def _unsafe_ratio_passes(ratio: dict[str, Any]) -> bool:
+    try:
+        return float(ratio.get("unsafe_ratio", 1.0)) <= 0.10
+    except (TypeError, ValueError):
+        return False
+
+
+def _unsafe_ratio_is_numeric(ratio: dict[str, Any]) -> bool:
+    try:
+        float(ratio.get("unsafe_ratio"))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def write_report(root: Path, output: Path, issues: Path) -> str:
     trace = root / "logs" / "trace"
     cargo = load_json(trace / "cargo-results.json")
     ratio = load_json(trace / "unsafe-ratio.json")
@@ -158,26 +339,68 @@ def write_report(root: Path, output: Path, issues: Path) -> None:
     matrix = load_json(trace / "validation-matrix.json")
     diagnostics = load_jsonl(trace / "c-cross" / "diagnostics.jsonl")
     attempts = load_jsonl(trace / "c-cross" / "attempts.jsonl")
+    test_attempts = load_jsonl(trace / "test-repair-attempts.jsonl")
     workbench_issues = load_jsonl(trace / "c-cross" / "workbench-issues.jsonl")
+    convergence = load_json(trace / "c-cross" / "failure-summary.json")
     mapping = load_json(trace / "rust_test_mapping.json")
     placeholders = load_json(trace / "test-placeholder-check.json")
     consistency = load_json(trace / "test-consistency.json")
     semantic_review = load_json(trace / "test-semantic-review.json")
+    test_execution = cargo.get("test_execution") if isinstance(cargo.get("test_execution"), dict) else {}
     evidence_current = test_evidence_is_current(root, placeholders, consistency)
+    placeholder_current = placeholder_evidence_is_current(root, placeholders)
+    test_repairs = test_repair_evidence(root, cargo, test_attempts)
     matrix_lines = "\n".join(validation_matrix_summary(matrix))
     diagnostics_lines = "\n".join(cross_diagnostics_summary(matrix, diagnostics))
-    convergence_lines = "\n".join(cross_convergence_summary(matrix, attempts, workbench_issues))
+    convergence_lines = "\n".join(
+        cross_convergence_summary(matrix, attempts, workbench_issues, convergence, test_repairs)
+    )
 
-    success = (
+    downstream_success = (
         cargo.get("build_status") == "pass"
         and cargo.get("test_status") == "pass"
+        and isinstance(cargo.get("test_execution"), dict)
+        and cargo["test_execution"].get("status") == "pass"
         and placeholders.get("status") == "pass"
         and consistency.get("status") == "pass"
         and evidence_current
-        and float(ratio.get("unsafe_ratio", 1.0)) <= 0.10
-        and final_c_cross_verified(matrix, attempts)
+        and _unsafe_ratio_passes(ratio)
     )
-    status = "SUCCESS" if success else "FAILED"
+    cargo_passed = cargo.get("build_status") == "pass" and cargo.get("test_status") == "pass"
+    terminal_test_evidence = (
+        evidence_current
+        if cargo_passed and placeholders.get("status") == "pass"
+        else placeholder_current
+    )
+    convergence_status = convergence.get("status")
+    c_cross_success = successful_convergence_verified(matrix, attempts, convergence)
+    c_cross_failed_final = failed_c_cross_final_verified(matrix, attempts, convergence)
+    c_cross_terminal = c_cross_success or c_cross_failed_final
+    unsafe_evidence_valid = _unsafe_ratio_is_numeric(ratio)
+    test_stage_failed_final = bool(
+        test_repairs["exhausted"]
+        and not downstream_success
+        and terminal_test_evidence
+    )
+    if c_cross_success and downstream_success and test_repairs["valid"]:
+        status = "SUCCESS"
+    elif (
+        c_cross_terminal
+        and test_repairs["valid"]
+        and unsafe_evidence_valid
+        and (downstream_success or test_stage_failed_final)
+        and (c_cross_failed_final or test_stage_failed_final)
+    ):
+        status = "FAILED"
+    else:
+        status = "INCOMPLETE"
+    workflow_convergence_status = (
+        "success" if status == "SUCCESS"
+        else "failed_final" if status == "FAILED"
+        else "ready_for_final" if convergence_status == "ready_for_final"
+        else "repair_required"
+    )
+    convergence_lines += f"\n- workflow_convergence_status: `{workflow_convergence_status}`"
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
@@ -197,6 +420,9 @@ STATUS: {status}
 - test_status: `{cargo.get('test_status', 'unknown')}`
 - cargo_build_returncode: `{cargo.get('build', {}).get('returncode', 'unknown')}`
 - cargo_test_returncode: `{cargo.get('test', {}).get('returncode', 'unknown')}`
+- mapped_test_execution_status: `{test_execution.get('status', 'missing')}`
+- mapped_tests_executed: `{test_execution.get('matched_expected_count', 'unknown')}/{test_execution.get('expected_count', 'unknown')}`
+- mapped_test_execution_reason: `{test_execution.get('reason', 'missing')}`
 
 ## Unsafe
 
@@ -248,6 +474,8 @@ STATUS: {status}
         f"- {item.get('scenario_id')}: {item.get('reason', item.get('diagnosis', 'failed'))}"
         for item in failures
     ) if failures else "- None"
+    if test_execution.get("status") != "pass":
+        issue_lines += "\n- Rust test execution: " + str(test_execution.get("reason", "missing execution evidence"))
     semantic_differences = semantic_review.get("logic_mismatch") if isinstance(semantic_review.get("logic_mismatch"), list) else []
     if semantic_differences:
         issue_lines += "\n" + "\n".join(
@@ -274,6 +502,7 @@ STATUS: {status}
 """,
         encoding="utf-8",
     )
+    return status
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -283,9 +512,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--issues", required=True, help="Issues summary markdown path.")
     args = parser.parse_args(argv)
 
-    write_report(Path(args.root), Path(args.output), Path(args.issues))
-    print("REPORT_AND_VERIFY: REPORT_WRITTEN")
-    return 0
+    status = write_report(Path(args.root), Path(args.output), Path(args.issues))
+    print(f"REPORT_AND_VERIFY: {status}")
+    return 1 if status == "INCOMPLETE" else 0
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ def load_tool(name: str):
 
 
 REPORT = load_tool("report_writer.py")
+GATE = load_tool("gate.py")
 PLACEHOLDER = load_tool("placeholder_check.py")
 CONSISTENCY = load_tool("test_consistency_check.py")
 
@@ -51,6 +52,97 @@ def semantic_fixture(root: Path) -> None:
     consistency = CONSISTENCY.analyze_consistency(root)
     (trace / "test-placeholder-check.json").write_text(json.dumps(placeholder), encoding="utf-8")
     (trace / "test-consistency.json").write_text(json.dumps(consistency), encoding="utf-8")
+
+
+def write_test_repair_evidence(root: Path, *, repairs_used: int) -> None:
+    trace = root / "logs" / "trace"
+    cargo_path = trace / "cargo-results.json"
+    cargo = json.loads(cargo_path.read_text(encoding="utf-8"))
+    test_result = cargo.get("test") if isinstance(cargo.get("test"), dict) else {}
+    test_result["returncode"] = int(test_result.get("returncode", 0 if cargo.get("test_status") == "pass" else 1))
+    cargo["test"] = test_result
+    executed_status = "ok" if cargo.get("test_status") == "pass" else "FAILED"
+    cargo_test_log = trace / "cargo-test.log"
+    cargo_test_log.write_text(
+        f"running 1 test\ntest rust_dynamic ... {executed_status}\n",
+        encoding="utf-8",
+    )
+    execution, _ = REPORT.analyze_current_test_execution(root, cargo)
+    execution["log_sha256"] = REPORT._sha256(cargo_test_log)
+    cargo["test_execution"] = execution
+    manifest = REPORT.current_test_input_manifest(root)
+    rows = [
+        {"attempt_id": f"test-repair-{index}", "kind": "repair"}
+        for index in range(max(0, repairs_used - 1))
+    ]
+    latest_id = "test-checkpoint" if repairs_used == 0 else f"test-repair-{repairs_used - 1}"
+    latest_kind = "checkpoint" if repairs_used == 0 else "repair"
+    rows.append({
+        "attempt_id": latest_id,
+        "kind": latest_kind,
+        "source_manifest": manifest,
+        "repair_attempts_used": repairs_used,
+        "max_repair_attempts": 2,
+        "build_status": cargo.get("build_status"),
+        "test_status": cargo.get("test_status"),
+        "test_execution_status": execution.get("status"),
+        "cargo_test_log_sha256": execution.get("log_sha256"),
+    })
+    (trace / "test-repair-attempts.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    cargo["repair_convergence"] = {
+        "attempt_id": latest_id,
+        "kind": latest_kind,
+        "repair_attempts_used": repairs_used,
+        "max_repair_attempts": 2,
+        "remaining_repair_attempts": max(0, 2 - repairs_used),
+        "source_manifest": manifest,
+        "test_execution_status": execution.get("status"),
+        "cargo_test_log_sha256": execution.get("log_sha256"),
+    }
+    cargo_path.write_text(json.dumps(cargo), encoding="utf-8")
+
+
+def write_successful_c_cross_evidence(root: Path) -> None:
+    trace = root / "logs" / "trace"
+    cross = trace / "c-cross"
+    cross.mkdir(parents=True, exist_ok=True)
+    convergence = {
+        "status": "success",
+        "terminal": True,
+        "next_action": "report_success",
+        "repair_attempts_used": 0,
+        "max_repair_attempts": 8,
+        "remaining_repair_attempts": 8,
+    }
+    matrix = {
+        "mode": "full",
+        "scope": "all",
+        "attempt_kind": "final",
+        "execution_id": "final-1",
+        "total_scenarios": 1,
+        "summary": {"rust_impl_c_test": {"pass": 1}},
+        "scenarios": [{"scenario_id": "dynamic-case", "rust_impl_c_test": "pass"}],
+        "convergence": convergence,
+    }
+    (trace / "validation-matrix.json").write_text(json.dumps(matrix), encoding="utf-8")
+    (cross / "attempts.jsonl").write_text(
+        json.dumps({"attempt_id": "final-1", "kind": "final"}) + "\n",
+        encoding="utf-8",
+    )
+    (cross / "failure-summary.json").write_text(json.dumps({
+        **convergence,
+        "execution_id": "final-1",
+    }), encoding="utf-8")
+    for filename, phase in (
+        ("build-check.json", "build"),
+        ("layout-check.json", "layout"),
+        ("link-check.json", "link"),
+    ):
+        (cross / filename).write_text(json.dumps({"phase": phase, "status": "pass"}), encoding="utf-8")
+    (cross / "layout-check.log").write_text("layout pass\n", encoding="utf-8")
 
 
 class ResultEvidenceTests(unittest.TestCase):
@@ -80,9 +172,137 @@ class ResultEvidenceTests(unittest.TestCase):
             }
             for name, payload in payloads.items():
                 (trace / name).write_text(json.dumps(payload), encoding="utf-8")
+            write_test_repair_evidence(root, repairs_used=0)
             (trace / "c-cross" / "attempts.jsonl").write_text(json.dumps({"attempt_id": "final-1", "kind": "final"}) + "\n", encoding="utf-8")
-            REPORT.write_report(root, root / "result" / "output.md", root / "result" / "issues" / "00-summary.md")
+            (trace / "c-cross" / "failure-summary.json").write_text(json.dumps({
+                "status": "success",
+                "terminal": True,
+                "execution_id": "final-1",
+                "repair_attempts_used": 0,
+                "max_repair_attempts": 8,
+                "remaining_repair_attempts": 8,
+            }), encoding="utf-8")
+            status = REPORT.write_report(root, root / "result" / "output.md", root / "result" / "issues" / "00-summary.md")
+            self.assertEqual("SUCCESS", status)
             self.assertIn("STATUS: SUCCESS", (root / "result" / "output.md").read_text(encoding="utf-8"))
+
+    def test_report_refuses_nonterminal_failure_and_accepts_failed_final(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            trace = root / "logs" / "trace"
+            (root / "result" / "issues").mkdir(parents=True)
+            (trace / "c-cross").mkdir(parents=True)
+            semantic_fixture(root)
+            (trace / "cargo-results.json").write_text(json.dumps({"build_status": "fail", "test_status": "fail"}), encoding="utf-8")
+            (trace / "unsafe-ratio.json").write_text(json.dumps({"unsafe_ratio": 0.2}), encoding="utf-8")
+            (trace / "validation-matrix.json").write_text(json.dumps({
+                "mode": "full",
+                "scope": "all",
+                "attempt_kind": "confirmation",
+                "execution_id": "confirm-1",
+                "scenarios": [{"scenario_id": "dynamic-case", "rust_impl_c_test": "fail", "reason": "mismatch"}],
+            }), encoding="utf-8")
+            repair_attempts = [
+                {"attempt_id": f"repair-{index}", "kind": "repair"}
+                for index in range(8)
+            ]
+            repair_attempts.append({"attempt_id": "confirm-1", "kind": "confirmation"})
+            (trace / "c-cross" / "attempts.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in repair_attempts),
+                encoding="utf-8",
+            )
+            write_test_repair_evidence(root, repairs_used=0)
+            convergence_path = trace / "c-cross" / "failure-summary.json"
+            convergence_path.write_text(json.dumps({
+                "status": "repair_required",
+                "terminal": False,
+                "repair_attempts_used": 1,
+                "max_repair_attempts": 8,
+            }), encoding="utf-8")
+            output = root / "result" / "output.md"
+            issues = root / "result" / "issues" / "00-summary.md"
+            self.assertEqual("INCOMPLETE", REPORT.write_report(root, output, issues))
+            self.assertIn("STATUS: INCOMPLETE", output.read_text(encoding="utf-8"))
+            convergence_path.write_text(json.dumps({
+                "status": "failed_final",
+                "terminal": True,
+                "execution_id": "confirm-1",
+                "repair_attempts_used": 8,
+                "max_repair_attempts": 8,
+                "remaining_repair_attempts": 0,
+            }), encoding="utf-8")
+            self.assertEqual("INCOMPLETE", REPORT.write_report(root, output, issues))
+            write_test_repair_evidence(root, repairs_used=2)
+            self.assertEqual("FAILED", REPORT.write_report(root, output, issues))
+            self.assertIn("STATUS: FAILED", output.read_text(encoding="utf-8"))
+
+    def test_test_failures_require_two_real_repairs_before_failed_final(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            trace = root / "logs" / "trace"
+            (root / "result" / "issues").mkdir(parents=True)
+            (trace / "c-cross").mkdir(parents=True)
+            semantic_fixture(root)
+            (trace / "cargo-results.json").write_text(json.dumps({
+                "build_status": "pass",
+                "test_status": "fail",
+                "build": {"returncode": 0},
+                "test": {"returncode": 1},
+            }), encoding="utf-8")
+            (trace / "unsafe-ratio.json").write_text(json.dumps({"unsafe_ratio": 0.0}), encoding="utf-8")
+            (trace / "validation-matrix.json").write_text(json.dumps({
+                "mode": "full",
+                "scope": "all",
+                "attempt_kind": "final",
+                "execution_id": "final-1",
+                "scenarios": [{"scenario_id": "dynamic-case", "rust_impl_c_test": "pass"}],
+            }), encoding="utf-8")
+            (trace / "c-cross" / "attempts.jsonl").write_text(
+                json.dumps({"attempt_id": "final-1", "kind": "final"}) + "\n",
+                encoding="utf-8",
+            )
+            (trace / "c-cross" / "failure-summary.json").write_text(json.dumps({
+                "status": "success",
+                "terminal": True,
+                "execution_id": "final-1",
+                "repair_attempts_used": 0,
+                "max_repair_attempts": 8,
+                "remaining_repair_attempts": 8,
+            }), encoding="utf-8")
+            output = root / "result" / "output.md"
+            issues = root / "result" / "issues" / "00-summary.md"
+            write_test_repair_evidence(root, repairs_used=1)
+            self.assertEqual("INCOMPLETE", REPORT.write_report(root, output, issues))
+            test_status, errors, _ = GATE.evaluate_test_stage(root)
+            self.assertEqual("repair_required", test_status)
+            self.assertTrue(any("return to test-migrator" in error for error in errors))
+            write_test_repair_evidence(root, repairs_used=2)
+            self.assertEqual("FAILED", REPORT.write_report(root, output, issues))
+            test_status, errors, _ = GATE.evaluate_test_stage(root)
+            self.assertEqual("failed_final", test_status)
+            self.assertEqual([], errors)
+
+    def test_pre_report_gate_blocks_until_test_stage_is_terminal(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            trace = root / "logs" / "trace"
+            (root / "result" / "issues").mkdir(parents=True)
+            semantic_fixture(root)
+            (root / "logs" / "interaction.md").write_text("", encoding="utf-8")
+            write_successful_c_cross_evidence(root)
+            (trace / "cargo-results.json").write_text(json.dumps({
+                "build_status": "pass",
+                "test_status": "fail",
+                "build": {"returncode": 0},
+                "test": {"returncode": 1},
+            }), encoding="utf-8")
+            (trace / "cargo-build.log").write_text("build pass\n", encoding="utf-8")
+            write_test_repair_evidence(root, repairs_used=0)
+            errors = GATE.check_test_and_report(root)
+            self.assertTrue(any("return to test-migrator" in error for error in errors))
+
+            write_test_repair_evidence(root, repairs_used=2)
+            self.assertEqual([], GATE.check_test_and_report(root))
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@
 
 primary Agent 负责一次运行内的阶段推进、确定性工具、共享工作区验证和最终报告。它必须保持轻量：不得要求或接收 C/Rust 源码全文、全文大 JSON、完整历史日志或完整 runner 输出。
 
-可选 subagent 是同一次无人值守运行内的自动上下文隔离手段，不需要第二次用户输入，也不限制总数。每个 subagent 只能处理一个有明确文件范围、动态事实或 failure cluster、停止条件的短任务；完成一次最小修改或只读产物后立即返回。primary Agent 验证结果仍失败时，可自动启动一个新的同角色 session，从共享工作区、最新 failure summary 和局部证据继续；不得恢复高上下文旧 session，也不得要求新的 primary session 或人工 continuation。
+subagent 是同一次无人值守运行内的自动上下文隔离手段，不需要第二次用户输入，也不限制总数。除 TEST_AND_REPORT 中按动态 `rust_file` 分组调用 `test-migrator` 是必需步骤外，其他 subagent 均为可选。每个 subagent 只能处理一个有明确文件范围、动态事实或 failure cluster、停止条件的短任务；完成一次最小修改或只读产物后立即返回。primary Agent 验证结果仍失败时，可自动启动一个新的同角色 session，从共享工作区、最新 failure summary 和局部证据继续；不得恢复高上下文旧 session，也不得要求新的 primary session 或人工 continuation。
 
 可选 subagent 只从 `work/subagent/` 中受本工程合同约束的命名角色选择。平台将主 agent 与 subagent 映射到 OpenCode 的 agent 目录；不得以内置 `General`、`Explore`、`Scout` 替代。dispatch 只提供动态路径、失败和文件范围，不得重写业务规则、返回源码全文或预置实现方案；要求阅读全部 C 源、全部测试、全部头文件、完整模型 JSON 或完整清单的全文 reader task 一律禁止。
 
@@ -68,10 +68,21 @@ python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out log
 python3 work/tools/c_cross_validate.py \
   --root . --project flashDB_rust --out logs/trace \
   --mode full --attempt-kind checkpoint --trigger implementation
-python3 work/tools/gate.py --stage VERIFY_AND_REPAIR --root .
 ```
 
-如有失败，只读取 `logs/trace/c-cross/failure-summary.json` 中列出的失败场景、日志和必要的 Rust/C 局部窗口。每次只把一个 failure cluster 交给一个新的 `rust-implementer` session；它完成一次最小修改后立即返回，由 primary Agent 重跑同一条命令，并把本次修改的 Rust 源文件作为 `--changed-file` 传给 repair 运行。仍失败时以最新 failure summary 自动启动新的 `rust-implementer` session，不让同一个 session 自行反复验证和调试。不得手工执行 runner；C-Cross 的运行隔离只使用 `logs/trace/c-cross/<suite>_run/`，其他临时产物只使用 `logs/trace/tmp/<task>/`，不得访问或使用 `/tmp/**`、`/var/tmp/**`。
+该命令在 `repair_required` 时必须返回非零；这表示继续修复，不是允许停止。如有失败，只读取 `logs/trace/c-cross/failure-summary.json` 中列出的失败场景、日志和必要的 Rust/C 局部窗口。每次选择包含 1 至 3 个相关 scenario 的一个 failure cluster，交给一个新的 `rust-implementer` session；本地修复最多修改 3 个 `flashDB_rust/src/` 文件，完成一次最小修改后立即返回。primary Agent 按实际修改路径运行定向 repair，例如：
+
+```bash
+python3 work/tools/c_cross_validate.py \
+  --root . --project flashDB_rust --out logs/trace \
+  --mode full --attempt-kind repair --repair-kind local \
+  --scenario "$SCENARIO" --changed-file flashDB_rust/src/<file> \
+  --trigger bounded_local_repair
+```
+
+每次定向 repair 后都必须用 `--mode full --attempt-kind confirmation` 重跑全部动态场景；不得只看定向结果。若同一 cluster 连续两次本地修复都没有进展，必须结束旧 session，启动新的只读架构审查，再允许一次 `--repair-kind architecture` 修复；架构修复仍限同一 cluster，最多修改 6 个 Rust 源文件，不得借机整体重构。C-Cross 全局最多记录 8 次真实 repair；checkpoint、confirmation、final、只读审查和单纯刷新证据不计数。
+
+若一次 repair 使已通过场景回归，不得在回归版本继续修复。运行 `c_cross_validate.py --restore-best` 恢复 best-known `src/**`，随后先做全量 confirmation。仍失败时以最新 failure summary 启动新的短 session，不恢复高上下文旧 session。不得手工执行 runner；C-Cross 的运行隔离只使用 `logs/trace/c-cross/<suite>_run/`，其他临时产物只使用 `logs/trace/tmp/<task>/`，不得访问或使用 `/tmp/**`、`/var/tmp/**`。
 
 只有全量场景通过后，才运行最终确认：
 
@@ -81,7 +92,13 @@ python3 work/tools/c_cross_validate.py \
   --mode full --attempt-kind final --trigger final_verification
 ```
 
-失败必须如实保留；它不阻止最终报告生成。
+`failure-summary.json` 的状态只有以下含义：`repair_required` 必须继续修复，绝对不能进入报告；`ready_for_final` 必须运行上述 fresh final；`success` 才能生成成功报告；只有 8 次 repair 已耗尽且又完成全量 confirmation 后形成的 `failed_final`，才允许带真实失败进入 TEST_AND_REPORT 并生成失败报告。局部第 8 次 repair 不能直接形成 `failed_final`。
+
+状态为 `ready_for_final`、`success` 或 `failed_final` 后运行：
+
+```bash
+python3 work/tools/gate.py --stage VERIFY_AND_REPAIR --root .
+```
 
 ### 4. TEST_AND_REPORT
 
@@ -95,17 +112,19 @@ python3 work/tools/migrate_tests.py \
   --mapping logs/trace/rust_test_mapping.json
 ```
 
-每一轮测试迁移或 mapping 修改后，先运行确定性占位检查和真实 Cargo 验证。`implementation_status` 只是 mapping 中的任务提示，不能作为通过证据；不得通过机械修改该字段消除失败。
+mapping 生成后必须立即调用命名角色 `test-migrator`。按 mapping 中动态出现的 `rust_file` 分组，每个新 session 只实现一个文件及其关联 scenarios；全部分组都返回真实 Rust test 体后才能运行检查。不得把 `test-migrator` 当成可跳过的优化；只有平台明确无法调用该角色时，primary Agent 才能按同一合同直接实现，并且仍须满足后续机器门禁。
+
+每一轮测试迁移或 mapping 修改后，先运行确定性占位检查。`implementation_status` 只是 mapping 中的任务提示，不能作为通过证据；不得通过机械修改该字段消除失败。placeholder 为 `repair_required` 时必须回到新的 `test-migrator` session，不得运行 Cargo、unsafe ratio 或报告；只有 placeholder 通过，或者两次真实测试修复耗尽形成 `failed_final` 后为了保留最终诊断，才可运行 Cargo。
 
 ```bash
 python3 work/tools/placeholder_check.py \
   --root . --tests flashDB_rust/tests \
   --mapping logs/trace/rust_test_mapping.json \
   --output logs/trace/test-placeholder-check.json
-python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace || true
+python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace
 ```
 
-`cargo-results.json.test_status` 失败时，必须消费 `test-failure-triage.jsonl` 中的全部失败，而不是只处理第一项。triage 的 assertion 只能证明发生了不一致，不能自动证明测试预言错误。必须对照映射的 C test/helper、Rust test、setup、数据、生命周期和同场景 C-Cross 证据后，才能决定修改 tests/mapping 还是经证据授权修改 `flashDB_rust/src/`。
+`placeholder_check.py` 与 `cargo_capture.py` 共同把当前 `src/**`、`tests/**`、Cargo 文件和 mapping 指纹写入 `test-repair-attempts.jsonl`。初次 placeholder 是 checkpoint；只有相对上一条证据发生真实文件变化才记录一次 test repair，单轮最多改变 4 个受跟踪文件。Cargo 不得只凭退出码判断通过：mapping 必须非空、测试目录与映射文件必须存在、每个动态 `rust_test` 都必须在真实 `cargo test` 输出中执行且不能 ignored；编译成功但执行 0 个测试必须写 `test_status=fail`。`cargo-results.json.test_status` 失败时，必须消费 `test-failure-triage.jsonl` 和 `test_execution` 中的全部失败，而不是只处理第一项。triage 的 assertion 只能证明发生了不一致，不能自动证明测试预言错误。必须对照映射的 C test/helper、Rust test、setup、数据、生命周期和同场景 C-Cross 证据后，才能决定修改 tests/mapping 还是经证据授权修改 `flashDB_rust/src/`。
 
 Cargo 通过后，按 [test-semantic-reviewer.md](work/subagent/test-semantic-reviewer.md) 完成一次独立、只读的逐场景 C/Rust 审查，再汇总一致性结果：
 
@@ -115,9 +134,15 @@ python3 work/tools/test_consistency_check.py \
   --root . --out logs/trace/test-consistency.json
 ```
 
-placeholder、Cargo、semantic review 或 consistency 任一失败时，只读取失败 scenario 的局部证据并做最小修改，然后从 placeholder、Cargo、fresh reviewer、consistency 完整重跑。最多两轮测试修复；只有 tests、mapping 或经 C 证据授权的 Rust 生产源码发生真实修改才消耗一轮，单纯重跑 reviewer、刷新 fingerprint 或修改状态字段不计轮次。修改生产源码后还必须重新运行最终全量 C-Cross。两轮后仍失败时保留失败产物并继续生成报告，不能伪造通过。
+placeholder、Cargo、semantic review 或 consistency 任一失败时，只读取失败 scenario 的局部证据并做最小修改，然后从 placeholder、Cargo、fresh reviewer、consistency 完整重跑。最多两轮测试修复；只有 `test-repair-attempts.jsonl` 证明 tests、mapping 或经 C 证据授权的 Rust 生产源码发生真实修改才消耗一轮，单纯重跑 reviewer、刷新 fingerprint 或修改状态字段不计轮次。修改 `flashDB_rust/src/**` 后不能直接跑 confirmation/final 绕过 C-Cross repair 计数；必须按受影响 scenario 先记录定向 C-Cross repair，再做全量 confirmation，全部通过后再 fresh final。零轮或一轮后仍失败是 `repair_required`；两次真实 test repair 后，Cargo 与当前 placeholder/semantic 证据仍失败才形成测试侧 `failed_final`。预算耗尽后不得再修改第三个版本；保留当前失败产物并生成失败报告，不能伪造通过。
 
-上述检查完成或修复预算耗尽后计算 unsafe ratio：
+上述检查完成或修复预算耗尽后，必须先运行报告前门禁：
+
+```bash
+python3 work/tools/gate.py --stage TEST_AND_REPORT --root .
+```
+
+该 gate 为 `repair_required` 时不得继续；只有测试阶段 `success` 或两次真实 repair 耗尽后的 `failed_final` 才能计算 unsafe ratio：
 
 ```bash
 python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json
@@ -130,4 +155,4 @@ python3 work/tools/report_writer.py --root . --output result/output.md --issues 
 python3 work/tools/gate.py --stage FINAL --root .
 ```
 
-最终 gate 通过时，`result/output.md` 必须为 `STATUS: SUCCESS`。任何真实 C-Cross、Rust 测试或一致性失败都必须为 `STATUS: FAILED`，但报告仍必须存在。
+`report_writer.py` 只接受组合终态：C-Cross 与测试阶段都必须分别收敛。两者都成功且 unsafe 合格时写 `STATUS: SUCCESS`；任一阶段为 `failed_final` 时，另一阶段也必须已成功或耗尽预算，才能写 `STATUS: FAILED`。C-Cross 的 `failed_final` 只允许进入测试迁移，绝不豁免空测试目录、未执行映射测试或尚有测试修复预算的失败。任何未收敛状态只能写 `STATUS: INCOMPLETE` 并返回非零。最终 gate 对成功终态打印 `PASS`，对诚实失败终态打印 `FAILED_FINAL`。
