@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -26,6 +27,63 @@ def load_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return data
+
+
+def implementation_preflight(
+    root: Path,
+    out: Path,
+    *,
+    project_name: str = "flashDB_rust",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    tool_path = Path(__file__).resolve().with_name("core_impl_audit.py")
+    spec = importlib.util.spec_from_file_location("c_cross_core_impl_audit", tool_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load core_impl_audit.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    result = module.audit_workspace(root, project_name)
+    implementation_attempts = module.load_attempts(out / "implementation-attempts.jsonl")
+    layout_path = out / "c-cross" / "scaffold-layout-check.json"
+    try:
+        layout = load_json(layout_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        layout = {}
+    c_cross_attempts = _read_jsonl(out / "c-cross" / "attempts.jsonl")
+    try:
+        current_matrix = load_json(out / "validation-matrix.json")
+    except (OSError, ValueError, json.JSONDecodeError):
+        current_matrix = {}
+    latest_cross_attempt = c_cross_attempts[-1] if c_cross_attempts else {}
+    existing_cross_chain = bool(
+        c_cross_attempts
+        and latest_cross_attempt.get("attempt_id") == current_matrix.get("execution_id")
+        and latest_cross_attempt.get("kind") in {"checkpoint", "repair", "confirmation", "final"}
+        and isinstance(latest_cross_attempt.get("source_manifest"), dict)
+    )
+    if existing_cross_chain:
+        audit_pass = result.get("status") == "pass"
+        evidence = {
+            "status": "ready_for_verify" if audit_pass else "implementation_required",
+            "terminal": False,
+            "next_action": "continue_c_cross_chain" if audit_pass else "return_to_implement",
+            "valid": audit_pass,
+            "errors": [] if audit_pass else ["current Rust sources contain scaffold residue"],
+            "attempt_id": latest_cross_attempt.get("attempt_id"),
+            "attempt_kind": latest_cross_attempt.get("kind"),
+            "basis": "existing_c_cross_chain",
+            "input_fingerprint": result.get("input_fingerprint"),
+            "source_manifest": result.get("source_manifest"),
+        }
+    else:
+        evidence = module.implementation_evidence(
+            result,
+            implementation_attempts,
+            layout,
+        )
+        evidence["basis"] = "initial_implement_gate"
+    result["convergence"] = evidence
+    _write_json(out / "implementation-audit.json", result)
+    return result, evidence
 
 
 def _relative_log_path(path: Path, root: Path) -> str:
@@ -325,6 +383,25 @@ def _source_manifest(project_root: Path) -> dict[str, str]:
     return {
         f"flashDB_rust/{path.relative_to(project_root).as_posix()}": _sha256(path)
         for path in _project_snapshot_files(project_root)
+    }
+
+
+def _implementation_source_manifest(project_root: Path) -> dict[str, str]:
+    project_root = project_root.resolve()
+    files: set[Path] = set()
+    src = project_root / "src"
+    if src.is_dir():
+        files.update(
+            path
+            for path in src.rglob("*.rs")
+            if path.is_file() and not path.is_symlink()
+        )
+    cargo = project_root / "Cargo.toml"
+    if cargo.is_file() and not cargo.is_symlink():
+        files.add(cargo)
+    return {
+        path.relative_to(project_root).as_posix(): _sha256(path)
+        for path in sorted(files)
     }
 
 
@@ -1279,7 +1356,7 @@ def run_scaffold_layout_check(
     *,
     project_name: str = "flashDB_rust",
 ) -> dict[str, Any]:
-    """Validate fresh scaffold layout without creating formal C-cross state."""
+    """Build the current Rust project and validate layout without formal C-cross state."""
 
     trace = out
     c_cross = trace / "c-cross"
@@ -1334,7 +1411,7 @@ def run_scaffold_layout_check(
             "status": "fail",
             "build_status": "fail",
             "layout_status": "not_run",
-            "reason": f"fresh scaffold staticlib build could not run: {exc}",
+            "reason": f"current Rust staticlib build could not run: {exc}",
             "log": _relative_log_path(log_path, root),
         }
         _write(log_path, result["reason"] + "\n")
@@ -1365,8 +1442,9 @@ def run_scaffold_layout_check(
         "status": "pass" if build_ok and layout_ok else "fail",
         "build_status": "pass" if build_ok else "fail",
         "layout_status": "pass" if layout_ok else "fail" if build_ok else "not_run",
+        "source_manifest": _implementation_source_manifest(project),
         "struct_count": struct_count,
-        "reason": "fresh scaffold ABI layout matches compiler evidence" if build_ok and layout_ok else "fresh scaffold ABI layout validation failed",
+        "reason": "current Rust ABI layout matches compiler evidence" if build_ok and layout_ok else "current Rust ABI layout validation failed",
         "log": _relative_log_path(log_path, root),
     }
     _write_json(check_path, result)
@@ -2189,7 +2267,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--scaffold-layout-only",
         action="store_true",
-        help="Build the fresh scaffold and check ABI layout without writing validation-matrix.json or attempts.jsonl.",
+        help="Build the current Rust project and check ABI layout without writing validation-matrix.json or attempts.jsonl.",
     )
     parser.add_argument(
         "--attempt-kind",
@@ -2254,6 +2332,34 @@ def main(argv: list[str] | None = None) -> int:
         print(f"verification_result={result['status']}")
         return 0 if result["status"] == "pass" else 1
 
+    try:
+        implementation_audit, implementation_convergence = implementation_preflight(
+            root,
+            out,
+            project_name=args.project,
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        print("VERIFY_RUST_WITH_C_TESTS: IMPLEMENTATION_REQUIRED")
+        print(f"reason=implementation preflight could not run: {exc}")
+        print("next_action=return_to_implement")
+        return 2
+    if (
+        implementation_audit.get("status") != "pass"
+        or implementation_convergence.get("status") != "ready_for_verify"
+        or implementation_convergence.get("valid") is not True
+    ):
+        terminal = implementation_convergence.get("status") == "failed_final"
+        print(
+            "VERIFY_RUST_WITH_C_TESTS: "
+            + ("IMPLEMENTATION_FAILED_FINAL" if terminal else "IMPLEMENTATION_REQUIRED")
+        )
+        print(f"implementation_audit={_relative_log_path(out / 'implementation-audit.json', root)}")
+        print(
+            "next_action="
+            + ("report_implementation_failure" if terminal else "return_to_implement")
+        )
+        return 2
+
     matrix_path = out / "validation-matrix.json"
     previous_matrix = load_json(matrix_path) if matrix_path.exists() else None
     attempts_before = _read_jsonl(c_cross / "attempts.jsonl")
@@ -2304,6 +2410,12 @@ def main(argv: list[str] | None = None) -> int:
         trigger=args.trigger,
         changed_files=args.changed_file,
     )
+    matrix["implementation_audit"] = {
+        "status": implementation_audit.get("status"),
+        "input_fingerprint": implementation_audit.get("input_fingerprint"),
+        "attempt_id": implementation_convergence.get("attempt_id"),
+        "basis": implementation_convergence.get("basis"),
+    }
     execution_id = f"{time.time_ns()}-{_safe_c_suffix(args.attempt_kind)}-{_safe_c_suffix(args.trigger)}"
     matrix["execution_id"] = execution_id
     attempt = record_attempt(

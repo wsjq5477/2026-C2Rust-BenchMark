@@ -116,6 +116,59 @@ def check_analyze(root: Path) -> list[str]:
     return errors
 
 
+def evaluate_implementation_stage(root: Path) -> tuple[str, list[str], dict[str, Any]]:
+    errors = check_workspace(root, requires_project=True)
+    current, current_error = _run_analysis_tool("core_impl_audit.py", "audit_workspace", root)
+    if current_error or current is None:
+        return "implementation_required", errors + [current_error or "implementation audit failed"], {}
+
+    persisted, persisted_error = load_json(root / "logs" / "trace" / "implementation-audit.json")
+    if persisted_error or persisted is None:
+        errors.append(f"implementation-audit.json: {persisted_error}")
+        persisted = {}
+    else:
+        for key in ("schema_version", "status", "input_fingerprint", "source_manifest", "summary", "findings"):
+            if persisted.get(key) != current.get(key):
+                errors.append(f"implementation-audit.json {key} is stale or inconsistent")
+
+    tool_path = Path(__file__).resolve().with_name("core_impl_audit.py")
+    spec = importlib.util.spec_from_file_location("gate_core_impl_audit", tool_path)
+    if spec is None or spec.loader is None:
+        errors.append("could not load core_impl_audit.py")
+        return "implementation_required", errors, {}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    layout, layout_error = load_json(root / "logs" / "trace" / "c-cross" / "scaffold-layout-check.json")
+    if layout_error or layout is None:
+        errors.append(f"c-cross/scaffold-layout-check.json: {layout_error}")
+        layout = {}
+    try:
+        attempts = module.load_attempts(root / "logs" / "trace" / "implementation-attempts.jsonl")
+        evidence = module.implementation_evidence(current, attempts, layout)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        errors.append(f"implementation-attempts.jsonl: {exc}")
+        evidence = {}
+
+    errors.extend(check_no_c_sources_in_src(root))
+    if evidence and not evidence.get("valid"):
+        errors.extend(str(item) for item in evidence.get("errors", []))
+    status = str(evidence.get("status") or "implementation_required")
+    if current.get("status") == "pass" and status not in {"ready_for_verify", "failed_final"}:
+        errors.append("passing implementation audit lacks a current checkpoint or repair attempt")
+    if status == "implementation_required":
+        errors.append(
+            "IMPLEMENT is implementation_required; consume current audit findings before verification"
+        )
+    elif status not in {"ready_for_verify", "failed_final"}:
+        errors.append(f"invalid IMPLEMENT convergence status: {status}")
+    return status, errors, evidence
+
+
+def check_implement(root: Path) -> list[str]:
+    _, errors, _ = evaluate_implementation_stage(root)
+    return errors
+
+
 def matrix_scenario_ids(root: Path) -> tuple[set[str], list[str]]:
     tests, error = load_json(root / "logs" / "trace" / "c_test_model.json")
     if error or tests is None:
@@ -418,6 +471,23 @@ def check_test_and_report(root: Path) -> list[str]:
 
 
 def check_final(root: Path) -> list[str]:
+    implementation_status, implementation_errors, _ = evaluate_implementation_stage(root)
+    if implementation_status == "failed_final" and not implementation_errors:
+        errors = require_paths(root, ["result/output.md", "result/issues/00-summary.md"])
+        output = root / "result" / "output.md"
+        if output.is_file():
+            text = output.read_text(encoding="utf-8", errors="ignore")
+            for required in (
+                "STATUS: FAILED",
+                "failed_stage: `IMPLEMENT`",
+                "C-Cross: `not_run`",
+                "Rust tests: `not_run`",
+                "unsafe ratio: `not_run`",
+            ):
+                if required not in text:
+                    errors.append(f"IMPLEMENT failure report must contain {required}")
+        errors.extend(check_no_c_sources_in_src(root))
+        return errors
     errors = check_test_and_report(root)
     convergence, _ = check_convergence(root)
     cross_status = convergence.get("status") if convergence is not None else None
@@ -460,20 +530,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--stage",
         required=True,
-        choices=["ANALYZE", "VERIFY_AND_REPAIR", "TEST_AND_REPORT", "FINAL"],
+        choices=["ANALYZE", "IMPLEMENT", "VERIFY_AND_REPAIR", "TEST_AND_REPORT", "FINAL"],
     )
     parser.add_argument("--root", default=".")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     checks = {
         "ANALYZE": check_analyze,
+        "IMPLEMENT": check_implement,
         "VERIFY_AND_REPAIR": check_verify_and_repair,
         "TEST_AND_REPORT": check_test_and_report,
         "FINAL": check_final,
     }
     errors = checks[args.stage](root)
     if errors:
-        print(f"{args.stage}: FAIL")
+        print(
+            "IMPLEMENT: IMPLEMENTATION_REQUIRED"
+            if args.stage == "IMPLEMENT"
+            else f"{args.stage}: FAIL"
+        )
         for error in errors:
             print(f"- {error}")
         return 1
@@ -481,6 +556,11 @@ def main(argv: list[str] | None = None) -> int:
         output = root / "result" / "output.md"
         if output.is_file() and "STATUS: FAILED" in output.read_text(encoding="utf-8", errors="ignore"):
             print("FINAL: FAILED_FINAL")
+            return 0
+    if args.stage == "IMPLEMENT":
+        status, _, _ = evaluate_implementation_stage(root)
+        if status == "failed_final":
+            print("IMPLEMENT: FAILED_FINAL")
             return 0
     if args.stage == "TEST_AND_REPORT":
         convergence, _ = check_convergence(root)

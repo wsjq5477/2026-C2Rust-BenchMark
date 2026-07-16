@@ -32,6 +32,82 @@ GATE = load_tool("gate.py")
 PLACEHOLDER = load_tool("placeholder_check.py")
 CONSISTENCY = load_tool("test_consistency_check.py")
 TRIAGE = load_tool("test_failure_triage.py")
+AUDIT = load_tool("core_impl_audit.py")
+SCAFFOLD = load_tool("generate_rust_scaffold.py")
+CROSS = load_tool("c_cross_validate.py")
+REPORT = load_tool("report_writer.py")
+
+
+def implementation_fixture(root: Path, *, implemented: bool = False) -> dict:
+    trace = root / "logs" / "trace"
+    project = root / "flashDB_rust"
+    trace.mkdir(parents=True, exist_ok=True)
+    (trace / "c-cross").mkdir(parents=True, exist_ok=True)
+    (root / "result" / "issues").mkdir(parents=True, exist_ok=True)
+    (root / "logs" / "interaction.md").write_text("", encoding="utf-8")
+    design = {
+        "crate_name": "fixture",
+        "modules": ["core"],
+        "c_abi_facade": {
+            "functions": [{
+                "rust_export": "fixture_value",
+                "params": [],
+                "return": {"rust_ffi_type": "i32"},
+            }],
+        },
+    }
+    design_path = trace / "rust_api_design.json"
+    manifest_path = trace / "scaffold-manifest.json"
+    design_path.write_text(json.dumps(design), encoding="utf-8")
+    SCAFFOLD.generate_project(
+        design,
+        project,
+        manifest_path=manifest_path,
+        design_path=design_path,
+    )
+    if implemented:
+        (project / "src" / "core.rs").write_text(
+            "pub fn value() -> i32 { 42 }\n",
+            encoding="utf-8",
+        )
+        (project / "src" / "ffi" / "c_abi.rs").write_text(
+            "#[no_mangle]\npub extern \"C\" fn fixture_value() -> i32 { crate::core::value() }\n",
+            encoding="utf-8",
+        )
+    return design
+
+
+def persist_implementation_audit(
+    root: Path,
+    *,
+    kind: str,
+    layout_pass: bool = True,
+) -> tuple[dict, dict]:
+    trace = root / "logs" / "trace"
+    result = AUDIT.audit_workspace(root)
+    layout = {
+        "phase": "layout",
+        "status": "pass" if layout_pass else "fail",
+        "build_status": "pass" if layout_pass else "fail",
+        "layout_status": "pass" if layout_pass else "not_run",
+        "source_manifest": result["source_manifest"],
+    }
+    (trace / "c-cross" / "scaffold-layout-check.json").write_text(
+        json.dumps(layout),
+        encoding="utf-8",
+    )
+    _, evidence = AUDIT.record_attempt(
+        trace / "implementation-attempts.jsonl",
+        result,
+        kind=kind,
+        layout=layout,
+    )
+    result["convergence"] = evidence
+    (trace / "implementation-audit.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return result, evidence
 
 
 def semantic_fixture(root: Path, *, review_status: str = "pass") -> dict:
@@ -101,6 +177,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             "abi_layout_extractor.py",
             "design_rust_api.py",
             "generate_rust_scaffold.py",
+            "core_impl_audit.py",
             "c_cross_validate.py",
             "migrate_tests.py",
             "cargo_capture.py",
@@ -118,6 +195,210 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         } & present)
         self.assertFalse((PROJECT / "work" / "knowledge" / "workflow-contract.json").exists())
 
+    def test_core_impl_audit_rejects_untouched_and_cosmetic_scaffold(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            implementation_fixture(root)
+            untouched = AUDIT.audit_workspace(root)
+            codes = {item["code"] for item in untouched["findings"]}
+            self.assertEqual("fail", untouched["status"])
+            self.assertIn("unchanged_scaffold_body", codes)
+            self.assertIn("constant_only_neutral_body", codes)
+            self.assertIn("placeholder_module", codes)
+
+            for relative in ("src/core.rs", "src/ffi/c_abi.rs"):
+                path = root / "flashDB_rust" / relative
+                text = path.read_text(encoding="utf-8")
+                text = "\n".join(
+                    line for line in text.splitlines()
+                    if "@c2rust-scaffold:" not in line
+                ) + "\n"
+                path.write_text(text, encoding="utf-8")
+            cosmetic = AUDIT.audit_workspace(root)
+            cosmetic_codes = {item["code"] for item in cosmetic["findings"]}
+            self.assertEqual("fail", cosmetic["status"])
+            self.assertIn("unchanged_scaffold_body", cosmetic_codes)
+            self.assertIn("placeholder_module", cosmetic_codes)
+            self.assertIn("cosmetic_only_file_change", cosmetic_codes)
+
+    def test_core_impl_audit_freezes_ffi_signature_and_accepts_real_path(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            implementation_fixture(root, implemented=True)
+            implemented = AUDIT.audit_workspace(root)
+            self.assertEqual("pass", implemented["status"])
+            self.assertEqual(1, implemented["summary"]["checked_frozen_signatures"])
+
+            ffi = root / "flashDB_rust" / "src" / "ffi" / "c_abi.rs"
+            ffi.write_text(
+                "#[no_mangle]\npub extern \"C\" fn fixture_value() -> i64 { 42 }\n",
+                encoding="utf-8",
+            )
+            changed = AUDIT.audit_workspace(root)
+            self.assertIn(
+                "changed_frozen_ffi_signature",
+                {item["code"] for item in changed["findings"]},
+            )
+
+    def test_implement_gate_requires_current_audit_attempt_and_layout(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            implementation_fixture(root, implemented=True)
+            _, evidence = persist_implementation_audit(root, kind="checkpoint")
+            self.assertEqual("ready_for_verify", evidence["status"])
+            self.assertEqual([], GATE.check_implement(root))
+            self.assertEqual(0, GATE.main(["--stage", "IMPLEMENT", "--root", str(root)]))
+            _, preflight = CROSS.implementation_preflight(
+                root,
+                root / "logs" / "trace",
+            )
+            self.assertTrue(preflight["valid"])
+            self.assertTrue(preflight["layout_current"])
+
+            core = root / "flashDB_rust" / "src" / "core.rs"
+            core.write_text("pub fn value() -> i32 { 43 }\n", encoding="utf-8")
+            errors = GATE.check_implement(root)
+            self.assertTrue(any("stale" in error for error in errors))
+            _, stale_preflight = CROSS.implementation_preflight(
+                root,
+                root / "logs" / "trace",
+            )
+            self.assertFalse(stale_preflight["valid"])
+            self.assertFalse(stale_preflight["layout_current"])
+
+    def test_implement_failed_final_requires_real_repair_and_confirmation(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            implementation_fixture(root)
+            _, checkpoint = persist_implementation_audit(root, kind="checkpoint")
+            self.assertEqual("implementation_required", checkpoint["status"])
+            self.assertEqual(1, GATE.main(["--stage", "IMPLEMENT", "--root", str(root)]))
+
+            core = root / "flashDB_rust" / "src" / "core.rs"
+            core.write_text("pub fn value() -> i32 { 7 }\n", encoding="utf-8")
+            _, repair = persist_implementation_audit(root, kind="repair")
+            self.assertEqual("implementation_required", repair["status"])
+            self.assertEqual("run_fresh_implementation_confirmation", repair["next_action"])
+
+            _, confirmation = persist_implementation_audit(root, kind="confirmation")
+            self.assertEqual("failed_final", confirmation["status"])
+            self.assertEqual([], GATE.check_implement(root))
+            self.assertEqual(0, GATE.main(["--stage", "IMPLEMENT", "--root", str(root)]))
+
+            output = root / "result" / "output.md"
+            issues = root / "result" / "issues" / "00-summary.md"
+            self.assertEqual("FAILED", REPORT.write_report(root, output, issues))
+            report = output.read_text(encoding="utf-8")
+            self.assertIn("failed_stage: `IMPLEMENT`", report)
+            self.assertIn("C-Cross: `not_run`", report)
+            self.assertIn("Rust tests: `not_run`", report)
+            self.assertIn("unsafe ratio: `not_run`", report)
+            self.assertEqual([], GATE.check_final(root))
+
+    def test_implement_failed_final_can_report_current_build_failure(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            implementation_fixture(root)
+            persist_implementation_audit(root, kind="checkpoint")
+
+            project = root / "flashDB_rust"
+            (project / "src" / "core.rs").write_text(
+                "pub fn value() -> i32 { 42 }\n",
+                encoding="utf-8",
+            )
+            (project / "src" / "ffi" / "c_abi.rs").write_text(
+                "#[no_mangle]\npub extern \"C\" fn fixture_value() -> i32 { crate::core::value() }\n",
+                encoding="utf-8",
+            )
+            audit, repair = persist_implementation_audit(
+                root,
+                kind="repair",
+                layout_pass=False,
+            )
+            self.assertEqual("pass", audit["status"])
+            self.assertEqual("implementation_required", repair["status"])
+            _, confirmation = persist_implementation_audit(
+                root,
+                kind="confirmation",
+                layout_pass=False,
+            )
+            self.assertEqual("failed_final", confirmation["status"])
+            self.assertEqual([], GATE.check_implement(root))
+
+            output = root / "result" / "output.md"
+            issues = root / "result" / "issues" / "00-summary.md"
+            self.assertEqual("FAILED", REPORT.write_report(root, output, issues))
+            self.assertEqual([], GATE.check_final(root))
+
+    def test_c_cross_preflight_rejects_scaffold_without_attempt_side_effects(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            implementation_fixture(root)
+            persist_implementation_audit(root, kind="checkpoint")
+            trace = root / "logs" / "trace"
+            c_cross = trace / "c-cross"
+            matrix_path = trace / "validation-matrix.json"
+            attempts_path = c_cross / "attempts.jsonl"
+            matrix_path.write_text('{"sentinel": true}\n', encoding="utf-8")
+            attempts_path.write_text('{"attempt_id": "sentinel"}\n', encoding="utf-8")
+            matrix_before = matrix_path.read_bytes()
+            attempts_before = attempts_path.read_bytes()
+
+            code = CROSS.main([
+                "--root", str(root),
+                "--project", "flashDB_rust",
+                "--out", "logs/trace",
+                "--mode", "full",
+                "--attempt-kind", "checkpoint",
+            ])
+            self.assertEqual(2, code)
+            self.assertEqual(matrix_before, matrix_path.read_bytes())
+            self.assertEqual(attempts_before, attempts_path.read_bytes())
+
+    def test_c_cross_repair_chain_reaudits_without_reusing_initial_source_fingerprint(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            implementation_fixture(root, implemented=True)
+            persist_implementation_audit(root, kind="checkpoint")
+            project = root / "flashDB_rust"
+            c_cross_attempts = root / "logs" / "trace" / "c-cross" / "attempts.jsonl"
+            c_cross_attempts.write_text(
+                json.dumps({
+                    "attempt_id": "checkpoint-1",
+                    "kind": "checkpoint",
+                    "source_manifest": CROSS._source_manifest(project),
+                }) + "\n",
+                encoding="utf-8",
+            )
+            (root / "logs" / "trace" / "validation-matrix.json").write_text(
+                json.dumps({"execution_id": "checkpoint-1"}),
+                encoding="utf-8",
+            )
+
+            (project / "src" / "core.rs").write_text(
+                "pub fn value() -> i32 { 43 }\n",
+                encoding="utf-8",
+            )
+            audit, evidence = CROSS.implementation_preflight(
+                root,
+                root / "logs" / "trace",
+            )
+            self.assertEqual("pass", audit["status"])
+            self.assertTrue(evidence["valid"])
+            self.assertEqual("existing_c_cross_chain", evidence["basis"])
+
+            (project / "src" / "ffi" / "c_abi.rs").write_text(
+                "#[no_mangle]\npub extern \"C\" fn fixture_value() -> i32 { 0 }\n",
+                encoding="utf-8",
+            )
+            audit, evidence = CROSS.implementation_preflight(
+                root,
+                root / "logs" / "trace",
+            )
+            self.assertEqual("fail", audit["status"])
+            self.assertFalse(evidence["valid"])
+            self.assertEqual("implementation_required", evidence["status"])
+
     def test_primary_contract_is_thin_agent_four_stage_flow(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
         orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
@@ -132,6 +413,27 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         self.assertIn("同一次无人值守运行内的自动上下文隔离手段", instruction)
         self.assertIn("不限制总数", instruction)
         self.assertIn("启动新的短 session", orchestrator)
+
+    def test_implement_contract_orders_scaffold_audit_gate_before_full_c_cross(self):
+        instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
+        orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        section = instruction.split("### 2. IMPLEMENT", 1)[1].split("### 3. VERIFY_AND_REPAIR", 1)[0]
+        generate = section.index("generate_rust_scaffold.py")
+        layout = section.index("--scaffold-layout-only")
+        implement = section.index("初始实现完成后")
+        audit = section.index("core_impl_audit.py")
+        gate = section.index("gate.py --stage IMPLEMENT")
+        full_cross = instruction.index("--mode full --attempt-kind checkpoint")
+        self.assertLess(generate, layout)
+        self.assertLess(layout, implement)
+        self.assertLess(implement, audit)
+        self.assertLess(audit, gate)
+        self.assertLess(instruction.index("gate.py --stage IMPLEMENT"), full_cross)
+        self.assertIn("是否调用过 subagent 不是通过证据", section)
+        self.assertIn("implementation_required", section)
+        self.assertIn("failed_stage=IMPLEMENT", section)
+        self.assertIn("不产生 C-Cross failure 或消耗 repair budget", orchestrator)
+        self.assertNotIn("必须调用 `rust-implementer`", section)
 
     def test_agents_cannot_bypass_project_owned_temp_or_subagent_contracts(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
@@ -649,6 +951,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             (root / "logs" / "trace").mkdir(parents=True)
             (root / "logs" / "interaction.md").write_text("", encoding="utf-8")
             self.assertTrue(callable(GATE.check_analyze))
+            self.assertTrue(callable(GATE.check_implement))
             self.assertTrue(callable(GATE.check_verify_and_repair))
             self.assertTrue(callable(GATE.check_test_and_report))
             self.assertTrue(callable(GATE.check_final))

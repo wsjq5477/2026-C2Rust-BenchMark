@@ -125,6 +125,98 @@ def load_tool(filename: str):
     return module
 
 
+def implementation_terminal_evidence(root: Path) -> tuple[dict[str, Any], dict[str, Any], bool]:
+    try:
+        tool = load_tool("core_impl_audit.py")
+        current = tool.audit_workspace(root)
+        persisted = load_json(root / "logs" / "trace" / "implementation-audit.json")
+        attempts = tool.load_attempts(root / "logs" / "trace" / "implementation-attempts.jsonl")
+        layout = load_json(root / "logs" / "trace" / "c-cross" / "scaffold-layout-check.json")
+        evidence = tool.implementation_evidence(current, attempts, layout)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return {}, {}, False
+    persisted_current = all(
+        persisted.get(key) == current.get(key)
+        for key in ("schema_version", "status", "input_fingerprint", "source_manifest", "summary", "findings")
+    )
+    valid = bool(
+        persisted_current
+        and evidence.get("valid") is True
+        and evidence.get("status") == "failed_final"
+    )
+    return current, evidence, valid
+
+
+def write_implementation_failure_report(
+    root: Path,
+    output: Path,
+    issues: Path,
+    audit: dict[str, Any],
+    evidence: dict[str, Any],
+) -> str:
+    findings = audit.get("findings") if isinstance(audit.get("findings"), list) else []
+    finding_rows = [
+        f"- `{item.get('code', 'unknown')}`: {item.get('message', 'implementation audit failed')}"
+        for item in findings
+        if isinstance(item, dict)
+    ]
+    if evidence.get("layout_pass") is not True:
+        finding_rows.append(
+            "- `implementation_build_or_layout_failed`: current Rust build or ABI layout check did not pass"
+        )
+    finding_lines = "\n".join(finding_rows) or "- `unknown`: implementation did not reach verification readiness"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        f"""# FlashDB C-to-Rust Final Report
+
+STATUS: FAILED
+
+failed_stage: `IMPLEMENT`
+
+## Terminal Evidence
+
+- implementation_status: `failed_final`
+- implementation_attempt: `{evidence.get('attempt_id', 'unknown')}`
+- implementation_repair_budget: `{evidence.get('repair_attempts_used', 'unknown')}/{evidence.get('max_repair_attempts', 'unknown')}`
+- implementation_audit_fingerprint: `{audit.get('input_fingerprint', 'unknown')}`
+
+## Unexecuted Stages
+
+- C-Cross: `not_run`
+- Rust tests: `not_run`
+- unsafe ratio: `not_run`
+
+## Remaining Implementation Findings
+
+{finding_lines}
+""",
+        encoding="utf-8",
+    )
+    issues.parent.mkdir(parents=True, exist_ok=True)
+    issues.write_text(
+        f"""# 00 - Summary
+
+## Status
+
+STATUS: FAILED
+
+failed_stage: `IMPLEMENT`
+
+## Known Issues
+
+{finding_lines}
+
+## Unexecuted Evidence
+
+- C-Cross: `not_run`
+- Rust tests: `not_run`
+- unsafe ratio: `not_run`
+""",
+        encoding="utf-8",
+    )
+    return "FAILED"
+
+
 def analyze_current_test_execution(root: Path, cargo: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     log_path = root / "logs" / "trace" / "cargo-test.log"
     test_result = cargo.get("test") if isinstance(cargo.get("test"), dict) else {}
@@ -332,6 +424,17 @@ def _unsafe_ratio_is_numeric(ratio: dict[str, Any]) -> bool:
 
 
 def write_report(root: Path, output: Path, issues: Path) -> str:
+    implementation_audit, implementation_evidence, implementation_failed_final = (
+        implementation_terminal_evidence(root)
+    )
+    if implementation_failed_final:
+        return write_implementation_failure_report(
+            root,
+            output,
+            issues,
+            implementation_audit,
+            implementation_evidence,
+        )
     trace = root / "logs" / "trace"
     cargo = load_json(trace / "cargo-results.json")
     ratio = load_json(trace / "unsafe-ratio.json")

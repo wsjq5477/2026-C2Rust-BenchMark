@@ -51,14 +51,44 @@ python3 work/tools/gate.py --stage ANALYZE --root .
 
 ### 2. IMPLEMENT
 
-根据设计生成骨架，然后由 primary Agent 调度或直接实现 Rust 行为：
+根据设计生成骨架并先验证 scaffold 本身可构建、ABI layout 正确，然后由 primary Agent 调度或直接实现 Rust 行为：
 
 ```bash
 python3 work/tools/generate_rust_scaffold.py --design logs/trace/rust_api_design.json --project flashDB_rust
 python3 work/tools/c_cross_validate.py --root . --project flashDB_rust --out logs/trace --scaffold-layout-only
 ```
 
-实现时优先满足 C-Cross 可观察语义。不要为了复刻不可观察的 C 内部结构而引入完整存储引擎；只有当前输入事实和失败证据要求时，才扩展实现复杂度。重实现可由多个短任务顺序接力，但每个任务只修改主执行者指定的 Rust 文件并立即返回。写入 `05-generate-rust-scaffold.md` 与 `06-rewrite-core-modules.md`。
+layout-only 通过只代表 scaffold 结构成立，绝不代表 IMPLEMENT 完成。实现时优先满足 C-Cross 可观察语义。不要为了复刻不可观察的 C 内部结构而引入完整存储引擎；只有当前输入事实和失败证据要求时，才扩展实现复杂度。重实现可由多个短任务顺序接力，但每个任务只修改主执行者指定的 Rust 文件并立即返回。
+
+初始实现完成后必须先对当前源码重新运行 `--scaffold-layout-only`，无论当前 build/layout 成功或失败，都继续记录 implementation checkpoint：
+
+```bash
+python3 work/tools/core_impl_audit.py \
+  --root . --project flashDB_rust \
+  --manifest logs/trace/scaffold-manifest.json \
+  --design logs/trace/rust_api_design.json \
+  --output logs/trace/implementation-audit.json \
+  --attempt-kind checkpoint
+```
+
+审计为 `implementation_required` 时，禁止进入 C-Cross。只消费 `implementation-audit.json` 当前 findings，可按动态 symbol、module、依赖和文件簇启动多个新的短期 `rust-implementer` session；全部有界修改完成后先对新源码刷新 `--scaffold-layout-only`，再只记录一次真实补漏：
+
+```bash
+python3 work/tools/core_impl_audit.py \
+  --root . --project flashDB_rust \
+  --output logs/trace/implementation-audit.json \
+  --attempt-kind repair
+```
+
+IMPLEMENT 只允许这一轮 audit 定向补漏，单轮可包含多个短任务，但不得开启第二轮源码版本或整体重构。补漏后只要 implementation audit 或当前 build/layout 仍失败，就在不修改源码的情况下运行 `core_impl_audit.py --attempt-kind confirmation`。fresh confirmation 仍失败才形成 `failed_stage=IMPLEMENT` 的 `failed_final`；此时直接运行 `report_writer.py` 和 `gate.py --stage FINAL` 生成真实失败报告，C-Cross、Rust tests 和 unsafe 必须标为 `not_run`。
+
+审计与当前 build/layout 都通过时，随后运行：
+
+```bash
+python3 work/tools/gate.py --stage IMPLEMENT --root .
+```
+
+只有 gate 输出 `IMPLEMENT: PASS` 才能进入 VERIFY_AND_REPAIR。`IMPLEMENTATION_REQUIRED` 必须继续实现；只有带 fresh audit confirmation 和真实源码 repair 证据的 `IMPLEMENT: FAILED_FINAL` 才允许直接生成实现失败报告。是否调用过 subagent 不是通过证据。写入 `05-generate-rust-scaffold.md` 与 `06-rewrite-core-modules.md`。
 
 ### 3. VERIFY_AND_REPAIR
 
@@ -69,6 +99,8 @@ python3 work/tools/c_cross_validate.py \
   --root . --project flashDB_rust --out logs/trace \
   --mode full --attempt-kind checkpoint --trigger implementation
 ```
+
+所有非 `--scaffold-layout-only`、非受约束 `--restore-best` 的 C-Cross 路径都会在写 matrix 或 attempt 前重新执行当前 IMPLEMENT 审计。首次 C-Cross checkpoint 必须有当前 implementation attempt 与 build/layout；正式 C-Cross 链建立后，后续语义 repair 由 C-Cross 自己的 source manifest 和 changed-file 合同追踪，不要求复用初始实现源码指纹，但仍重新审计当前代码并拒绝任何重新引入的 scaffold residue。前置拒绝不得产生 C-Cross 失败场景或消耗 8 次 repair budget。
 
 该命令在 `repair_required` 时必须返回非零；这表示继续修复，不是允许停止。如有失败，只读取 `logs/trace/c-cross/failure-summary.json` 中列出的失败场景、日志和必要的 Rust/C 局部窗口。每次选择包含 1 至 3 个相关 scenario 的一个 failure cluster，交给一个新的 `rust-implementer` session；本地修复最多修改 3 个 `flashDB_rust/src/` 文件，完成一次最小修改后立即返回。primary Agent 按实际修改路径运行定向 repair，例如：
 
@@ -155,4 +187,4 @@ python3 work/tools/report_writer.py --root . --output result/output.md --issues 
 python3 work/tools/gate.py --stage FINAL --root .
 ```
 
-`report_writer.py` 只接受组合终态：C-Cross 与测试阶段都必须分别收敛。两者都成功且 unsafe 合格时写 `STATUS: SUCCESS`；任一阶段为 `failed_final` 时，另一阶段也必须已成功或耗尽预算，才能写 `STATUS: FAILED`。C-Cross 的 `failed_final` 只允许进入测试迁移，绝不豁免空测试目录、未执行映射测试或尚有测试修复预算的失败。任何未收敛状态只能写 `STATUS: INCOMPLETE` 并返回非零。最终 gate 对成功终态打印 `PASS`，对诚实失败终态打印 `FAILED_FINAL`。
+`report_writer.py` 接受两类终态。IMPLEMENT 已通过时，C-Cross 与测试阶段必须分别收敛：两者都成功且 unsafe 合格时写 `STATUS: SUCCESS`；任一阶段为 `failed_final` 时，另一阶段也必须已成功或耗尽预算，才能写 `STATUS: FAILED`。C-Cross 的 `failed_final` 只允许进入测试迁移，绝不豁免空测试目录、未执行映射测试或尚有测试修复预算的失败。IMPLEMENT 在一次真实补漏和 fresh confirmation 后形成阶段化 `failed_final` 时，直接写 `failed_stage: IMPLEMENT` 的失败报告，所有未运行下游证据必须标为 `not_run`。任何未收敛状态只能写 `STATUS: INCOMPLETE` 并返回非零。最终 gate 对成功终态打印 `PASS`，对诚实失败终态打印 `FAILED_FINAL`。

@@ -52,11 +52,15 @@ python3 work/tools/gate.py --stage ANALYZE --root .
 
 ### IMPLEMENT
 
-运行 scaffold generator 与 layout-only checker。随后直接实现或调度实现 `flashDB_rust/`：先建立可观察的 Rust 行为和 C ABI facade，再补需要的内部语义。不要人为拆 CORE/FACADE worker；重任务可以顺序交给新的短期实现 session，但 primary Agent 本身不切换会话。每个实现 session 只修改指定文件，完成一次有界实现后返回。
+运行 scaffold generator 与 layout-only checker；layout-only 通过不代表业务实现完成。随后直接实现或调度实现 `flashDB_rust/`：先建立可观察的 Rust 行为和 C ABI facade，再补需要的内部语义。不要人为拆 CORE/FACADE worker；重任务可以按动态文件、symbol、依赖簇顺序交给新的短期实现 session，但 primary Agent 本身不切换会话。每个实现 session 只修改指定文件，完成一次有界实现后返回。
+
+初始实现后先对当前源码刷新 `--scaffold-layout-only`，无论 build/layout 成功或失败都运行 `core_impl_audit.py --attempt-kind checkpoint`。`implementation_required` 时只消费当前 audit findings，可用多个新的短 session 完成同一轮补漏；随后再次刷新当前 build/layout，并运行一次 `--attempt-kind repair`，不允许第二轮源码版本或整体重构。repair 后只要 audit 或 build/layout 仍失败，就不再修改源码并运行 `--attempt-kind confirmation`。fresh confirmation 仍失败形成 `failed_stage=IMPLEMENT` 的 `failed_final`，直接写 IMPLEMENT 失败报告，C-Cross、Rust tests 和 unsafe 均标为 `not_run`。
+
+审计和当前 build/layout 都通过后运行 `gate.py --stage IMPLEMENT`。只有 `IMPLEMENT: PASS` 才能进入 VERIFY_AND_REPAIR；`IMPLEMENTATION_REQUIRED` 必须继续实现，不能测试、计算 unsafe 或报告。实现动作是强制的，但 subagent 仍是可选载体；调用记录不是 gate 证据。
 
 ### VERIFY_AND_REPAIR
 
-通过 `c_cross_validate.py --mode full --attempt-kind checkpoint` 运行全量 C-Cross。`repair_required` 的非零退出码要求继续工作。每次从 `failure-summary.json` 选择一个包含 1 至 3 个相关 scenario 的最小 failure cluster，交给新的 `rust-implementer` session；本地 repair 限 3 个 Rust 源文件，主 Agent 使用 `--attempt-kind repair --repair-kind local --scenario ... --changed-file ...` 定向重跑，随后必须以 `--attempt-kind confirmation --mode full` 做全量确认。
+通过 `c_cross_validate.py --mode full --attempt-kind checkpoint` 运行全量 C-Cross。首次 checkpoint 要求当前 implementation attempt 与 build/layout；正式 C-Cross 链建立后，后续 repair 使用 C-Cross source manifest/changed-file 合同，不复用初始实现源码指纹，但每次仍在创建 matrix/attempt 前重审当前代码并拒绝重新引入的 scaffold residue。`IMPLEMENTATION_REQUIRED` 必须返回上一阶段，不产生 C-Cross failure 或消耗 repair budget。进入 C-Cross 后，`repair_required` 的非零退出码要求继续工作。每次从 `failure-summary.json` 选择一个包含 1 至 3 个相关 scenario 的最小 failure cluster，交给新的 `rust-implementer` session；本地 repair 限 3 个 Rust 源文件，主 Agent 使用 `--attempt-kind repair --repair-kind local --scenario ... --changed-file ...` 定向重跑，随后必须以 `--attempt-kind confirmation --mode full` 做全量确认。
 
 同一 cluster 连续两次本地 repair 无进展后，旧策略必须停止。启动新的只读架构审查 session，只检查该 cluster 的共同根因；随后最多做一次 `--repair-kind architecture` 修复，限 6 个 Rust 源文件，不得整体重构。全局最多 8 次真实 repair，其他验证和只读步骤不计数。若出现 regression，立即 `--restore-best`，全量 confirmation 后才可继续；不得在回归版本上叠加修改。
 
