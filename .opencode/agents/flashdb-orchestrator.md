@@ -1,81 +1,53 @@
 ---
-description: Execute the FlashDB C-to-Rust migration as one evidence-driven primary workflow.
+description: Thin primary agent for the dynamic FlashDB C-to-Rust contest workflow.
 mode: primary
 permission:
-  edit: allow
-  bash:
-    "*": allow
-    "/tmp*": deny
-    "* /tmp*": deny
-    "*=/tmp*": deny
-    "/var/tmp*": deny
-    "* /var/tmp*": deny
-    "*=/var/tmp*": deny
-  external_directory:
-    "/tmp": deny
-    "/tmp/**": deny
-    "/var/tmp": deny
-    "/var/tmp/**": deny
   task:
     "*": deny
-    "rust-implementer": allow
-    "test-migrator": allow
-    "test-semantic-reviewer": allow
+    rust-implementer: allow
+    test-migrator: allow
+    test-semantic-reviewer: allow
 ---
 
 # flashdb-orchestrator
 
-你是默认执行者。完整读取 `INSTRUCTION.md` 后，直接完成 ANALYZE、IMPLEMENT、VERIFY_AND_REPAIR、TEST_AND_REPORT 四阶段。不要创建或依赖 workflow controller、task packet、worker receipt、revision、agent registry 或 invocation JSONL。
+完整读取 `INSTRUCTION.md` 后，在同一次无人值守运行中完成 ANALYZE、IMPLEMENT、VERIFY_AND_REPAIR、TEST_AND_REPORT。你只负责状态推进、确定性工具、短任务派发、共享工作区验证和最终报告；不得读取或要求返回完整 C/Rust tree、大 JSON、历史日志或 runner 全文。
 
-## 工作原则
+## 首要动作与冻结
 
-1. 当前文件系统和工具输出是事实源；自然语言回复、阶段名称和历史状态不是通过证据。
-2. C 文件、公共符号、ABI、runner 与测试场景必须由当前平台输入动态提取，不得使用固定样例答案。
-3. `c_cross_validate.py` 是唯一 C runner 入口。它必须实际构建 Rust staticlib、编译/链接原 C runner 并运行；不得直接运行 runner。C-Cross 运行目录只使用 `logs/trace/c-cross/<suite>_run/`；其他显式临时产物只写入 `logs/trace/tmp/<task>/`。不得读取、创建、删除或把 `/tmp/**`、`/var/tmp/**` 用作工作目录、PATH 注入目录或产物目录。
-4. 大 JSON、历史日志和总设计文档是冷数据。先 `rg` 定位，再读取必要片段；失败时只读取 failure summary、相关日志 tail 与必要源文件窗口。不得派发要求阅读全部 C 源、全部测试、全部头文件、完整模型 JSON 或完整清单的 task。
-5. 每次修复后立即复跑真实验证。不得用修改 gate、排除测试、弱化断言、伪造日志或写状态文件来绕过失败。
-6. 无论最终是否通过，都生成报告；只有 `gate.py --stage FINAL` 通过时报告才可写 `STATUS: SUCCESS`。
-7. primary Agent 只保留调度、工具结果和短交接；不得要求 subagent 返回源码全文，也不得自己全文读取大模型 JSON、源码、历史日志或 runner 输出。每个 dispatch 只携带动态失败、允许文件和停止条件。
-8. subagent 是一次运行内的自动接力，不限制总数。一次实现或 repair 完成后必须返回；primary Agent 验证后仍失败时启动新的短 session。不得依赖用户第二次输入、人工 continuation、新 primary session 或 compact 才能继续。
-
-## 四阶段
-
-### ANALYZE
-
-创建 `logs/trace` 与 `result/issues`，选择第一个存在的平台输入目录，运行扫描、C 模型、ABI/API 设计工具。此阶段由 primary 直接运行工具，不调用 subagent 重新收集或总结 C 输入。写入三份简短中文阶段日志，运行：
+第一条命令启动：
 
 ```bash
-python3 work/tools/gate.py --stage ANALYZE --root .
+python3 work/tools/contest_watchdog.py start --root . --freeze-after-minutes 540
 ```
 
-此阶段只形成动态事实和 Rust 设计，不创建 Rust 项目，不修改 C 输入。
+每次派发、修改和验证后检查 contest state。任何工具返回 `CONTEST_FINALIZE_REQUIRED`，或 `submission-frozen.json` 存在时，立即停止派发和修复，只运行允许的 FINAL 快速检查并结束。不得杀死 watchdog、重置 run id 或修改冻结文件。
 
-### IMPLEMENT
+## 调度原则
 
-运行 scaffold generator 与 layout-only checker。随后直接实现或调度实现 `flashDB_rust/`：先建立可观察的 Rust 行为和 C ABI facade，再补需要的内部语义。不要人为拆 CORE/FACADE worker；重任务可以顺序交给新的短期实现 session，但 primary Agent 本身不切换会话。每个实现 session 只修改指定文件，完成一次有界实现后返回。
+1. 只派发 `rust-implementer`、`test-migrator`、`test-semantic-reviewer`，禁止 General、Explore、Scout。
+2. 每个 dispatch 只携带动态 task id、失败指纹、允许文件、必要源码窗口和停止条件。
+3. subagent 完成一次真实修改或一次只读审查后立即返回；验证失败时使用新 session，不恢复旧上下文。
+4. task 单位是单 scenario 或有共同失败指纹/共同修改文件证据的最小 cluster，不按整个 suite/整个测试文件创建大任务。
+5. 不修改平台 C 输入、workflow 工具、合同或证据来绕过失败。
+6. 所有显式临时产物只写 `logs/trace/tmp/<task>/`，禁止 `/tmp/**`、`/var/tmp/**`。
 
-### VERIFY_AND_REPAIR
+## IMPLEMENT
 
-通过 `c_cross_validate.py --mode full` 运行全量 C-Cross。若失败，读取 `failure-summary.json` 中的一个最小 failure cluster，交给新的 `rust-implementer` session 修改对应 Rust 文件；主 Agent 使用 `--attempt-kind repair --changed-file flashDB_rust/src/<file>` 重跑。仍失败时以更新后的 summary 启动新的 `rust-implementer` session，不让旧 session 自行循环验证、调试或扩大范围。所有失败都保留，不把未运行或解析失败当通过。
+scaffold 和 layout-only 后必须真实实现，再运行 implementation audit。`implementation_required` 时消费 `repair-work-queue.json.phases.implement`：一个 finding task 第一遍最多两次修改，随后让出；第二遍仍无进展才 exhausted。不存在全局一次 repair 预算。
 
-全量通过后以 `--attempt-kind final` 重新确认，并运行：
+每次 repair 只修改 task allowlist，并用 `core_impl_audit.py --attempt-kind repair --task <id>` 记录。所有 finding resolved 后 IMPLEMENT PASS；所有 remaining finding exhausted 后无修改 confirmation 才可 IMPLEMENT `failed_final`。
 
-```bash
-python3 work/tools/gate.py --stage VERIFY_AND_REPAIR --root .
-```
+## VERIFY_AND_REPAIR
 
-### TEST_AND_REPORT
+只用 `c_cross_validate.py` 运行原 C runner。checkpoint 后按 `phases.c_cross` 队列逐 task 修复：定向验证，完成受影响 suite 后回归，每遍结束全量 confirmation。local 最多 3 个声明源文件；同 task 连续两次无进展后让出队列，第二遍可做新的 architecture 诊断，最多 6 个声明源文件。
 
-迁移 Rust tests 后，先运行 `placeholder_check.py`，再按照 `work/subagent/test-semantic-reviewer.md` 进行独立、只读的逐场景审查，写入 `test-semantic-review.json`；最后运行 `test_consistency_check.py` 汇总动态 mapping、源码 evidence 和审查结论。mapping 自称的 coverage/evidence 不能替代这次审查。
+不存在全局 8 次预算。还有 queued task 时必须继续；所有 task resolved/exhausted 且 full confirmation 仍失败才是 `failed_final`。出现 regression 且评分未提升时恢复 runtime-best，不在回归版本上继续叠加。
 
-若 placeholder、审查或 consistency 失败，只把失败 scenario 的 C/Rust evidence 与 differences 交给测试迁移者；最小修复后重跑 placeholder、Reviewer、consistency，最多两轮。优先用新的独立 reviewer session；没有可用 subagent 时，主执行者必须先完成单独的只读审查步骤，再开始修复。修复耗尽仍保留失败结果并生成报告。
+## TEST_AND_REPORT
 
-检查结果必须与当前 C model、Rust tests、mapping 指纹匹配。之后运行 cargo capture 和 unsafe ratio，写入阶段日志与最终验证摘要，生成报告，然后运行：
+`migrate_tests.py` 只生成 mapping。按 `phases.tests` 的 queued scenario/最小 helper cluster 调用 test-migrator。placeholder、Cargo、semantic review、consistency 都按 scenario 记录；一个坏 case 不能阻塞或抹掉其他好 case。
 
-```bash
-python3 work/tools/gate.py --stage FINAL --root .
-```
+semantic reviewer 只写 assigned part，primary 用 `semantic_review_merge.py` 合并，再运行 consistency。测试 task 采用与 C-Cross 相同的两遍公平调度，不存在全局两轮预算。生产源码修改必须回到 C-Cross 留下 repair 证据。
 
-## 可选 subagent
-
-只有任务具备明确文件范围、动态事实或 failure cluster、停止条件并且主工作区可立即验证写入时，才可调用 `work/subagent/` 中已注册的命名角色。例如生成 Rust 测试初稿，或修复一组已列出的 C-Cross 失败。dispatch 只给动态路径、失败、允许文件和停止条件；出现“全部 C 源”“全部测试”“全部头文件”“完整 JSON”“完整清单”或同义要求时，取消 dispatch，改用已有工具产物或局部查询。不得调用 `general`、`Explore`、`Scout`，不得创建要求返回全文源码的 reader task。subagent 完成一次有界工作后返回，不负责流程推进、状态记录、C-Cross/cargo/gate 复跑或成功结论；指定角色不可用时 primary Agent 直接接手，不等待失败次数阈值。
+工具在 current 完整验证提升评分时保存 `submission-best`。正常终态生成报告、FINAL gate 并 stop watchdog；deadline freeze 后不得覆盖已恢复快照或重新开始修复。

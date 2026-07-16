@@ -15,6 +15,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+import repair_work_queue
+import contest_guard
+import submission_snapshot
+
 
 DIMENSIONS = ("scenario", "api", "data", "configuration", "lifecycle", "ordering", "assertion")
 REVIEW_STATUSES = {"pass", "fail", "unresolved"}
@@ -231,7 +235,13 @@ def _review_issues(
     fingerprint: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     issues: list[dict[str, Any]] = []
-    summary: dict[str, Any] = {"status": "missing", "reviewer_mode": "missing", "reviewed_scenarios": 0, "total_c_scenarios": len(cases)}
+    summary: dict[str, Any] = {
+        "status": "missing",
+        "reviewer_mode": "missing",
+        "reviewed_scenarios": 0,
+        "total_c_scenarios": len(cases),
+        "case_statuses": {},
+    }
     if review is None:
         add_issue(issues, "missing_semantic_review", "<review>", "missing logs/trace/test-semantic-review.json")
         return issues, summary
@@ -289,6 +299,7 @@ def _review_issues(
         if status not in REVIEW_STATUSES:
             add_issue(issues, "invalid_semantic_review", scenario_id, "case status must be pass, fail, or unresolved")
             continue
+        summary["case_statuses"][scenario_id] = status
         dimensions = item.get("dimensions")
         if not isinstance(dimensions, dict) or any(dimensions.get(key) not in REVIEW_STATUSES for key in DIMENSIONS):
             add_issue(issues, "invalid_semantic_review", scenario_id, "case must report every semantic dimension")
@@ -380,15 +391,17 @@ def analyze_consistency(root: Path) -> dict[str, Any]:
     mapped_tests = {item.get("rust_test") for item in scenarios if isinstance(item.get("rust_test"), str)}
     rust_only = sorted(rust_test_functions(root, mapping) - mapped_tests)
     passed = 0
-    review_is_current_and_passed = review_summary.get("status") == "pass"
+    review_case_statuses = review_summary.get("case_statuses") if isinstance(review_summary.get("case_statuses"), dict) else {}
     rendered_scenarios: list[dict[str, Any]] = []
     for result in scenario_results:
         scenario_id = result["scenario_id"]
         case_issues = [item["code"] for item in issues if item.get("scenario_id") == scenario_id]
         if case_issues:
             status = "fail"
-        elif review_is_current_and_passed:
+        elif review_case_statuses.get(scenario_id) == "pass":
             status = "pass"
+        elif review_case_statuses.get(scenario_id) == "fail":
+            status = "fail"
         else:
             status = "unresolved"
         passed += status == "pass"
@@ -427,9 +440,44 @@ def main(argv: list[str] | None = None) -> int:
         except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
             print(f"TEST_CONSISTENCY_CHECK: FAIL\n- fingerprint: {exc}")
             return 1
+    try:
+        contest_guard.guard_mutation_allowed(root)
+    except RuntimeError as exc:
+        print(str(exc))
+        return contest_guard.FINALIZE_EXIT_CODE
     report = analyze_consistency(root)
+    scenario_rows = report.get("scenarios") if isinstance(report.get("scenarios"), list) else []
+    task_ids = {
+        str(row.get("scenario_id"))
+        for row in scenario_rows
+        if isinstance(row, dict) and isinstance(row.get("scenario_id"), str)
+    }
+    passed_ids = {
+        str(row.get("scenario_id"))
+        for row in scenario_rows
+        if isinstance(row, dict) and isinstance(row.get("scenario_id"), str) and row.get("status") == "pass"
+    }
+    confirmation_id = "consistency-" + hashlib.sha256(
+        json.dumps(report.get("input_fingerprint", {}), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    queue_phase = repair_work_queue.sync_tasks(
+        root.resolve() / "logs" / "trace" / "repair-work-queue.json",
+        "tests",
+        task_ids,
+        passed_ids=passed_ids,
+        full_confirmation_id=confirmation_id,
+    )
+    report["work_queue"] = repair_work_queue.phase_summary(queue_phase)
     if args.out:
         write_json(Path(args.out), report)
+        if report.get("total_scenarios"):
+            try:
+                snapshot = submission_snapshot.capture(root.resolve(), kind="validated")
+                report["submission_snapshot"] = snapshot
+                write_json(Path(args.out), report)
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                report["submission_snapshot_error"] = str(exc)
+                write_json(Path(args.out), report)
     print("TEST_CONSISTENCY_CHECK: " + report["status"].upper())
     print(f"issues={report['issue_count']}")
     for issue in report["issues"]:

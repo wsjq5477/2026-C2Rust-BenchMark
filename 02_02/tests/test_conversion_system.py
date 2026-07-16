@@ -4,6 +4,7 @@ import json
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -24,7 +25,11 @@ def load_tool(name: str):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(TOOLS))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     return module
 
 
@@ -36,6 +41,9 @@ AUDIT = load_tool("core_impl_audit.py")
 SCAFFOLD = load_tool("generate_rust_scaffold.py")
 CROSS = load_tool("c_cross_validate.py")
 REPORT = load_tool("report_writer.py")
+QUEUE = load_tool("repair_work_queue.py")
+SNAPSHOT = load_tool("submission_snapshot.py")
+WATCHDOG = load_tool("contest_watchdog.py")
 
 
 def implementation_fixture(root: Path, *, implemented: bool = False) -> dict:
@@ -278,6 +286,14 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             core.write_text("pub fn value() -> i32 { 7 }\n", encoding="utf-8")
             _, repair = persist_implementation_audit(root, kind="repair")
             self.assertEqual("implementation_required", repair["status"])
+            self.assertEqual("repair_scaffold_residue", repair["next_action"])
+
+            # The remaining FFI scaffold task gets its full per-task 2+2
+            # scheduling quantum; unrelated implementation findings are not a
+            # project-wide one-repair terminal budget.
+            for value in (8, 9, 10):
+                core.write_text(f"pub fn value() -> i32 {{ {value} }}\n", encoding="utf-8")
+                _, repair = persist_implementation_audit(root, kind="repair")
             self.assertEqual("run_fresh_implementation_confirmation", repair["next_action"])
 
             _, confirmation = persist_implementation_audit(root, kind="confirmation")
@@ -406,21 +422,46 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertIn(stage, instruction)
             self.assertIn(stage, orchestrator)
         self.assertIn("c_cross_validate.py", instruction)
+        self.assertIn("contest_watchdog.py start", instruction)
         self.assertNotIn("workflowctl", instruction)
         self.assertNotIn("必须提供 task packet", orchestrator)
-        self.assertIn("subagent 调度", orchestrator)
-        self.assertIn("`test-migrator` 是必需步骤", instruction)
-        self.assertIn("同一次无人值守运行内的自动上下文隔离手段", instruction)
-        self.assertIn("不限制总数", instruction)
-        self.assertIn("启动新的短 session", orchestrator)
+        self.assertIn("## 调度原则", orchestrator)
+        self.assertIn("queued scenario", instruction)
+        self.assertIn("完成一次真实修改后立即返回", instruction)
+        self.assertIn("验证失败时使用新 session", orchestrator)
+
+    def test_global_repair_budget_constants_are_removed(self):
+        sources = "\n".join(
+            (TOOLS / name).read_text(encoding="utf-8")
+            for name in (
+                "core_impl_audit.py",
+                "c_cross_validate.py",
+                "cargo_capture.py",
+                "gate.py",
+                "report_writer.py",
+            )
+        )
+        for forbidden in (
+            "MAX_IMPLEMENTATION_REPAIR_ATTEMPTS",
+            "MAX_REPAIR_ATTEMPTS",
+            "MAX_TEST_REPAIR_ATTEMPTS",
+            "EXPECTED_C_CROSS_REPAIR_ATTEMPTS",
+            "EXPECTED_TEST_REPAIR_ATTEMPTS",
+            "max_repair_attempts",
+            "remaining_repair_attempts",
+        ):
+            self.assertNotIn(forbidden, sources)
+        instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
+        self.assertIn("不存在全局 8 次 repair 预算", instruction)
+        self.assertIn("不存在全局两轮 repair 预算", instruction)
 
     def test_implement_contract_orders_scaffold_audit_gate_before_full_c_cross(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
         orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
-        section = instruction.split("### 2. IMPLEMENT", 1)[1].split("### 3. VERIFY_AND_REPAIR", 1)[0]
+        section = instruction.split("## 2. IMPLEMENT", 1)[1].split("## 3. VERIFY_AND_REPAIR", 1)[0]
         generate = section.index("generate_rust_scaffold.py")
         layout = section.index("--scaffold-layout-only")
-        implement = section.index("初始实现完成后")
+        implement = section.index("初始实现后")
         audit = section.index("core_impl_audit.py")
         gate = section.index("gate.py --stage IMPLEMENT")
         full_cross = instruction.index("--mode full --attempt-kind checkpoint")
@@ -429,21 +470,20 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         self.assertLess(implement, audit)
         self.assertLess(audit, gate)
         self.assertLess(instruction.index("gate.py --stage IMPLEMENT"), full_cross)
-        self.assertIn("是否调用过 subagent 不是通过证据", section)
         self.assertIn("implementation_required", section)
-        self.assertIn("failed_stage=IMPLEMENT", section)
-        self.assertIn("不产生 C-Cross failure 或消耗 repair budget", orchestrator)
-        self.assertNotIn("必须调用 `rust-implementer`", section)
+        self.assertIn("IMPLEMENT `failed_final`", section)
+        self.assertIn("不存在全局一次 repair 预算", orchestrator)
+        self.assertNotIn("全局最多 1 次", section)
 
     def test_agents_cannot_bypass_project_owned_temp_or_subagent_contracts(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
         orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
         self.assertIn("logs/trace/tmp/<task>/", instruction)
-        self.assertIn("不得访问或使用 `/tmp/**`、`/var/tmp/**`", instruction)
+        self.assertIn("禁止使用 `/tmp/**`、`/var/tmp/**`", instruction)
         self.assertIn('"*": deny', orchestrator)
         self.assertNotIn('"general": allow', orchestrator)
-        self.assertIn("不得调用 `general`", orchestrator)
-        self.assertIn("完整模型 JSON", orchestrator)
+        self.assertIn("禁止 General、Explore、Scout", orchestrator)
+        self.assertIn("大 JSON", orchestrator)
         for name in (
             "rust-implementer.md",
             "test-migrator.md",
@@ -467,13 +507,13 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
         implementer = (PROJECT / "work" / "subagent" / "rust-implementer.md").read_text(encoding="utf-8")
         design = (PROJECT.parent / "design_doc" / "Q11-OpenCode上下文爆炸分析与优化方案.md").read_text(encoding="utf-8")
-        self.assertIn("不得要求或接收 C/Rust 源码全文", instruction)
-        self.assertIn("一个 failure cluster", instruction)
-        self.assertIn("新的 `rust-implementer` session", instruction)
-        self.assertIn("不得依赖用户第二次输入", orchestrator)
-        self.assertIn("不得创建要求返回全文源码的 reader task", orchestrator)
-        self.assertIn("完成一次最小实现或修复后立即返回", implementer)
-        self.assertIn("不得自行进入下一轮验证、调试或扩大到其他 failure cluster", implementer)
+        self.assertIn("不自行循环验证或返回源码全文", instruction)
+        self.assertIn("最小 cluster", instruction)
+        self.assertIn("新的 `rust-implementer`", instruction)
+        self.assertIn("不恢复旧上下文", orchestrator)
+        self.assertIn("不得读取或要求返回完整 C/Rust tree", orchestrator)
+        self.assertIn("完成一次最小修改后返回", implementer)
+        self.assertIn("不得自行进入下一轮、扩大 task", implementer)
         self.assertIn("不依赖 compact、插件、人工 continuation 或新的 primary session", design)
         self.assertNotIn("FULL content", instruction + orchestrator)
         self.assertNotIn("do not summarize", instruction + orchestrator)
@@ -505,8 +545,9 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
 
     def test_semantic_reviewer_is_self_contained(self):
         reviewer = (PROJECT / "work" / "subagent" / "test-semantic-reviewer.md").read_text(encoding="utf-8")
-        self.assertIn("对每个动态 C scenario，依次完成以下操作", reviewer)
+        self.assertIn("只对主执行者分配的一个动态 scenario", reviewer)
         self.assertIn("关键 API、输入数据、初始化/控制配置、生命周期边界、操作顺序", reviewer)
+        self.assertIn("semantic_review_merge.py", reviewer)
         self.assertNotIn("评分平台的方案 B", reviewer)
 
     def test_extension_scorer_case_is_mapped_not_reported_as_unmapped(self):
@@ -554,8 +595,8 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertEqual("repair_required", summary["status"])
             self.assertEqual(summary, saved)
             self.assertFalse(saved["terminal"])
-            self.assertEqual("repair_next_failure_cluster", saved["next_action"])
-            self.assertEqual(8, saved["remaining_repair_attempts"])
+            self.assertEqual("repair_next_queued_task", saved["next_action"])
+            self.assertEqual(0, saved["repair_attempts_recorded"])
             self.assertEqual("dynamic_case", saved["failures"][0]["scenario_id"])
 
     def test_c_cross_convergence_distinguishes_required_ready_and_terminal(self):
@@ -573,11 +614,15 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             "success",
             cross.convergence_status({**passing, "attempt_kind": "final"}, [])["status"],
         )
-        repairs = [{"kind": "repair"} for _ in range(cross.MAX_REPAIR_ATTEMPTS)]
-        exhausted = cross.convergence_status(failed, repairs)
+        exhausted_phase = {
+            "tasks": {"dynamic": {"task_id": "dynamic", "state": "exhausted"}},
+            "dynamic_task_ids": ["dynamic"],
+            "sweep": 2,
+        }
+        exhausted = cross.convergence_status(failed, [], exhausted_phase)
         self.assertEqual("failed_final", exhausted["status"])
         self.assertTrue(exhausted["terminal"])
-        selected = cross.convergence_status({**failed, "scope": "selected"}, repairs)
+        selected = cross.convergence_status({**failed, "scope": "selected"}, [], exhausted_phase)
         self.assertEqual("repair_required", selected["status"])
         self.assertEqual("run_full_confirmation", selected["next_action"])
 
@@ -676,7 +721,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertTrue(attempt["regression"])
             self.assertTrue(attempt["restore_best_available"])
 
-    def test_cargo_capture_counts_only_real_test_repairs_and_enforces_budget(self):
+    def test_cargo_capture_counts_real_test_repairs_without_global_budget(self):
         sys.path.insert(0, str(TOOLS))
         try:
             cargo = load_tool("cargo_capture.py")
@@ -706,19 +751,19 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             source.write_text("pub fn value() -> u8 { 1 }\n", encoding="utf-8")
             _, repair_one = cargo.prepare_test_attempt(project, out)
             self.assertEqual("repair", repair_one["kind"])
-            self.assertEqual(1, repair_one["repair_attempts_used"])
+            self.assertEqual(1, repair_one["repair_attempts_recorded"])
             with attempts_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(repair_one) + "\n")
 
             source.write_text("pub fn value() -> u8 { 2 }\n", encoding="utf-8")
             _, repair_two = cargo.prepare_test_attempt(project, out)
-            self.assertEqual(2, repair_two["repair_attempts_used"])
+            self.assertEqual(2, repair_two["repair_attempts_recorded"])
             with attempts_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(repair_two) + "\n")
 
             source.write_text("pub fn value() -> u8 { 3 }\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "budget is exhausted"):
-                cargo.prepare_test_attempt(project, out)
+            _, repair_three = cargo.prepare_test_attempt(project, out)
+            self.assertEqual(3, repair_three["repair_attempts_recorded"])
 
     def test_cargo_capture_rejects_zero_or_unexecuted_mapped_tests(self):
         sys.path.insert(0, str(TOOLS))
@@ -821,8 +866,8 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
                 (out / "test-placeholder-check.json").write_text(json.dumps(missing), encoding="utf-8")
                 convergence = cargo.record_placeholder_attempt(project, out, missing)
                 self.assertEqual("repair_required", convergence["status"])
-                with self.assertRaisesRegex(ValueError, "return to test-migrator"):
-                    cargo.validate_placeholder_precondition(project, out)
+                precondition = cargo.validate_placeholder_precondition(project, out)
+                self.assertEqual(["dynamic-case"], precondition["failed_scenario_ids"])
 
                 (tests / "dynamic.rs").write_text(
                     "#[test]\nfn rust_dynamic() { let actual = 1; assert_eq!(actual, 1); }\n",
@@ -834,7 +879,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
                 self.assertEqual("ready_for_cargo", convergence["status"])
                 precondition = cargo.validate_placeholder_precondition(project, out)
                 self.assertEqual("pass", precondition["status"])
-                self.assertEqual(1, precondition["repair_attempts_used"])
+                self.assertEqual(["dynamic-case"], precondition["ready_scenario_ids"])
         finally:
             sys.path.pop(0)
 
@@ -920,10 +965,17 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
                     "convergence": {
                         "status": "repair_required",
                         "terminal": False,
-                        "next_action": "repair_next_failure_cluster",
-                        "repair_attempts_used": 0,
-                        "max_repair_attempts": 8,
-                        "remaining_repair_attempts": 8,
+                        "next_action": "repair_next_queued_task",
+                        "repair_attempts_recorded": 0,
+                        "work_queue": {
+                            "total": 1,
+                            "counts": {state: (1 if state == "queued" else 0) for state in sorted(QUEUE.VALID_STATES)},
+                            "all_pass": False,
+                            "queue_exhausted": False,
+                            "pending_task_ids": ["dynamic-case"],
+                            "sweep": 1,
+                            "last_full_confirmation_id": None,
+                        },
                     },
                 }), encoding="utf-8"
             )
@@ -931,14 +983,26 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
                 json.dumps({"attempt_id": "attempt-1", "kind": "checkpoint"}) + "\n",
                 encoding="utf-8",
             )
+            queue_summary = {
+                "total": 1,
+                "counts": {state: (1 if state == "queued" else 0) for state in sorted(QUEUE.VALID_STATES)},
+                "all_pass": False,
+                "queue_exhausted": False,
+                "pending_task_ids": ["dynamic-case"],
+                "sweep": 1,
+                "last_full_confirmation_id": None,
+            }
+            (root / "logs" / "trace" / "repair-work-queue.json").write_text(json.dumps({
+                "schema_version": 1,
+                "phases": {"c_cross": {"tasks": {}, "summary": queue_summary}},
+            }), encoding="utf-8")
             (cross_dir / "failure-summary.json").write_text(json.dumps({
                 "status": "repair_required",
                 "terminal": False,
-                "next_action": "repair_next_failure_cluster",
+                "next_action": "repair_next_queued_task",
                 "execution_id": "attempt-1",
-                "repair_attempts_used": 0,
-                "max_repair_attempts": 8,
-                "remaining_repair_attempts": 8,
+                "repair_attempts_recorded": 0,
+                "work_queue": queue_summary,
             }), encoding="utf-8")
             summary, errors = GATE.check_convergence(root)
             self.assertEqual("repair_required", summary["status"])
@@ -974,12 +1038,12 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
     def test_test_and_report_contract_orders_real_repair_evidence(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
         orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
-        section = instruction.split("### 4. TEST_AND_REPORT", 1)[1]
+        section = instruction.split("## 4. TEST_AND_REPORT", 1)[1]
         migrate = section.index("migrate_tests.py")
-        test_migrator = section.index("必须立即调用命名角色 `test-migrator`")
+        test_migrator = section.index("queued scenario")
         placeholder = section.index("placeholder_check.py")
         cargo = section.index("cargo_capture.py")
-        reviewer = section.index("test-semantic-reviewer.md")
+        reviewer = section.index("semantic_review_merge.py")
         consistency = section.index("test_consistency_check.py")
         stage_gate = section.index("gate.py --stage TEST_AND_REPORT")
         unsafe = section.index("unsafe_ratio.py")
@@ -992,10 +1056,10 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         self.assertLess(consistency, stage_gate)
         self.assertLess(stage_gate, unsafe)
         self.assertLess(unsafe, report)
-        self.assertIn("全部失败", section)
-        self.assertIn("不能自动证明测试预言错误", section)
-        self.assertIn("真实修改才消耗一轮", section)
-        self.assertIn("必须按动态 `rust_file` 分组调用新的 `test-migrator` session", orchestrator)
+        self.assertIn("一个 reviewer case 失败不能抹掉其他 current pass", section)
+        self.assertIn("不存在全局两轮 repair 预算", section)
+        self.assertIn("测试或经证据授权的生产源码发生修改", section)
+        self.assertIn("queued scenario/最小 helper cluster", orchestrator)
         self.assertNotIn("cargo_capture.py --project flashDB_rust --out logs/trace || true", section)
 
     def test_placeholder_uses_source_evidence_not_mapping_status(self):
@@ -1072,6 +1136,141 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertEqual("rust_impl_suspect", record["classification"])
             self.assertTrue(record["allow_src_edit"])
             self.assertEqual(["flashDB_rust/src/storage.rs"], record["allowed_edit_scope"])
+
+    def test_per_scenario_review_failure_does_not_erase_other_passes(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            trace = root / "logs" / "trace"
+            c_source = root / "c_input" / "tests" / "fixture.c"
+            rust_test = root / "flashDB_rust" / "tests" / "fixture.rs"
+            c_source.parent.mkdir(parents=True)
+            rust_test.parent.mkdir(parents=True)
+            trace.mkdir(parents=True)
+            c_source.write_text(
+                "void test_a(void) {\n  assert(1);\n}\nvoid test_b(void) {\n  assert(1);\n}\n",
+                encoding="utf-8",
+            )
+            rust_test.write_text(
+                "#[test]\nfn rust_a() { assert_eq!(1, 1); }\n#[test]\nfn rust_b() { assert_eq!(1, 1); }\n",
+                encoding="utf-8",
+            )
+            (trace / "input_manifest.json").write_text(json.dumps({"source_root": str(root / "c_input")}), encoding="utf-8")
+            cases = [
+                {"scenario_id": "case-a", "case_id": "1", "source_file": "tests/fixture.c", "required_c_tests": ["test_a"]},
+                {"scenario_id": "case-b", "case_id": "2", "source_file": "tests/fixture.c", "required_c_tests": ["test_b"]},
+            ]
+            (trace / "c_test_model.json").write_text(json.dumps({"scorer_standard_cases": cases}), encoding="utf-8")
+            (trace / "rust_api_design.json").write_text(json.dumps({"crate_name": "fixture", "modules": []}), encoding="utf-8")
+            mapping = {
+                "total_scenarios": 2,
+                "scenarios": [
+                    {"id": "case-a", "source_file": "tests/fixture.c", "required_c_tests": ["test_a"], "rust_file": "flashDB_rust/tests/fixture.rs", "rust_test": "rust_a"},
+                    {"id": "case-b", "source_file": "tests/fixture.c", "required_c_tests": ["test_b"], "rust_file": "flashDB_rust/tests/fixture.rs", "rust_test": "rust_b"},
+                ],
+            }
+            (trace / "rust_test_mapping.json").write_text(json.dumps(mapping), encoding="utf-8")
+            fingerprint = CONSISTENCY.build_input_fingerprint(root)
+            all_pass = {name: "pass" for name in CONSISTENCY.DIMENSIONS}
+            assertion_fail = {**all_pass, "assertion": "fail"}
+            review = {
+                "schema_version": 1,
+                "status": "fail",
+                "reviewer_mode": "primary_readonly_fallback",
+                "input_fingerprint": fingerprint,
+                "total_c_scenarios": 2,
+                "reviewed_scenarios": 2,
+                "c_only": [],
+                "rust_only": [],
+                "logic_mismatch": [{"scenario_id": "case-b"}],
+                "cases": [
+                    {
+                        "scenario_id": "case-a", "c_function": "test_a", "rust_test": "rust_a", "status": "pass", "dimensions": all_pass,
+                        "c_evidence": [{"path": "c_input/tests/fixture.c", "function": "test_a", "line_start": 1, "line_end": 3}],
+                        "rust_evidence": [{"path": "flashDB_rust/tests/fixture.rs", "function": "rust_a", "line_start": 1, "line_end": 2}],
+                        "differences": [],
+                    },
+                    {
+                        "scenario_id": "case-b", "c_function": "test_b", "rust_test": "rust_b", "status": "fail", "dimensions": assertion_fail,
+                        "c_evidence": [{"path": "c_input/tests/fixture.c", "function": "test_b", "line_start": 4, "line_end": 6}],
+                        "rust_evidence": [{"path": "flashDB_rust/tests/fixture.rs", "function": "rust_b", "line_start": 3, "line_end": 4}],
+                        "differences": ["assertion semantics differ"],
+                    },
+                ],
+            }
+            (trace / "test-semantic-review.json").write_text(json.dumps(review), encoding="utf-8")
+            report = CONSISTENCY.analyze_consistency(root)
+            statuses = {row["scenario_id"]: row["status"] for row in report["scenarios"]}
+            self.assertEqual("pass", statuses["case-a"])
+            self.assertEqual("fail", statuses["case-b"])
+            self.assertEqual(1, report["passed_scenarios"])
+
+    def test_repair_queue_round_robin_exhausts_only_the_hard_task(self):
+        with project_temp_directory() as directory:
+            path = Path(directory) / "repair-work-queue.json"
+            QUEUE.sync_tasks(path, "tests", ["hard", "easy"])
+            QUEUE.record_attempt(path, "tests", ["hard"], attempt_id="hard-1")
+            phase = QUEUE.record_attempt(path, "tests", ["hard"], attempt_id="hard-2")
+            self.assertEqual("deferred_no_progress", phase["tasks"]["hard"]["state"])
+            phase = QUEUE.record_attempt(path, "tests", ["easy"], attempt_id="easy-1", passed_ids=["easy"])
+            self.assertEqual(2, phase["sweep"])
+            self.assertEqual("queued", phase["tasks"]["hard"]["state"])
+            QUEUE.record_attempt(path, "tests", ["hard"], attempt_id="hard-3")
+            QUEUE.record_attempt(path, "tests", ["hard"], attempt_id="hard-4")
+            phase = QUEUE.sync_tasks(path, "tests", ["hard", "easy"], passed_ids=["easy"], full_confirmation_id="confirm-1")
+            decision = QUEUE.convergence(phase, current_full_confirmation_id="confirm-1")
+            self.assertEqual("failed_final", decision["status"])
+            self.assertEqual("confirmed_pass", phase["tasks"]["easy"]["state"])
+            self.assertEqual("exhausted", phase["tasks"]["hard"]["state"])
+
+    def test_submission_snapshot_restores_best_without_git(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            project = root / "flashDB_rust"
+            trace = root / "logs" / "trace"
+            (project / "src").mkdir(parents=True)
+            (project / "tests").mkdir(parents=True)
+            trace.mkdir(parents=True)
+            (project / "Cargo.toml").write_text("[package]\nname='fixture'\nversion='0.1.0'\n", encoding="utf-8")
+            source = project / "src" / "lib.rs"
+            source.write_text("pub fn value() -> u8 { 1 }\n", encoding="utf-8")
+            (project / "tests" / "fixture.rs").write_text("#[test]\nfn fixture() { assert_eq!(1, 1); }\n", encoding="utf-8")
+            (trace / "cargo-results.json").write_text(json.dumps({"build_status": "pass"}), encoding="utf-8")
+            captured = SNAPSHOT.capture(root, kind="baseline")
+            source.write_text("broken\n", encoding="utf-8")
+            (project / "tests" / "extra.rs").write_text("remove me\n", encoding="utf-8")
+            restored = SNAPSHOT.restore_best(root, reason="contest_deadline")
+            self.assertEqual(captured["snapshot_id"], restored["snapshot_id"])
+            self.assertEqual("pub fn value() -> u8 { 1 }\n", source.read_text(encoding="utf-8"))
+            self.assertFalse((project / "tests" / "extra.rs").exists())
+            self.assertTrue(SNAPSHOT.verify_current(root)["matches"])
+
+    def test_short_watchdog_freezes_and_restores_best_submission(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            project = root / "flashDB_rust"
+            trace = root / "logs" / "trace"
+            (root / "result" / "issues").mkdir(parents=True)
+            (project / "src").mkdir(parents=True)
+            trace.mkdir(parents=True)
+            (project / "Cargo.toml").write_text("[package]\nname='fixture'\nversion='0.1.0'\n", encoding="utf-8")
+            source = project / "src" / "lib.rs"
+            source.write_text("pub fn value() -> u8 { 1 }\n", encoding="utf-8")
+            (trace / "cargo-results.json").write_text(json.dumps({"build_status": "pass"}), encoding="utf-8")
+            best = SNAPSHOT.capture(root, kind="baseline")
+            source.write_text("pub fn value() -> u8 { 0 }\n", encoding="utf-8")
+            WATCHDOG.start(root, freeze_after_seconds=0.2)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                state = WATCHDOG.contest_guard.contest_state(root)
+                if state["status"] == "submission_frozen":
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail("short watchdog did not freeze the submission")
+            self.assertEqual("pub fn value() -> u8 { 1 }\n", source.read_text(encoding="utf-8"))
+            frozen = json.loads((trace / "deadline-final.json").read_text(encoding="utf-8"))
+            self.assertEqual(best["snapshot_id"], frozen["snapshot_id"])
+            self.assertEqual([], GATE.check_final(root))
 
     def test_final_gate_rejects_stale_test_evidence(self):
         with project_temp_directory() as directory:

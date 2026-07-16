@@ -12,11 +12,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+import repair_work_queue
+import submission_snapshot
 import test_failure_triage
+import contest_guard
 
 
-MAX_TEST_REPAIR_ATTEMPTS = 2
-MAX_TEST_REPAIR_CHANGED_FILES = 4
 TEST_RESULT_PATTERN = re.compile(
     r"^test\s+(?P<name>\S.*?)\s+\.\.\.\s+(?P<status>ok|FAILED|ignored)\s*$",
     re.MULTILINE,
@@ -82,22 +83,13 @@ def prepare_test_attempt(project: Path, out: Path) -> tuple[list[dict[str, Any]]
     manifest = test_input_manifest(project, out)
     previous_manifest = attempts[-1].get("source_manifest") if attempts else None
     changed = _changed_files(previous_manifest, manifest) if isinstance(previous_manifest, dict) else []
-    repairs_used = sum(row.get("kind") == "repair" for row in attempts)
     kind = "checkpoint" if not attempts else "repair" if changed else "verification"
-    if kind == "repair" and repairs_used >= MAX_TEST_REPAIR_ATTEMPTS:
-        raise ValueError("test repair budget is exhausted; do not modify another version after failed_final")
-    if kind == "repair" and len(changed) > MAX_TEST_REPAIR_CHANGED_FILES:
-        raise ValueError(
-            f"one test repair may change at most {MAX_TEST_REPAIR_CHANGED_FILES} tracked files; observed: "
-            + ", ".join(changed)
-        )
     return attempts, {
         "attempt_id": f"test-{time.time_ns()}",
         "kind": kind,
         "changed_files": changed,
         "source_manifest": manifest,
-        "repair_attempts_used": repairs_used + (1 if kind == "repair" else 0),
-        "max_repair_attempts": MAX_TEST_REPAIR_ATTEMPTS,
+        "repair_attempts_recorded": sum(row.get("kind") == "repair" for row in attempts) + (1 if kind == "repair" else 0),
     }
 
 
@@ -116,23 +108,57 @@ def record_placeholder_attempt(
     attempt["phase"] = "placeholder"
     attempt["placeholder_status"] = placeholder_report.get("status")
     attempt["placeholder_input_fingerprint"] = placeholder_report.get("input_fingerprint")
-    repairs_used = int(attempt["repair_attempts_used"])
+    scenario_rows = placeholder_report.get("scenarios") if isinstance(placeholder_report.get("scenarios"), list) else []
+    task_ids = {
+        str(row.get("scenario_id"))
+        for row in scenario_rows
+        if isinstance(row, dict) and isinstance(row.get("scenario_id"), str)
+    }
+    passed_ids = {
+        str(row.get("scenario_id"))
+        for row in scenario_rows
+        if isinstance(row, dict) and isinstance(row.get("scenario_id"), str) and row.get("status") == "pass"
+    }
+    failed_ids = task_ids - passed_ids
+    queue_path = out / "repair-work-queue.json"
+    queue_phase = repair_work_queue.sync_tasks(
+        queue_path,
+        "tests",
+        task_ids,
+        passed_ids=passed_ids,
+        full_confirmation_id=attempt["attempt_id"],
+    )
+    if attempt["kind"] == "repair" and failed_ids:
+        repair_work_queue.record_attempt(
+            queue_path,
+            "tests",
+            failed_ids,
+            attempt_id=attempt["attempt_id"],
+            changed_files=attempt["changed_files"],
+            repair_kind="local",
+        )
+        queue_phase = repair_work_queue.sync_tasks(
+            queue_path,
+            "tests",
+            task_ids,
+            passed_ids=passed_ids,
+            full_confirmation_id=attempt["attempt_id"],
+        )
     if placeholder_report.get("status") == "pass":
         status, next_action = "ready_for_cargo", "run_cargo_capture"
-    elif repairs_used >= MAX_TEST_REPAIR_ATTEMPTS:
-        status, next_action = "failed_final", "capture_final_cargo_diagnostics"
+    elif repair_work_queue.phase_summary(queue_phase)["queue_exhausted"]:
+        status, next_action = "placeholder_exhausted", "run_cargo_capture_for_final_diagnostics"
     else:
-        status, next_action = "repair_required", "return_to_test_migrator"
+        status, next_action = "repair_required", "repair_next_queued_test"
     attempt["stage_status"] = status
     _append_attempt(out / "test-repair-attempts.jsonl", attempt)
     convergence = {
         "status": status,
-        "terminal": status == "failed_final",
+        "terminal": False,
         "next_action": next_action,
         "attempt_id": attempt["attempt_id"],
-        "repair_attempts_used": repairs_used,
-        "max_repair_attempts": MAX_TEST_REPAIR_ATTEMPTS,
-        "remaining_repair_attempts": max(0, MAX_TEST_REPAIR_ATTEMPTS - repairs_used),
+        "repair_attempts_recorded": attempt["repair_attempts_recorded"],
+        "work_queue": repair_work_queue.phase_summary(queue_phase),
         "source_manifest": attempt["source_manifest"],
         "placeholder_status": placeholder_report.get("status"),
         "placeholder_input_fingerprint": placeholder_report.get("input_fingerprint"),
@@ -163,15 +189,19 @@ def validate_placeholder_precondition(project: Path, out: Path) -> dict[str, Any
     if not isinstance(persisted, dict) or any(persisted.get(key) != expected.get(key) for key in keys):
         raise ValueError("test-placeholder-check.json is stale or inconsistent with current tests")
     attempts = _read_attempts(out / "test-repair-attempts.jsonl")
-    repairs_used = sum(row.get("kind") == "repair" for row in attempts)
-    if expected.get("status") != "pass" and repairs_used < MAX_TEST_REPAIR_ATTEMPTS:
-        raise ValueError(
-            "placeholder convergence is repair_required; return to test-migrator before Cargo"
-        )
+    scenario_rows = expected.get("scenarios") if isinstance(expected.get("scenarios"), list) else []
     return {
         "status": expected.get("status"),
-        "repair_attempts_used": repairs_used,
-        "failed_final": expected.get("status") != "pass" and repairs_used >= MAX_TEST_REPAIR_ATTEMPTS,
+        "ready_scenario_ids": sorted(
+            str(row.get("scenario_id"))
+            for row in scenario_rows
+            if isinstance(row, dict) and row.get("status") == "pass"
+        ),
+        "failed_scenario_ids": sorted(
+            str(row.get("scenario_id"))
+            for row in scenario_rows
+            if isinstance(row, dict) and row.get("status") != "pass"
+        ),
     }
 
 
@@ -234,6 +264,18 @@ def analyze_test_execution(project: Path, out: Path, output: str, returncode: in
     missing_expected = sorted({name for name in expected_tests if not matching_statuses(name)})
     ignored_expected = sorted({name for name in expected_tests if "ignored" in matching_statuses(name)})
     failed_expected = sorted({name for name in expected_tests if "FAILED" in matching_statuses(name)})
+    scenario_results: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row.get("id"), str) or not isinstance(row.get("rust_test"), str):
+            continue
+        name = row["rust_test"]
+        statuses = matching_statuses(name)
+        scenario_results.append({
+            "scenario_id": row["id"],
+            "rust_test": name,
+            "status": "pass" if statuses and set(statuses) == {"ok"} else "fail",
+            "execution_statuses": statuses,
+        })
     reasons: list[str] = []
     if not rows:
         reasons.append("rust_test_mapping.json contains no dynamic scenarios")
@@ -268,6 +310,7 @@ def analyze_test_execution(project: Path, out: Path, output: str, returncode: in
         "invalid_mappings": invalid_mappings,
         "missing_test_files": sorted(set(missing_test_files)),
         "test_files": test_files,
+        "scenarios": scenario_results,
     }
 
 
@@ -317,18 +360,45 @@ def capture(project: Path, out: Path) -> dict[str, Any]:
     attempt["test_execution_status"] = results["test_execution"]["status"]
     attempt["cargo_test_log_sha256"] = results["test_execution"]["log_sha256"]
     attempt["result"] = "pass" if results["build_status"] == "pass" and results["test_status"] == "pass" else "repair_required"
+    cargo_scenarios = results["test_execution"].get("scenarios", [])
+    task_ids = {
+        str(row.get("scenario_id"))
+        for row in cargo_scenarios
+        if isinstance(row, dict) and isinstance(row.get("scenario_id"), str)
+    }
+    passed_ids = {
+        str(row.get("scenario_id"))
+        for row in cargo_scenarios
+        if isinstance(row, dict) and isinstance(row.get("scenario_id"), str) and row.get("status") == "pass"
+    }
+    queue_phase = repair_work_queue.sync_tasks(
+        out / "repair-work-queue.json",
+        "tests",
+        task_ids,
+        passed_ids=passed_ids,
+        full_confirmation_id=attempt["attempt_id"],
+    )
+    attempt["work_queue"] = repair_work_queue.phase_summary(queue_phase)
     _append_attempt(out / "test-repair-attempts.jsonl", attempt)
     results["repair_convergence"] = {
         "attempt_id": attempt["attempt_id"],
         "kind": attempt["kind"],
-        "repair_attempts_used": attempt["repair_attempts_used"],
-        "max_repair_attempts": attempt["max_repair_attempts"],
-        "remaining_repair_attempts": max(0, MAX_TEST_REPAIR_ATTEMPTS - attempt["repair_attempts_used"]),
+        "repair_attempts_recorded": attempt["repair_attempts_recorded"],
+        "work_queue": attempt["work_queue"],
         "source_manifest": attempt["source_manifest"],
         "test_execution_status": attempt["test_execution_status"],
         "cargo_test_log_sha256": attempt["cargo_test_log_sha256"],
     }
     (out / "cargo-results.json").write_text(json.dumps(results, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if results["build_status"] == "pass":
+        try:
+            results["submission_snapshot"] = submission_snapshot.capture(
+                project.resolve().parent,
+                kind="baseline",
+            )
+            (out / "cargo-results.json").write_text(json.dumps(results, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            results["submission_snapshot_error"] = str(exc)
     return results
 
 
@@ -339,7 +409,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        contest_guard.guard_mutation_allowed(Path(args.project).resolve().parent)
         results = capture(Path(args.project), Path(args.out))
+    except RuntimeError as exc:
+        print(str(exc))
+        return contest_guard.FINALIZE_EXIT_CODE
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"BUILD_TEST_REPAIR: REFUSED: {exc}")
         return 2

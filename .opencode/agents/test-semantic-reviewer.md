@@ -24,7 +24,7 @@ permission:
 
 不得访问或使用 `/tmp/**`、`/var/tmp/**`；本任务不需要临时产物，唯一允许写入的产物见下方“写入边界”。
 
-对每个动态 C scenario，依次完成以下操作：
+只对主执行者分配的一个动态 scenario 或最小共享-helper cluster，依次完成以下操作：
 
 1. 定位并阅读对应 C 测试函数，提取它要验证的行为、关键 API、输入数据、初始化/控制配置、生命周期边界、操作顺序和决定通过/失败的断言；
 2. 只沿该测试直接调用且会影响上述语义的 helper 展开阅读，记录其实际效果；
@@ -36,9 +36,9 @@ permission:
 
 ## 写入边界
 
-只允许写入：
+只允许写入主执行者指定的项目拥有路径：
 
-- `logs/trace/test-semantic-review.json`
+- `logs/trace/test-semantic-review-parts/<task-id>.json`
 
 允许读取：
 
@@ -67,8 +67,8 @@ permission:
 python3 work/tools/test_consistency_check.py --root . --print-input-fingerprint
 ```
 
-4. 对每个 scenario 使用 `rg` 定位 C test、必要 helper 和 Rust test，再读取函数窗口。不要默认全文读取大 JSON、全部 C 源码或历史报告；审查只负责当前分配范围，不在同一 session 中转入修复、编译或 runner 排障。
-5. 审查所有动态 scenario；不能仅审查高风险或失败过的 case。
+4. 对 assigned scenario 使用 `rg` 定位 C test、必要 helper 和 Rust test，再读取函数窗口。不要全文读取大 JSON、全部 C 源码或历史报告；不在同一 session 中转入修复、编译或 runner 排障。
+5. 不得自行扩展到未分配 scenario。primary 负责用 `semantic_review_merge.py` 合并所有 part，并在每遍结束时检查全动态覆盖。
 
 ## 审查规则
 
@@ -88,7 +88,7 @@ python3 work/tools/test_consistency_check.py --root . --print-input-fingerprint
 
 ## 输出合同
 
-写入 `logs/trace/test-semantic-review.json`：
+写入分配的 `logs/trace/test-semantic-review-parts/<task-id>.json`；schema 与完整 review 相同，但 `cases` 只包含 assigned scenario，`reviewed_scenarios` 是本 part 的数量，`total_c_scenarios` 仍是当前动态总数：
 
 ```json
 {
@@ -132,8 +132,8 @@ python3 work/tools/test_consistency_check.py --root . --print-input-fingerprint
 
 完成前确认：
 
-1. `reviewed_scenarios == total_c_scenarios`，且数量来自当前 C 模型；
-2. `cases` 覆盖每个动态 scenario 一次；
+1. `reviewed_scenarios == assigned scenario 数量`，`total_c_scenarios` 来自当前 C 模型；
+2. `cases` 恰好覆盖分配场景一次；
 3. fingerprint 与本轮输入一致；
 4. 所有 non-pass case 具有 C/Rust 证据及具体 differences；
 5. 只写入允许的审查 JSON。

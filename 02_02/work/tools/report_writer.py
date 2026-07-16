@@ -13,10 +13,6 @@ from typing import Any
 from collections import Counter
 
 
-EXPECTED_C_CROSS_REPAIR_ATTEMPTS = 8
-EXPECTED_TEST_REPAIR_ATTEMPTS = 2
-
-
 def load_json(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -78,7 +74,6 @@ def test_repair_evidence(
     latest = attempts[-1] if attempts else {}
     convergence = cargo.get("repair_convergence") if isinstance(cargo.get("repair_convergence"), dict) else {}
     repairs_used = sum(row.get("kind") == "repair" for row in attempts)
-    maximum = convergence.get("max_repair_attempts")
     current_manifest = current_test_input_manifest(root)
     cargo_test_log = root / "logs" / "trace" / "cargo-test.log"
     current_log_sha256 = _sha256(cargo_test_log) if cargo_test_log.is_file() else None
@@ -89,10 +84,8 @@ def test_repair_evidence(
         and latest.get("attempt_id") == convergence.get("attempt_id")
         and latest.get("source_manifest") == current_manifest
         and convergence.get("source_manifest") == current_manifest
-        and latest.get("repair_attempts_used") == repairs_used
-        and convergence.get("repair_attempts_used") == repairs_used
-        and maximum == EXPECTED_TEST_REPAIR_ATTEMPTS
-        and latest.get("max_repair_attempts") == maximum
+        and latest.get("repair_attempts_recorded") == repairs_used
+        and convergence.get("repair_attempts_recorded") == repairs_used
         and latest.get("build_status") == cargo.get("build_status")
         and latest.get("test_status") == cargo.get("test_status")
         and latest.get("test_execution_status") == test_execution.get("status")
@@ -102,11 +95,15 @@ def test_repair_evidence(
         and test_execution.get("log_sha256") == current_log_sha256
         and test_execution_current
     )
+    queue = load_json(root / "logs" / "trace" / "repair-work-queue.json")
+    phases = queue.get("phases") if isinstance(queue.get("phases"), dict) else {}
+    test_phase = phases.get("tests") if isinstance(phases.get("tests"), dict) else {}
+    queue_summary = test_phase.get("summary") if isinstance(test_phase.get("summary"), dict) else {}
     return {
         "valid": valid,
-        "repair_attempts_used": repairs_used,
-        "max_repair_attempts": maximum,
-        "exhausted": bool(valid and isinstance(maximum, int) and repairs_used >= maximum),
+        "repair_attempts_recorded": repairs_used,
+        "work_queue": queue_summary,
+        "exhausted": bool(valid and queue_summary.get("queue_exhausted") is True),
         "test_execution_current": test_execution_current,
     }
 
@@ -177,7 +174,7 @@ failed_stage: `IMPLEMENT`
 
 - implementation_status: `failed_final`
 - implementation_attempt: `{evidence.get('attempt_id', 'unknown')}`
-- implementation_repair_budget: `{evidence.get('repair_attempts_used', 'unknown')}/{evidence.get('max_repair_attempts', 'unknown')}`
+- implementation_repairs_recorded: `{evidence.get('repair_attempts_recorded', 'unknown')}`
 - implementation_audit_fingerprint: `{audit.get('input_fingerprint', 'unknown')}`
 
 ## Unexecuted Stages
@@ -336,15 +333,11 @@ def failed_c_cross_final_verified(
 ) -> bool:
     scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else None
     latest_attempt = attempts[-1] if attempts else {}
-    repairs_used = sum(row.get("kind") == "repair" for row in attempts)
-    maximum = convergence.get("max_repair_attempts")
     return (
         convergence.get("status") == "failed_final"
         and convergence.get("terminal") is True
-        and maximum == EXPECTED_C_CROSS_REPAIR_ATTEMPTS
-        and repairs_used >= maximum
-        and convergence.get("repair_attempts_used") == repairs_used
-        and convergence.get("remaining_repair_attempts") == 0
+        and isinstance(convergence.get("work_queue"), dict)
+        and convergence["work_queue"].get("queue_exhausted") is True
         and convergence.get("execution_id") == matrix.get("execution_id")
         and matrix.get("mode") == "full"
         and matrix.get("scope") == "all"
@@ -362,14 +355,9 @@ def successful_convergence_verified(
     attempts: list[dict[str, Any]],
     convergence: dict[str, Any],
 ) -> bool:
-    repairs_used = sum(row.get("kind") == "repair" for row in attempts)
-    maximum = convergence.get("max_repair_attempts")
     return (
         convergence.get("status") == "success"
         and convergence.get("terminal") is True
-        and maximum == EXPECTED_C_CROSS_REPAIR_ATTEMPTS
-        and convergence.get("repair_attempts_used") == repairs_used
-        and convergence.get("remaining_repair_attempts") == max(0, maximum - repairs_used)
         and convergence.get("execution_id") == matrix.get("execution_id")
         and final_c_cross_verified(matrix, attempts)
     )
@@ -398,12 +386,8 @@ def cross_convergence_summary(
         f"- latest_attempt_kind: `{latest_attempt_kind}`",
         f"- final_c_cross: `{'verified' if final_c_cross_verified(matrix, attempts) else 'not_verified'}`",
         f"- convergence_status: `{convergence.get('status', 'missing')}`",
-        "- repair_budget: `"
-        f"{convergence.get('repair_attempts_used', 'unknown')}/"
-        f"{convergence.get('max_repair_attempts', 'unknown')}`",
-        "- test_repair_budget: `"
-        f"{test_repairs.get('repair_attempts_used', 'unknown')}/"
-        f"{test_repairs.get('max_repair_attempts', 'unknown')}`",
+        f"- repair_tasks_pending: `{len(convergence.get('work_queue', {}).get('pending_task_ids', [])) if isinstance(convergence.get('work_queue'), dict) else 'unknown'}`",
+        f"- test_repair_tasks_pending: `{len(test_repairs.get('work_queue', {}).get('pending_task_ids', [])) if isinstance(test_repairs.get('work_queue'), dict) else 'unknown'}`",
         f"- test_repair_evidence_fresh: `{'yes' if test_repairs.get('valid') else 'no'}`",
     ]
 
@@ -424,6 +408,21 @@ def _unsafe_ratio_is_numeric(ratio: dict[str, Any]) -> bool:
 
 
 def write_report(root: Path, output: Path, issues: Path) -> str:
+    deadline = load_json(root / "logs" / "trace" / "deadline-final.json")
+    if deadline.get("status") == "submission_frozen":
+        try:
+            snapshot_tool = load_tool("submission_snapshot.py")
+            if deadline.get("snapshot_id") is None:
+                current = snapshot_tool.current_manifest(root)
+                recorded = deadline.get("verification", {}).get("source_manifest") if isinstance(deadline.get("verification"), dict) else None
+                verified = {"matches": current == recorded}
+            else:
+                verified = snapshot_tool.verify_current(root, str(deadline.get("snapshot_id")))
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            verified = {"matches": False}
+        if verified.get("matches") and output.is_file() and issues.is_file():
+            text = output.read_text(encoding="utf-8", errors="ignore")
+            return "SUCCESS" if "STATUS: SUCCESS" in text else "FAILED"
     implementation_audit, implementation_evidence, implementation_failed_final = (
         implementation_terminal_evidence(root)
     )

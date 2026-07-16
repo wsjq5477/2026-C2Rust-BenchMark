@@ -11,6 +11,8 @@ import argparse
 import json
 from pathlib import Path
 from typing import Any
+
+import contest_guard
 import re
 
 
@@ -255,6 +257,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mapping", required=True, help="Path to write rust_test_mapping.json.")
     args = parser.parse_args(argv)
 
+    try:
+        contest_guard.guard_mutation_allowed(Path(args.project).resolve().parent)
+    except RuntimeError as exc:
+        print(str(exc))
+        return contest_guard.FINALIZE_EXIT_CODE
     mapping = generate_tests(load_json(Path(args.test_model)), load_json(Path(args.design)), Path(args.project), Path(args.mapping))
     print("MIGRATE_TESTS: TASK_MAP_WRITTEN")
     print(f"mapped_scenarios={mapping['total_scenarios']}")

@@ -17,9 +17,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+import repair_work_queue
+import contest_guard
+import submission_snapshot
+
 
 AUDIT_SCHEMA_VERSION = 2
-MAX_IMPLEMENTATION_REPAIR_ATTEMPTS = 1
 IMPLEMENTATION_ATTEMPT_KINDS = {"checkpoint", "repair", "confirmation"}
 
 
@@ -722,6 +725,29 @@ def _current_baseline_attempts(
     ]
 
 
+def _finding_task_id(item: dict[str, Any]) -> str:
+    evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+    path = str(evidence.get("path") or item.get("path") or item.get("file") or "workspace")
+    owner = str(
+        evidence.get("symbol")
+        or evidence.get("module")
+        or item.get("symbol")
+        or item.get("function")
+        or item.get("module")
+        or item.get("code")
+        or "unknown"
+    )
+    return f"{path}::{owner}"
+
+
+def finding_task_ids(result: dict[str, Any]) -> set[str]:
+    return {
+        _finding_task_id(item)
+        for item in result.get("findings", [])
+        if isinstance(item, dict)
+    }
+
+
 def implementation_evidence(
     result: dict[str, Any],
     attempts: list[dict[str, Any]],
@@ -730,7 +756,6 @@ def implementation_evidence(
     baseline = result.get("baseline_fingerprint")
     scoped = _current_baseline_attempts(attempts, str(baseline)) if isinstance(baseline, str) else []
     errors: list[str] = []
-    repairs_used = sum(row.get("kind") == "repair" for row in scoped)
     latest = scoped[-1] if scoped else {}
     layout = layout if isinstance(layout, dict) else {}
     layout_current = layout.get("source_manifest") == result.get("source_manifest")
@@ -751,12 +776,6 @@ def implementation_evidence(
             errors.append("latest implementation attempt source manifest is stale")
         if latest.get("audit_status") != result.get("status"):
             errors.append("latest implementation attempt status does not match current audit")
-        if latest.get("repair_attempts_used") != repairs_used:
-            errors.append("latest implementation attempt repair count is inconsistent")
-        if latest.get("max_repair_attempts") != MAX_IMPLEMENTATION_REPAIR_ATTEMPTS:
-            errors.append("implementation repair budget is inconsistent")
-    if repairs_used > MAX_IMPLEMENTATION_REPAIR_ATTEMPTS:
-        errors.append("implementation repair budget exceeded")
     if scoped:
         checkpoints = sum(row.get("kind") == "checkpoint" for row in scoped)
         if checkpoints != 1 or scoped[0].get("kind") != "checkpoint":
@@ -770,8 +789,8 @@ def implementation_evidence(
             previous = row
             continue
         if kind == "repair":
-            if not isinstance(previous, dict) or previous.get("kind") != "checkpoint":
-                errors.append("implementation repair must immediately follow the checkpoint")
+            if not isinstance(previous, dict) or previous.get("kind") not in {"checkpoint", "repair"}:
+                errors.append("implementation repair must follow the checkpoint or another repair")
             actual = _manifest_changed_files(
                 previous.get("source_manifest") if isinstance(previous, dict) else {},
                 row.get("source_manifest"),
@@ -793,7 +812,8 @@ def implementation_evidence(
     elif (
         valid
         and latest.get("kind") == "confirmation"
-        and repairs_used >= MAX_IMPLEMENTATION_REPAIR_ATTEMPTS
+        and isinstance(latest.get("work_queue"), dict)
+        and latest["work_queue"].get("queue_exhausted") is True
         and (result.get("status") != "pass" or not layout_pass)
     ):
         status = "failed_final"
@@ -804,7 +824,10 @@ def implementation_evidence(
         terminal = False
         next_action = (
             "run_fresh_implementation_confirmation"
-            if valid and latest.get("kind") == "repair" and repairs_used >= MAX_IMPLEMENTATION_REPAIR_ATTEMPTS
+            if valid
+            and latest.get("kind") == "repair"
+            and isinstance(latest.get("work_queue"), dict)
+            and latest["work_queue"].get("repair_actions_exhausted") is True
             else "repair_scaffold_residue"
         )
     return {
@@ -815,9 +838,8 @@ def implementation_evidence(
         "errors": errors,
         "attempt_id": latest.get("attempt_id"),
         "attempt_kind": latest.get("kind"),
-        "repair_attempts_used": repairs_used,
-        "max_repair_attempts": MAX_IMPLEMENTATION_REPAIR_ATTEMPTS,
-        "remaining_repair_attempts": max(0, MAX_IMPLEMENTATION_REPAIR_ATTEMPTS - repairs_used),
+        "repair_attempts_recorded": sum(row.get("kind") == "repair" for row in scoped),
+        "work_queue": latest.get("work_queue") if isinstance(latest.get("work_queue"), dict) else {},
         "input_fingerprint": result.get("input_fingerprint"),
         "source_manifest": result.get("source_manifest"),
         "layout_current": layout_current,
@@ -831,13 +853,13 @@ def record_attempt(
     *,
     kind: str,
     layout: dict[str, Any] | None = None,
+    task_ids: list[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if kind not in IMPLEMENTATION_ATTEMPT_KINDS:
         raise ValueError(f"invalid implementation attempt kind: {kind}")
     attempts = load_attempts(path)
     baseline = str(result.get("baseline_fingerprint"))
     scoped = _current_baseline_attempts(attempts, baseline)
-    repairs_used = sum(row.get("kind") == "repair" for row in scoped)
     previous = scoped[-1] if scoped else None
     current_manifest = result.get("source_manifest") if isinstance(result.get("source_manifest"), dict) else {}
     actual_changed_files: list[str] = []
@@ -849,19 +871,46 @@ def record_attempt(
             raise ValueError("implementation repair requires a checkpoint")
         if previous.get("audit_status") == "pass":
             raise ValueError("implementation repair is not allowed after a passing audit")
-        if repairs_used >= MAX_IMPLEMENTATION_REPAIR_ATTEMPTS:
-            raise ValueError("implementation repair budget is exhausted")
         actual_changed_files = _manifest_changed_files(previous.get("source_manifest"), current_manifest)
         if not actual_changed_files:
             raise ValueError("implementation repair requires real Rust source changes")
-        repairs_used += 1
     elif kind == "confirmation":
         if previous is None or previous.get("kind") != "repair":
             raise ValueError("implementation confirmation must immediately follow a repair")
-        if repairs_used < MAX_IMPLEMENTATION_REPAIR_ATTEMPTS:
-            raise ValueError("implementation confirmation requires the repair budget to be consumed")
         if _manifest_changed_files(previous.get("source_manifest"), current_manifest):
             raise ValueError("implementation confirmation must not change Rust sources")
+
+    current_findings = finding_task_ids(result)
+    previous_findings = set(previous.get("finding_task_ids", [])) if isinstance(previous, dict) else set()
+    queue_path = path.parent / "repair-work-queue.json"
+    if kind == "checkpoint":
+        queue_phase = repair_work_queue.sync_tasks(queue_path, "implement", current_findings)
+    elif kind == "repair":
+        selected = set(task_ids or previous_findings or current_findings)
+        resolved = selected - current_findings
+        queue_phase = repair_work_queue.record_attempt(
+            queue_path,
+            "implement",
+            selected,
+            attempt_id=f"implementation-{time.time_ns()}-repair",
+            progress_ids=resolved,
+            passed_ids=resolved,
+            changed_files=actual_changed_files,
+            repair_kind="local",
+        )
+        dynamic = set(queue_phase.get("dynamic_task_ids", [])) | current_findings | previous_findings
+        queue_phase = repair_work_queue.sync_tasks(queue_path, "implement", dynamic, passed_ids=dynamic - current_findings)
+    else:
+        existing_queue = repair_work_queue.load_queue(queue_path)
+        existing_phase = existing_queue.get("phases", {}).get("implement") if isinstance(existing_queue.get("phases"), dict) else {}
+        dynamic = set(existing_phase.get("dynamic_task_ids", [])) | current_findings if isinstance(existing_phase, dict) else current_findings
+        queue_phase = repair_work_queue.sync_tasks(
+            queue_path,
+            "implement",
+            dynamic,
+            passed_ids=dynamic - current_findings,
+            full_confirmation_id=f"implementation-{time.time_ns()}-confirmation",
+        )
 
     row = {
         "attempt_id": f"{time.time_ns()}-{kind}",
@@ -876,9 +925,10 @@ def record_attempt(
             if isinstance(item, dict) and isinstance(item.get("code"), str)
         }),
         "finding_count": result.get("summary", {}).get("findings"),
+        "finding_task_ids": sorted(current_findings),
         "actual_changed_files": actual_changed_files,
-        "repair_attempts_used": repairs_used,
-        "max_repair_attempts": MAX_IMPLEMENTATION_REPAIR_ATTEMPTS,
+        "repair_attempts_recorded": sum(row.get("kind") == "repair" for row in scoped) + (1 if kind == "repair" else 0),
+        "work_queue": repair_work_queue.phase_summary(queue_phase),
         "layout_status": layout.get("status") if isinstance(layout, dict) else None,
         "layout_source_manifest": layout.get("source_manifest") if isinstance(layout, dict) else None,
     }
@@ -886,8 +936,7 @@ def record_attempt(
     row["convergence"] = {
         key: evidence[key]
         for key in (
-            "status", "terminal", "next_action", "repair_attempts_used",
-            "max_repair_attempts", "remaining_repair_attempts",
+            "status", "terminal", "next_action", "repair_attempts_recorded", "work_queue",
         )
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -912,9 +961,20 @@ def main(argv: list[str] | None = None) -> int:
         "--attempts",
         help="Implementation attempt JSONL path, relative to --root.",
     )
+    parser.add_argument(
+        "--task",
+        action="append",
+        default=[],
+        help="Dynamic implementation finding task repaired in this attempt. Repeatable.",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
+    try:
+        contest_guard.guard_mutation_allowed(root)
+    except RuntimeError as exc:
+        print(str(exc))
+        return contest_guard.FINALIZE_EXIT_CODE
     project = _resolve(root, args.project, "flashDB_rust")
     manifest_path = _resolve(root, args.manifest, "logs/trace/scaffold-manifest.json")
     design_path = _resolve(root, args.design, "logs/trace/rust_api_design.json")
@@ -934,12 +994,20 @@ def main(argv: list[str] | None = None) -> int:
                 result,
                 kind=args.attempt_kind,
                 layout=layout,
+                task_ids=args.task,
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             parser.error(str(exc))
     result["convergence"] = evidence
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if evidence.get("status") == "ready_for_verify" and evidence.get("layout_pass") is True:
+        try:
+            result["submission_snapshot"] = submission_snapshot.capture(root, kind="baseline")
+            output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            result["submission_snapshot_error"] = str(exc)
+            output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     status = "FAILED_FINAL" if evidence["status"] == "failed_final" else str(result["status"]).upper()
     print(f"CORE_IMPL_AUDIT: {status}")
     print(f"findings={result['summary']['findings']}")

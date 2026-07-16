@@ -12,7 +12,6 @@ from typing import Any
 
 VALID_CROSS_RESULTS = {"pass", "fail", "not_run", "not_supported", "parse_failed", "unresolved"}
 VALID_CONVERGENCE_STATES = {"repair_required", "ready_for_final", "success", "failed_final"}
-EXPECTED_C_CROSS_REPAIR_ATTEMPTS = 8
 
 
 def load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -42,6 +41,17 @@ def load_jsonl(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:
             return None, "JSONL rows must be objects"
         rows.append(item)
     return rows, None
+
+
+def queue_phase_summary(root: Path, phase_name: str) -> tuple[dict[str, Any], str | None]:
+    queue, error = load_json(root / "logs" / "trace" / "repair-work-queue.json")
+    if error or queue is None:
+        return {}, error
+    phases = queue.get("phases")
+    phase = phases.get(phase_name) if isinstance(phases, dict) else None
+    if not isinstance(phase, dict) or not isinstance(phase.get("summary"), dict):
+        return {}, f"missing repair queue phase {phase_name}"
+    return phase["summary"], None
 
 
 def require_paths(root: Path, paths: list[str]) -> list[str]:
@@ -255,20 +265,16 @@ def check_convergence(root: Path) -> tuple[dict[str, Any] | None, list[str]]:
         errors.append(f"c-cross/attempts.jsonl: {attempts_error}")
     else:
         repairs_used = sum(row.get("kind") == "repair" for row in attempts or [])
-        if summary.get("repair_attempts_used") != repairs_used:
-            errors.append("failure-summary.json repair_attempts_used does not match attempts.jsonl")
-        maximum = summary.get("max_repair_attempts")
-        if maximum != EXPECTED_C_CROSS_REPAIR_ATTEMPTS:
-            errors.append(
-                f"failure-summary.json max_repair_attempts must be {EXPECTED_C_CROSS_REPAIR_ATTEMPTS}"
-            )
-        elif summary.get("remaining_repair_attempts") != max(0, maximum - repairs_used):
-            errors.append("failure-summary.json remaining_repair_attempts is inconsistent")
-        if status == "failed_final" and repairs_used < (maximum if isinstance(maximum, int) else repairs_used + 1):
-            errors.append("failed_final requires the complete repair budget to be consumed")
+        if summary.get("repair_attempts_recorded") != repairs_used:
+            errors.append("failure-summary.json repair_attempts_recorded does not match attempts.jsonl")
+        queue_summary, queue_error = queue_phase_summary(root, "c_cross")
+        if queue_error:
+            errors.append(f"repair-work-queue.json: {queue_error}")
+        elif summary.get("work_queue") != queue_summary:
+            errors.append("failure-summary.json work_queue does not match the current C-Cross task queue")
         if attempts and isinstance(matrix, dict) and attempts[-1].get("attempt_id") != matrix.get("execution_id"):
             errors.append("validation matrix must match the latest C-Cross attempt")
-        if isinstance(matrix, dict) and isinstance(maximum, int) and maximum > 0:
+        if isinstance(matrix, dict):
             scenarios = matrix.get("scenarios")
             rows = [row for row in scenarios if isinstance(row, dict)] if isinstance(scenarios, list) else []
             all_pass = bool(rows) and all(row.get("rust_impl_c_test") == "pass" for row in rows)
@@ -279,14 +285,12 @@ def check_convergence(root: Path) -> tuple[dict[str, Any] | None, list[str]]:
             elif all_pass and full_scope:
                 expected_status = "ready_for_final"
                 expected_next_action = "run_fresh_final"
-            elif repairs_used >= maximum and full_scope and matrix.get("attempt_kind") == "confirmation":
+            elif queue_summary.get("queue_exhausted") is True and full_scope and matrix.get("attempt_kind") == "confirmation":
                 expected_status = "failed_final"
                 expected_next_action = "continue_to_test_and_report"
             else:
                 expected_status = "repair_required"
-                expected_next_action = (
-                    "run_full_confirmation" if repairs_used >= maximum else "repair_next_failure_cluster"
-                )
+                expected_next_action = "repair_next_queued_task"
             if status != expected_status:
                 errors.append(
                     f"failure-summary.json status {status!r} does not match current evidence {expected_status!r}"
@@ -296,8 +300,7 @@ def check_convergence(root: Path) -> tuple[dict[str, Any] | None, list[str]]:
             matrix_convergence = matrix.get("convergence")
             if isinstance(matrix_convergence, dict):
                 for key in (
-                    "status", "terminal", "next_action", "repair_attempts_used",
-                    "max_repair_attempts", "remaining_repair_attempts",
+                    "status", "terminal", "next_action", "repair_attempts_recorded", "work_queue",
                 ):
                     if matrix_convergence.get(key) != summary.get(key):
                         errors.append(f"validation-matrix convergence {key} does not match failure-summary.json")
@@ -312,10 +315,8 @@ def check_verify_and_repair(root: Path) -> list[str]:
     convergence, convergence_errors = check_convergence(root)
     errors.extend(convergence_errors)
     if convergence is not None and convergence.get("status") == "repair_required":
-        errors.append(
-            "C-Cross convergence is repair_required; continue bounded repair "
-            f"({convergence.get('remaining_repair_attempts', '?')} attempts remaining)"
-        )
+        pending = convergence.get("work_queue", {}).get("pending_task_ids", []) if isinstance(convergence.get("work_queue"), dict) else []
+        errors.append(f"C-Cross convergence is repair_required; continue queued tasks ({len(pending)} pending)")
     errors.extend(check_no_c_sources_in_src(root))
     return errors
 
@@ -428,10 +429,15 @@ def evaluate_test_stage(root: Path) -> tuple[str, list[str], dict[str, Any]]:
     )
     if test_success:
         status = "success"
-    elif test_repairs.get("exhausted"):
-        status = "failed_final"
     else:
-        status = "repair_required"
+        queue_summary, queue_error = queue_phase_summary(root, "tests")
+        if queue_error:
+            errors.append(f"repair-work-queue.json: {queue_error}")
+            queue_summary = {}
+        if queue_summary.get("queue_exhausted") is True:
+            status = "failed_final"
+        else:
+            status = "repair_required"
 
     errors.extend(check_test_quality(
         root,
@@ -441,14 +447,10 @@ def evaluate_test_stage(root: Path) -> tuple[str, list[str], dict[str, Any]]:
     if status == "success" and not cargo_pass:
         errors.append("cargo-results.json must prove every dynamically mapped Rust test executed")
     if status == "repair_required":
-        remaining = None
-        maximum = test_repairs.get("max_repair_attempts")
-        used = test_repairs.get("repair_attempts_used")
-        if isinstance(maximum, int) and isinstance(used, int):
-            remaining = max(0, maximum - used)
+        queue_summary, _ = queue_phase_summary(root, "tests")
+        pending = queue_summary.get("pending_task_ids", []) if isinstance(queue_summary, dict) else []
         errors.append(
-            "TEST_AND_REPORT convergence is repair_required; return to test-migrator"
-            + (f" ({remaining} repairs remaining)" if remaining is not None else "")
+            f"TEST_AND_REPORT convergence is repair_required; repair next queued test ({len(pending)} pending)"
         )
     return status, errors, test_repairs
 
@@ -471,6 +473,57 @@ def check_test_and_report(root: Path) -> list[str]:
 
 
 def check_final(root: Path) -> list[str]:
+    deadline, deadline_error = load_json(root / "logs" / "trace" / "deadline-final.json")
+    if deadline_error is None and deadline is not None and deadline.get("status") == "submission_frozen":
+        errors = require_paths(root, [
+            "logs/trace/submission-restore.json",
+            "logs/trace/contest-control/run.json",
+            "logs/trace/contest-control/freeze-requested.json",
+            "logs/trace/contest-control/submission-frozen.json",
+            "result/output.md",
+            "result/issues/00-summary.md",
+        ])
+        run, _ = load_json(root / "logs" / "trace" / "contest-control" / "run.json")
+        requested, _ = load_json(root / "logs" / "trace" / "contest-control" / "freeze-requested.json")
+        control_frozen, _ = load_json(root / "logs" / "trace" / "contest-control" / "submission-frozen.json")
+        if not isinstance(run, dict) or run.get("status") != "frozen":
+            errors.append("deadline final requires a frozen watchdog run")
+        elif run.get("run_id") != deadline.get("run_id"):
+            errors.append("deadline final does not match the frozen watchdog run")
+        if not isinstance(requested, dict) or requested.get("run_id") != deadline.get("run_id"):
+            errors.append("deadline final freeze request does not match the watchdog run")
+        elif isinstance(run, dict) and isinstance(run.get("freeze_clock_ns"), int) and requested.get("clock_ns", 0) < run["freeze_clock_ns"]:
+            errors.append("deadline freeze occurred before the configured 540-minute boundary")
+        if control_frozen != deadline:
+            errors.append("deadline-final.json must match contest-control/submission-frozen.json")
+        if deadline.get("termination_reason") != "contest_deadline_freeze":
+            errors.append("deadline final has an invalid termination reason")
+        try:
+            tool_path = Path(__file__).resolve().with_name("submission_snapshot.py")
+            spec = importlib.util.spec_from_file_location("gate_submission_snapshot", tool_path)
+            if spec is None or spec.loader is None:
+                raise RuntimeError("could not load submission_snapshot.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            if deadline.get("snapshot_id") is None:
+                current = module.current_manifest(root)
+                recorded = deadline.get("verification", {}).get("source_manifest") if isinstance(deadline.get("verification"), dict) else None
+                if current != recorded:
+                    errors.append("deadline frozen fallback submission has drifted")
+            else:
+                verification = module.verify_current(root, str(deadline.get("snapshot_id")))
+                if not verification.get("matches"):
+                    errors.append("deadline restored submission does not match the frozen snapshot")
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"deadline snapshot verification failed: {exc}")
+        output = root / "result" / "output.md"
+        if output.is_file() and not any(
+            marker in output.read_text(encoding="utf-8", errors="ignore")
+            for marker in ("STATUS: SUCCESS", "STATUS: FAILED")
+        ):
+            errors.append("deadline final report must contain a terminal status")
+        return errors
+
     implementation_status, implementation_errors, _ = evaluate_implementation_stage(root)
     if implementation_status == "failed_final" and not implementation_errors:
         errors = require_paths(root, ["result/output.md", "result/issues/00-summary.md"])
@@ -503,7 +556,7 @@ def check_final(root: Path) -> list[str]:
         errors.append("unsafe-ratio.json unsafe_ratio must be numeric")
     unsafe_failed_final = bool(not ratio_pass and test_repairs.get("exhausted"))
     if not ratio_pass and not unsafe_failed_final and ratio:
-        errors.append("unsafe ratio is repair_required while test repair budget remains")
+        errors.append("unsafe ratio is repair_required while test tasks remain queued")
     failed_final = bool(
         (cross_status == "failed_final" or test_status == "failed_final" or unsafe_failed_final)
         and (ratio_pass or unsafe_failed_final)

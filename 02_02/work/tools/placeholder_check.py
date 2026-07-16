@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import contest_guard
+
 
 MARKERS = ("MIGRATION_PENDING", "PLACEHOLDER", "replace baseline coverage", "dummy test")
 FORBIDDEN_MACROS = re.compile(r"\b(?:todo|unimplemented)!\s*\(")
@@ -81,8 +83,15 @@ def input_fingerprint(root: Path, tests: Path, mapping_path: Path) -> dict[str, 
     }
 
 
-def issue(issues: list[dict[str, Any]], code: str, file: str, test_name: str | None, message: str) -> None:
-    issues.append({"code": code, "file": file, "test_name": test_name, "message": message})
+def issue(
+    issues: list[dict[str, Any]],
+    code: str,
+    file: str,
+    test_name: str | None,
+    message: str,
+    scenario_id: str | None = None,
+) -> None:
+    issues.append({"code": code, "file": file, "test_name": test_name, "scenario_id": scenario_id, "message": message})
 
 
 def test_body(text: str, test_name: str) -> str | None:
@@ -163,26 +172,53 @@ def analyze_placeholders(root: Path, tests: Path, mapping_path: Path) -> dict[st
         rust_file = scenario.get("rust_file")
         rust_test = scenario.get("rust_test")
         if not isinstance(rust_file, str) or not isinstance(rust_test, str):
-            issue(issues, "incomplete_mapping", str(mapping_path), scenario_id, "rust_file and rust_test are required")
+            issue(issues, "incomplete_mapping", str(mapping_path), None, "rust_file and rust_test are required", scenario_id)
             continue
         path = root / rust_file.removeprefix("./")
         if not path.is_file():
-            issue(issues, "missing_test_file", rust_file, rust_test, "mapped Rust test file does not exist")
+            issue(issues, "missing_test_file", rust_file, rust_test, "mapped Rust test file does not exist", scenario_id)
             continue
         text = cache.setdefault(path, path.read_text(encoding="utf-8", errors="ignore"))
         names = set(TEST_FN.findall(text))
         if rust_test not in names:
-            issue(issues, "missing_test_function", rust_file, rust_test, "mapped #[test] function does not exist")
+            issue(issues, "missing_test_function", rust_file, rust_test, "mapped #[test] function does not exist", scenario_id)
             continue
         body = test_body(text, rust_test)
         if body is not None and not ASSERTION.search(body):
-            issue(issues, "missing_assertion", rust_file, rust_test, "mapped test has no assertion macro")
+            issue(issues, "missing_assertion", rust_file, rust_test, "mapped test has no assertion macro", scenario_id)
+
+    rendered_scenarios: list[dict[str, Any]] = []
+    for scenario in scenarios:
+        if not isinstance(scenario, dict) or not isinstance(scenario.get("id"), str):
+            continue
+        scenario_id = scenario["id"]
+        rust_file = scenario.get("rust_file")
+        rust_test = scenario.get("rust_test")
+        case_issues = [
+            item["code"]
+            for item in issues
+            if item.get("scenario_id") == scenario_id
+            or (
+                item.get("scenario_id") is None
+                and (
+                    item.get("file") == rust_file
+                    or (isinstance(rust_test, str) and item.get("test_name") == rust_test)
+                    or item.get("code") in {"empty_test_directory", "invalid_mapping", "empty_mapping"}
+                )
+            )
+        ]
+        rendered_scenarios.append({
+            "scenario_id": scenario_id,
+            "status": "pass" if not case_issues else "fail",
+            "issue_codes": sorted(set(case_issues)),
+        })
 
     return {
         "stage": "PLACEHOLDER_CHECK",
         "status": "pass" if not issues else "fail",
         "issue_count": len(issues),
         "issues": issues,
+        "scenarios": rendered_scenarios,
         "input_fingerprint": fingerprint,
     }
 
@@ -194,6 +230,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mapping", default="logs/trace/rust_test_mapping.json")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
+    try:
+        contest_guard.guard_mutation_allowed(Path(args.root))
+    except RuntimeError as exc:
+        print(str(exc))
+        return contest_guard.FINALIZE_EXIT_CODE
     report = analyze_placeholders(Path(args.root), Path(args.tests), Path(args.mapping))
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -212,10 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"PLACEHOLDER_CHECK: {report['status'].upper()}")
     print(f"issues={report['issue_count']}")
     print(f"convergence_status={convergence['status']}")
-    print(
-        "repair_budget="
-        f"{convergence['repair_attempts_used']}/{convergence['max_repair_attempts']}"
-    )
+    print(f"repair_queue_pending={len(convergence.get('work_queue', {}).get('pending_task_ids', []))}")
     return 0 if report["status"] == "pass" else 1
 
 

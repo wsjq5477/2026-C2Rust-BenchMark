@@ -11,6 +11,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import contest_guard
+
 
 SCAFFOLD_SCHEMA_VERSION = 2
 FFI_STUB_MARKER = "@c2rust-scaffold:neutral-ffi:v1"
@@ -978,6 +980,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     design_path = Path(args.design)
+    try:
+        contest_guard.guard_mutation_allowed(Path(args.project).resolve().parent)
+    except RuntimeError as exc:
+        print(str(exc))
+        return contest_guard.FINALIZE_EXIT_CODE
     design = load_json(design_path)
     project = Path(args.project)
     if args.abi_only:

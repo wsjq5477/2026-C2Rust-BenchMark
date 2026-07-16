@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,7 +22,11 @@ def load_tool(name: str):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(TOOLS))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     return module
 
 
@@ -81,8 +86,7 @@ def write_test_repair_evidence(root: Path, *, repairs_used: int) -> None:
         "attempt_id": latest_id,
         "kind": latest_kind,
         "source_manifest": manifest,
-        "repair_attempts_used": repairs_used,
-        "max_repair_attempts": 2,
+        "repair_attempts_recorded": repairs_used,
         "build_status": cargo.get("build_status"),
         "test_status": cargo.get("test_status"),
         "test_execution_status": execution.get("status"),
@@ -95,13 +99,32 @@ def write_test_repair_evidence(root: Path, *, repairs_used: int) -> None:
     cargo["repair_convergence"] = {
         "attempt_id": latest_id,
         "kind": latest_kind,
-        "repair_attempts_used": repairs_used,
-        "max_repair_attempts": 2,
-        "remaining_repair_attempts": max(0, 2 - repairs_used),
+        "repair_attempts_recorded": repairs_used,
         "source_manifest": manifest,
         "test_execution_status": execution.get("status"),
         "cargo_test_log_sha256": execution.get("log_sha256"),
     }
+    task_state = "confirmed_pass" if cargo.get("test_status") == "pass" else "exhausted" if repairs_used >= 4 else "queued"
+    queue_path = trace / "repair-work-queue.json"
+    queue = json.loads(queue_path.read_text(encoding="utf-8")) if queue_path.is_file() else {"schema_version": 1, "phases": {}}
+    counts = {state: (1 if state == task_state else 0) for state in sorted({
+        "queued", "active", "provisional_pass", "confirmed_pass", "deferred_no_progress", "regressed", "exhausted"
+    })}
+    queue_summary = {
+        "total": 1,
+        "counts": counts,
+        "all_pass": task_state == "confirmed_pass",
+        "queue_exhausted": task_state in {"confirmed_pass", "exhausted"},
+        "pending_task_ids": [] if task_state in {"confirmed_pass", "exhausted"} else ["dynamic-case"],
+        "sweep": 2 if repairs_used >= 2 else 1,
+        "last_full_confirmation_id": latest_id,
+    }
+    queue.setdefault("phases", {})["tests"] = {
+        "tasks": {"dynamic-case": {"task_id": "dynamic-case", "state": task_state}},
+        "summary": queue_summary,
+    }
+    queue_path.write_text(json.dumps(queue), encoding="utf-8")
+    cargo["repair_convergence"]["work_queue"] = queue_summary
     cargo_path.write_text(json.dumps(cargo), encoding="utf-8")
 
 
@@ -113,9 +136,16 @@ def write_successful_c_cross_evidence(root: Path) -> None:
         "status": "success",
         "terminal": True,
         "next_action": "report_success",
-        "repair_attempts_used": 0,
-        "max_repair_attempts": 8,
-        "remaining_repair_attempts": 8,
+        "repair_attempts_recorded": 0,
+        "work_queue": {
+            "total": 1,
+            "counts": {"confirmed_pass": 1},
+            "all_pass": True,
+            "queue_exhausted": True,
+            "pending_task_ids": [],
+            "sweep": 1,
+            "last_full_confirmation_id": "final-1",
+        },
     }
     matrix = {
         "mode": "full",
@@ -136,6 +166,13 @@ def write_successful_c_cross_evidence(root: Path) -> None:
         **convergence,
         "execution_id": "final-1",
     }), encoding="utf-8")
+    queue_path = trace / "repair-work-queue.json"
+    queue = json.loads(queue_path.read_text(encoding="utf-8")) if queue_path.is_file() else {"schema_version": 1, "phases": {}}
+    queue.setdefault("phases", {})["c_cross"] = {
+        "tasks": {"dynamic-case": {"task_id": "dynamic-case", "state": "confirmed_pass"}},
+        "summary": convergence["work_queue"],
+    }
+    queue_path.write_text(json.dumps(queue), encoding="utf-8")
     for filename, phase in (
         ("build-check.json", "build"),
         ("layout-check.json", "layout"),
@@ -172,16 +209,8 @@ class ResultEvidenceTests(unittest.TestCase):
             }
             for name, payload in payloads.items():
                 (trace / name).write_text(json.dumps(payload), encoding="utf-8")
+            write_successful_c_cross_evidence(root)
             write_test_repair_evidence(root, repairs_used=0)
-            (trace / "c-cross" / "attempts.jsonl").write_text(json.dumps({"attempt_id": "final-1", "kind": "final"}) + "\n", encoding="utf-8")
-            (trace / "c-cross" / "failure-summary.json").write_text(json.dumps({
-                "status": "success",
-                "terminal": True,
-                "execution_id": "final-1",
-                "repair_attempts_used": 0,
-                "max_repair_attempts": 8,
-                "remaining_repair_attempts": 8,
-            }), encoding="utf-8")
             status = REPORT.write_report(root, root / "result" / "output.md", root / "result" / "issues" / "00-summary.md")
             self.assertEqual("SUCCESS", status)
             self.assertIn("STATUS: SUCCESS", (root / "result" / "output.md").read_text(encoding="utf-8"))
@@ -202,11 +231,7 @@ class ResultEvidenceTests(unittest.TestCase):
                 "execution_id": "confirm-1",
                 "scenarios": [{"scenario_id": "dynamic-case", "rust_impl_c_test": "fail", "reason": "mismatch"}],
             }), encoding="utf-8")
-            repair_attempts = [
-                {"attempt_id": f"repair-{index}", "kind": "repair"}
-                for index in range(8)
-            ]
-            repair_attempts.append({"attempt_id": "confirm-1", "kind": "confirmation"})
+            repair_attempts = [{"attempt_id": "confirm-1", "kind": "confirmation"}]
             (trace / "c-cross" / "attempts.jsonl").write_text(
                 "".join(json.dumps(row) + "\n" for row in repair_attempts),
                 encoding="utf-8",
@@ -216,8 +241,8 @@ class ResultEvidenceTests(unittest.TestCase):
             convergence_path.write_text(json.dumps({
                 "status": "repair_required",
                 "terminal": False,
-                "repair_attempts_used": 1,
-                "max_repair_attempts": 8,
+                "repair_attempts_recorded": 0,
+                "work_queue": {"queue_exhausted": False, "pending_task_ids": ["dynamic-case"]},
             }), encoding="utf-8")
             output = root / "result" / "output.md"
             issues = root / "result" / "issues" / "00-summary.md"
@@ -227,12 +252,11 @@ class ResultEvidenceTests(unittest.TestCase):
                 "status": "failed_final",
                 "terminal": True,
                 "execution_id": "confirm-1",
-                "repair_attempts_used": 8,
-                "max_repair_attempts": 8,
-                "remaining_repair_attempts": 0,
+                "repair_attempts_recorded": 0,
+                "work_queue": {"queue_exhausted": True, "pending_task_ids": []},
             }), encoding="utf-8")
             self.assertEqual("INCOMPLETE", REPORT.write_report(root, output, issues))
-            write_test_repair_evidence(root, repairs_used=2)
+            write_test_repair_evidence(root, repairs_used=4)
             self.assertEqual("FAILED", REPORT.write_report(root, output, issues))
             self.assertIn("STATUS: FAILED", output.read_text(encoding="utf-8"))
 
@@ -257,26 +281,15 @@ class ResultEvidenceTests(unittest.TestCase):
                 "execution_id": "final-1",
                 "scenarios": [{"scenario_id": "dynamic-case", "rust_impl_c_test": "pass"}],
             }), encoding="utf-8")
-            (trace / "c-cross" / "attempts.jsonl").write_text(
-                json.dumps({"attempt_id": "final-1", "kind": "final"}) + "\n",
-                encoding="utf-8",
-            )
-            (trace / "c-cross" / "failure-summary.json").write_text(json.dumps({
-                "status": "success",
-                "terminal": True,
-                "execution_id": "final-1",
-                "repair_attempts_used": 0,
-                "max_repair_attempts": 8,
-                "remaining_repair_attempts": 8,
-            }), encoding="utf-8")
+            write_successful_c_cross_evidence(root)
             output = root / "result" / "output.md"
             issues = root / "result" / "issues" / "00-summary.md"
             write_test_repair_evidence(root, repairs_used=1)
             self.assertEqual("INCOMPLETE", REPORT.write_report(root, output, issues))
             test_status, errors, _ = GATE.evaluate_test_stage(root)
             self.assertEqual("repair_required", test_status)
-            self.assertTrue(any("return to test-migrator" in error for error in errors))
-            write_test_repair_evidence(root, repairs_used=2)
+            self.assertTrue(any("repair next queued test" in error for error in errors))
+            write_test_repair_evidence(root, repairs_used=4)
             self.assertEqual("FAILED", REPORT.write_report(root, output, issues))
             test_status, errors, _ = GATE.evaluate_test_stage(root)
             self.assertEqual("failed_final", test_status)
@@ -299,9 +312,9 @@ class ResultEvidenceTests(unittest.TestCase):
             (trace / "cargo-build.log").write_text("build pass\n", encoding="utf-8")
             write_test_repair_evidence(root, repairs_used=0)
             errors = GATE.check_test_and_report(root)
-            self.assertTrue(any("return to test-migrator" in error for error in errors))
+            self.assertTrue(any("repair next queued test" in error for error in errors))
 
-            write_test_repair_evidence(root, repairs_used=2)
+            write_test_repair_evidence(root, repairs_used=4)
             self.assertEqual([], GATE.check_test_and_report(root))
 
 

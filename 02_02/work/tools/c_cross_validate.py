@@ -14,9 +14,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import repair_work_queue
+import contest_guard
 
-MAX_REPAIR_ATTEMPTS = 8
-MAX_CLUSTER_SCENARIOS = 3
+
 MAX_LOCAL_CHANGED_FILES = 3
 MAX_ARCHITECTURE_CHANGED_FILES = 6
 LOCAL_STALLS_BEFORE_ARCHITECTURE = 2
@@ -426,12 +427,8 @@ def validate_repair_request(
     current_source_manifest: dict[str, str],
 ) -> list[str]:
     errors: list[str] = []
-    if len(_repair_rows(attempts)) >= MAX_REPAIR_ATTEMPTS:
-        errors.append("C-Cross repair budget is exhausted; no further repair attempt is allowed")
     if not cluster_scenarios:
         errors.append("repair attempts require at least one dynamically selected --scenario")
-    elif len(cluster_scenarios) > MAX_CLUSTER_SCENARIOS:
-        errors.append(f"repair cluster may contain at most {MAX_CLUSTER_SCENARIOS} scenarios")
     file_limit = MAX_LOCAL_CHANGED_FILES if repair_kind == "local" else MAX_ARCHITECTURE_CHANGED_FILES
     if len(set(declared_changed_files)) > file_limit:
         errors.append(f"{repair_kind} repair may change at most {file_limit} Rust source files")
@@ -725,8 +722,7 @@ def record_attempt(
         "repair_kind": repair_kind if attempt_kind == "repair" else None,
         "cluster_scenarios": list(cluster_scenarios or []),
         "source_manifest": dict(source_manifest or {}),
-        "repair_attempts_used": len(_repair_rows(prior_attempts)) + (1 if attempt_kind == "repair" else 0),
-        "max_repair_attempts": MAX_REPAIR_ATTEMPTS,
+        "repair_attempts_recorded": len(_repair_rows(prior_attempts)) + (1 if attempt_kind == "repair" else 0),
         "result": "pass" if outcomes and set(outcomes) == {"pass"} else "continue_with_failures",
         "summary": dict(sorted(outcomes.items())),
         "matrix_snapshot": f"logs/trace/c-cross/checkpoints/{attempt_id}.json",
@@ -1733,41 +1729,47 @@ def _verification_results(scenarios: list[dict[str, Any]]) -> tuple[str, str]:
 def convergence_status(
     matrix: dict[str, Any],
     attempts: list[dict[str, Any]],
+    queue_phase: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scenarios = matrix.get("scenarios")
     rows = [row for row in scenarios if isinstance(row, dict)] if isinstance(scenarios, list) else []
     all_pass = bool(rows) and all(row.get("rust_impl_c_test") == "pass" for row in rows)
     full_scope = matrix.get("mode") == "full" and matrix.get("scope") == "all"
     attempt_kind = matrix.get("attempt_kind")
-    repairs_used = len(_repair_rows(attempts))
     if all_pass and full_scope and attempt_kind == "final":
         status, terminal, next_action = "success", True, "report_success"
     elif all_pass and full_scope:
         status, terminal, next_action = "ready_for_final", False, "run_fresh_final"
-    elif repairs_used >= MAX_REPAIR_ATTEMPTS and full_scope and attempt_kind == "confirmation":
-        status, terminal, next_action = "failed_final", True, "continue_to_test_and_report"
     else:
-        status, terminal, next_action = (
-            "repair_required",
-            False,
-            "run_full_confirmation" if repairs_used >= MAX_REPAIR_ATTEMPTS else "repair_next_failure_cluster",
+        queue_decision = repair_work_queue.convergence(
+            queue_phase or {"tasks": {}, "dynamic_task_ids": []},
+            current_full_confirmation_id=(
+                str(matrix.get("execution_id"))
+                if full_scope and attempt_kind == "confirmation"
+                else None
+            ),
         )
-    return {
+        status = str(queue_decision["status"])
+        terminal = bool(queue_decision["terminal"])
+        next_action = str(queue_decision["next_action"])
+    result = {
         "status": status,
         "terminal": terminal,
         "next_action": next_action,
-        "repair_attempts_used": repairs_used,
-        "max_repair_attempts": MAX_REPAIR_ATTEMPTS,
-        "remaining_repair_attempts": max(0, MAX_REPAIR_ATTEMPTS - repairs_used),
+        "repair_attempts_recorded": len(_repair_rows(attempts)),
     }
+    if queue_phase is not None:
+        result["work_queue"] = repair_work_queue.phase_summary(queue_phase)
+    return result
 
 
 def _write_failure_summary(
     matrix: dict[str, Any],
     c_cross: Path,
     attempts: list[dict[str, Any]] | None = None,
+    queue_phase: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Write actionable failures and the bounded convergence decision."""
+    """Write actionable failures and the per-task convergence decision."""
     scenarios = matrix.get("scenarios")
     failures = []
     if isinstance(scenarios, list):
@@ -1781,18 +1783,16 @@ def _write_failure_summary(
                     "diagnosis", "reason", "log", "handoff",
                 )
             })
-    convergence = convergence_status(matrix, attempts or [])
+    convergence = convergence_status(matrix, attempts or [], queue_phase)
     summary = {
         "stage": "VERIFY_RUST_WITH_C_TESTS",
         **convergence,
         "execution_id": matrix.get("execution_id"),
         "failures": failures,
         "guidance": (
-            "Run a full confirmation to establish the terminal result; no further repair is allowed."
-            if convergence["next_action"] == "run_full_confirmation"
-            else "Repair one bounded failure cluster in a fresh session, then rerun targeted and full C-Cross."
+            "Repair the next queued scenario or shared-root cluster, then run targeted and affected-suite validation."
             if convergence["status"] == "repair_required"
-            else "Repair budget is exhausted; preserve failures and continue to test migration and final reporting."
+            else "Every remaining repair task is exhausted and a full confirmation preserved the failures."
             if convergence["status"] == "failed_final"
             else "Run a fresh full final verification."
             if convergence["status"] == "ready_for_final"
@@ -2290,6 +2290,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    try:
+        contest_guard.guard_mutation_allowed(Path(args.root))
+    except RuntimeError as exc:
+        print(str(exc))
+        return contest_guard.FINALIZE_EXIT_CODE
+
     root = Path(args.root).resolve()
     out = (root / args.out).resolve()
     c_cross = out / "c-cross"
@@ -2375,6 +2381,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.attempt_kind == "repair":
         if isinstance(previous_manifest, dict):
             actual_changed_files = source_changes
+        queue = repair_work_queue.load_queue(out / "repair-work-queue.json")
+        phase = queue.get("phases", {}).get("c_cross") if isinstance(queue.get("phases"), dict) else None
+        tasks = phase.get("tasks") if isinstance(phase, dict) and isinstance(phase.get("tasks"), dict) else {}
+        terminal_tasks = [
+            scenario_id
+            for scenario_id in cluster_scenarios
+            if isinstance(tasks.get(scenario_id), dict)
+            and tasks[scenario_id].get("state") in {"confirmed_pass", "exhausted"}
+        ]
+        if terminal_tasks:
+            parser.error("repair task is already terminal: " + ", ".join(terminal_tasks))
         request_errors = validate_repair_request(
             attempts_before,
             repair_kind=args.repair_kind,
@@ -2442,9 +2459,52 @@ def main(argv: list[str] | None = None) -> int:
         "best_known": attempt["best_known"],
     }
     attempts_after = attempts_before + [attempt]
-    convergence = convergence_status(matrix, attempts_after)
+    queue_path = out / "repair-work-queue.json"
+    outcomes = _matrix_outcomes(matrix)
+    fingerprints = {
+        scenario_id: failure_fingerprint(row)
+        for scenario_id, row in outcomes["failures"].items()
+    }
+    queue_phase: dict[str, Any]
+    if args.attempt_kind == "repair":
+        progress_ids: set[str] = set()
+        before_outcomes = _matrix_outcomes(previous_matrix)
+        for scenario_id in cluster_scenarios:
+            if scenario_id in outcomes["passed"]:
+                progress_ids.add(scenario_id)
+                continue
+            before_row = before_outcomes["failures"].get(scenario_id)
+            after_row = outcomes["failures"].get(scenario_id)
+            if before_row is not None and after_row is not None and failure_fingerprint(before_row) != failure_fingerprint(after_row):
+                progress_ids.add(scenario_id)
+        queue_phase = repair_work_queue.record_attempt(
+            queue_path,
+            "c_cross",
+            cluster_scenarios,
+            attempt_id=attempt["attempt_id"],
+            progress_ids=progress_ids,
+            passed_ids=outcomes["passed"],
+            fingerprints=fingerprints,
+            changed_files=args.changed_file,
+            repair_kind=args.repair_kind,
+        )
+    else:
+        full_scope = matrix.get("mode") == "full" and matrix.get("scope", "all") == "all"
+        queue_phase = repair_work_queue.sync_tasks(
+            queue_path,
+            "c_cross",
+            outcomes["passed"] | outcomes["failed"] | outcomes["not_run"],
+            passed_ids=outcomes["passed"],
+            full_confirmation_id=(
+                attempt["attempt_id"]
+                if full_scope and args.attempt_kind == "confirmation"
+                else None
+            ),
+            fingerprints=fingerprints,
+        )
+    convergence = convergence_status(matrix, attempts_after, queue_phase)
     matrix["convergence"] = convergence
-    _write_failure_summary(matrix, c_cross, attempts_after)
+    _write_failure_summary(matrix, c_cross, attempts_after, queue_phase)
     _write_json(out / "c-cross" / "checkpoints" / f"{execution_id}.json", matrix)
     _write_json(matrix_path, matrix)
     counts = matrix["summary"]["rust_impl_c_test"]
@@ -2455,7 +2515,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"stage_result={matrix['stage_result']}")
     print(f"verification_result={matrix['verification_result']}")
     print(f"convergence_status={convergence['status']}")
-    print(f"repair_budget={convergence['repair_attempts_used']}/{convergence['max_repair_attempts']}")
+    queue_summary = convergence.get("work_queue", {})
+    print(f"repair_queue_pending={len(queue_summary.get('pending_task_ids', []))}")
     if not _has_complete_attempt_evidence(matrix, root):
         return 1
     return 1 if convergence["status"] == "repair_required" else 0
