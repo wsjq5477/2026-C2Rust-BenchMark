@@ -1,0 +1,43 @@
+{
+  "profile": "flashdb",
+  "detect": {
+    "required_files": [
+      "src/fdb.c",
+      "src/fdb_file.c",
+      "src/fdb_kvdb.c",
+      "src/fdb_tsdb.c",
+      "src/fdb_utils.c",
+      "inc/flashdb.h"
+    ]
+  },
+  "baseline": {
+    "build_command": "make -C tests all",
+    "test_command": "make -C tests test"
+  },
+  "standard_scenarios": [
+    {"case_id": 1, "suite": "kvdb", "name": "kvdb_init", "c_hint": "test_fdb_kvdb_init", "behavior": "KVDB 初始化"},
+    {"case_id": 2, "suite": "kvdb", "name": "create_kv", "c_hint": "test_fdb_create_kv", "behavior": "创建字符串 KV"},
+    {"case_id": 3, "suite": "kvdb", "name": "set_kv", "c_hint": "test_fdb_change_kv", "behavior": "设置字符串 KV"},
+    {"case_id": 4, "suite": "kvdb", "name": "get_kv", "c_hint": "test_fdb_create_kv", "behavior": "获取字符串 KV"},
+    {"case_id": 5, "suite": "kvdb", "name": "set_kv_blob", "c_hint": "test_fdb_change_kv_blob", "behavior": "设置 blob KV"},
+    {"case_id": 6, "suite": "kvdb", "name": "get_kv_blob", "c_hint": "test_fdb_create_kv_blob", "behavior": "获取 blob KV"},
+    {"case_id": 7, "suite": "kvdb", "name": "del_kv", "c_hint": "test_fdb_del_kv", "behavior": "删除字符串 KV"},
+    {"case_id": 8, "suite": "kvdb", "name": "del_kv_blob", "c_hint": "test_fdb_del_kv_blob", "behavior": "删除 blob KV"},
+    {"case_id": 9, "suite": "kvdb", "name": "change_kv", "c_hint": "test_fdb_change_kv", "behavior": "修改 KV 后读取新值"},
+    {"case_id": 10, "suite": "kvdb", "name": "gc", "c_hint": "test_fdb_gc", "behavior": "单组 GC 回收"},
+    {"case_id": 11, "suite": "kvdb", "name": "gc2", "c_hint": "test_fdb_gc2", "behavior": "多 sector GC 回收"},
+    {"case_id": 12, "suite": "kvdb", "name": "scale_up", "c_hint": "test_fdb_scale_up", "behavior": "数据库扩容并保留原数据"},
+    {"case_id": 13, "suite": "kvdb", "name": "kvdb_deinit", "c_hint": "test_fdb_kvdb_deinit", "behavior": "KVDB 去初始化"},
+    {"case_id": 14, "suite": "tsdb", "name": "tsdb_init", "c_hint": "test_fdb_tsdb_init_ex", "behavior": "TSDB 初始化"},
+    {"case_id": 15, "suite": "tsdb", "name": "tsl_append", "c_hint": "test_fdb_tsl_append", "behavior": "追加 TSL"},
+    {"case_id": 16, "suite": "tsdb", "name": "tsl_append_by_time", "c_hint": "fdb_tsl_append_with_ts", "behavior": "按显式时间追加 TSL"},
+    {"case_id": 17, "suite": "tsdb", "name": "tsl_iter", "c_hint": "test_fdb_tsl_iter", "behavior": "正向迭代"},
+    {"case_id": 18, "suite": "tsdb", "name": "tsl_iter_reverse", "c_hint": "fdb_tsl_iter_reverse", "behavior": "反向迭代"},
+    {"case_id": 19, "suite": "tsdb", "name": "tsl_iter_by_time", "c_hint": "test_fdb_tsl_iter_by_time", "behavior": "按时间正反向迭代及边界"},
+    {"case_id": 20, "suite": "tsdb", "name": "tsl_query_count", "c_hint": "test_fdb_tsl_query_count", "behavior": "按时间和状态查询数量"},
+    {"case_id": 21, "suite": "tsdb", "name": "tsl_clean", "c_hint": "test_fdb_tsl_clean", "behavior": "清空并在重启后保持为空"},
+    {"case_id": 22, "suite": "tsdb", "name": "tsl_set_status", "c_hint": "test_fdb_tsl_set_status", "behavior": "设置并查询 TSL 状态"},
+    {"case_id": 23, "suite": "tsdb", "name": "tsdb_control", "c_hint": "fdb_tsdb_control", "behavior": "TSDB 控制参数"},
+    {"case_id": 24, "suite": "tsdb", "name": "tsdb_deinit", "c_hint": "test_fdb_tsdb_deinit", "behavior": "TSDB 去初始化"}
+  ]
+}

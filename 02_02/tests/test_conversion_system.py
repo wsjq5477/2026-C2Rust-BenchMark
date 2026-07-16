@@ -67,6 +67,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         primary = PROJECT / "work" / "agents" / "flashdb-orchestrator.md"
         self.assertTrue(primary.is_file())
         self.assertIn("mode: primary", primary.read_text(encoding="utf-8"))
+        self.assertEqual({"flashdb-orchestrator.md"}, {path.name for path in (PROJECT / "work" / "agents").glob("*.md")})
 
         expected_subagents = {
             "rust-implementer.md",
@@ -78,6 +79,18 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         self.assertFalse(list((PROJECT / "work" / "skills").glob("*.md")))
         for skill in (PROJECT / "work" / "skills").iterdir():
             self.assertTrue((skill / "SKILL.md").is_file(), skill)
+
+    def test_platform_sync_script_mirrors_agents_and_skills(self):
+        script = PROJECT.parent / "sync_opencode.sh"
+        self.assertTrue(script.is_file())
+        text = script.read_text(encoding="utf-8")
+        self.assertIn('PROJECT="$ROOT/02_02"', text)
+        self.assertIn('TARGET="$ROOT/.opencode"', text)
+        self.assertIn('SKILLS_SOURCE="$WORK/skills"', text)
+        self.assertIn('AGENTS_SOURCE="$WORK/agents"', text)
+        self.assertIn('SUBAGENTS_SOURCE="$WORK/subagent"', text)
+        self.assertIn('SKILLS_TARGET="$TARGET/skills"', text)
+        self.assertIn('AGENTS_TARGET="$TARGET/agents"', text)
 
     def test_required_tools_are_result_oriented(self):
         required = {
@@ -133,6 +146,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         ):
             agent = (PROJECT / "work" / "subagent" / name).read_text(encoding="utf-8")
             self.assertIn("mode: subagent", agent, name)
+            self.assertNotIn("hidden: true", agent, name)
             self.assertIn("task: deny", agent, name)
             self.assertIn('"* /tmp*": deny', agent, name)
             self.assertIn('"*=/tmp*": deny', agent, name)
