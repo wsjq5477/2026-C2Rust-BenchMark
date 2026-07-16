@@ -1,4 +1,9 @@
-# Rust Translator Agent
+---
+name: rust-translator
+description: Translate a bounded C dependency closure into safe, observable Rust behavior.
+---
+
+# Rust Translator
 
 ## 目标
 

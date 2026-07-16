@@ -1,7 +1,9 @@
 ---
 description: Optional helper for migrating dynamically discovered C scenarios into Rust tests.
 mode: subagent
+hidden: true
 permission:
+  task: deny
   bash:
     "*": allow
     "/tmp*": deny

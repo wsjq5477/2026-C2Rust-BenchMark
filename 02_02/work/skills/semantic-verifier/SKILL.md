@@ -1,4 +1,9 @@
-# Semantic Verifier Agent
+---
+name: semantic-verifier
+description: Verify C-to-Rust behavioral equivalence with repeatable evidence.
+---
+
+# Semantic Verifier
 
 ## 目标
 

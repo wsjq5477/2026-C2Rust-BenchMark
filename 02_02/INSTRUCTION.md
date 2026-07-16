@@ -10,7 +10,7 @@
   2. `judge-assets/code/FlashDB`
   3. `../judge-assets/code/FlashDB`
 - Rust 输出：`flashDB_rust/`。
-- 主执行说明：[work/skills/flashdb-orchestrator.md](work/skills/flashdb-orchestrator.md)。
+- 主执行说明：[work/agents/flashdb-orchestrator.md](work/agents/flashdb-orchestrator.md)。
 - 机器证据：`logs/trace/`；最终报告：`result/output.md` 与 `result/issues/00-summary.md`。
 - 项目临时目录：`logs/trace/tmp/<task>/`。所有显式临时文件、探针、复制品和一次性构建产物必须放在这里；任何 agent 都不得读取、创建、删除或把 `/tmp`、`/var/tmp` 用作工作目录、PATH 注入目录或产物目录。
 
@@ -18,7 +18,7 @@ primary Agent 负责一次运行内的阶段推进、确定性工具、共享工
 
 可选 subagent 是同一次无人值守运行内的自动上下文隔离手段，不需要第二次用户输入，也不限制总数。每个 subagent 只能处理一个有明确文件范围、动态事实或 failure cluster、停止条件的短任务；完成一次最小修改或只读产物后立即返回。primary Agent 验证结果仍失败时，可自动启动一个新的同角色 session，从共享工作区、最新 failure summary 和局部证据继续；不得恢复高上下文旧 session，也不得要求新的 primary session 或人工 continuation。
 
-优先调用 `work/skills/` 中受本工程合同约束的命名 subagent。若运行时只提供内置 `General`，可把它作为承载角色，但 dispatch 的第一条要求必须是完整读取并执行对应 `work/skills/{subagent}.md`；prompt 只提供动态路径、失败和文件范围，不得重写业务规则、返回源码全文或预置实现方案。不得使用 `Explore`、`Scout` 或全文 reader task。
+可选 subagent 只从 `work/subagent/` 中受本工程合同约束的命名角色选择。平台将主 agent 与 subagent 映射到 OpenCode 的 agent 目录；不得以内置 `General`、`Explore`、`Scout` 替代。dispatch 只提供动态路径、失败和文件范围，不得重写业务规则、返回源码全文或预置实现方案；要求阅读全部 C 源、全部测试、全部头文件、完整模型 JSON 或完整清单的全文 reader task 一律禁止。
 
 禁止修改平台 C 输入、预置或复制 `flashDB_rust/`、把 C 源码放入 Rust `src/`、删除测试、弱化断言、伪造通过或把未运行的 C 测试标为通过。
 
@@ -71,7 +71,7 @@ python3 work/tools/c_cross_validate.py \
 python3 work/tools/gate.py --stage VERIFY_AND_REPAIR --root .
 ```
 
-如有失败，只读取 `logs/trace/c-cross/failure-summary.json` 中列出的失败场景、日志和必要的 Rust/C 局部窗口。每次只把一个 failure cluster 交给一个新的 repair session；repairer 完成一次最小修改后立即返回，由 primary Agent 重跑同一条命令，并把本次修改的 Rust 源文件作为 `--changed-file` 传给 repair 运行。仍失败时以最新 failure summary 自动启动新的 repair session，不让同一个 repair session 自行反复验证和调试。不得手工执行 runner；C-Cross 的运行隔离只使用 `logs/trace/c-cross/<suite>_run/`，其他临时产物只使用 `logs/trace/tmp/<task>/`，不得访问或使用 `/tmp/**`、`/var/tmp/**`。
+如有失败，只读取 `logs/trace/c-cross/failure-summary.json` 中列出的失败场景、日志和必要的 Rust/C 局部窗口。每次只把一个 failure cluster 交给一个新的 `rust-implementer` session；它完成一次最小修改后立即返回，由 primary Agent 重跑同一条命令，并把本次修改的 Rust 源文件作为 `--changed-file` 传给 repair 运行。仍失败时以最新 failure summary 自动启动新的 `rust-implementer` session，不让同一个 session 自行反复验证和调试。不得手工执行 runner；C-Cross 的运行隔离只使用 `logs/trace/c-cross/<suite>_run/`，其他临时产物只使用 `logs/trace/tmp/<task>/`，不得访问或使用 `/tmp/**`、`/var/tmp/**`。
 
 只有全量场景通过后，才运行最终确认：
 
@@ -95,14 +95,14 @@ python3 work/tools/migrate_tests.py \
   --mapping logs/trace/rust_test_mapping.json
 ```
 
-每一轮测试迁移或 mapping 修改后，先运行确定性占位检查；随后按 [test-semantic-reviewer.md](work/skills/test-semantic-reviewer.md) 完成一次独立、只读的逐场景 C/Rust 审查，再汇总一致性结果：
+每一轮测试迁移或 mapping 修改后，先运行确定性占位检查；随后按 [test-semantic-reviewer.md](work/subagent/test-semantic-reviewer.md) 完成一次独立、只读的逐场景 C/Rust 审查，再汇总一致性结果：
 
 ```bash
 python3 work/tools/placeholder_check.py \
   --root . --tests flashDB_rust/tests \
   --mapping logs/trace/rust_test_mapping.json \
   --output logs/trace/test-placeholder-check.json
-# 按 work/skills/test-semantic-reviewer.md 只写 logs/trace/test-semantic-review.json
+# 按 work/subagent/test-semantic-reviewer.md 只写 logs/trace/test-semantic-review.json
 python3 work/tools/test_consistency_check.py \
   --root . --out logs/trace/test-consistency.json
 ```

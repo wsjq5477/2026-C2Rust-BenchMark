@@ -63,6 +63,22 @@ def semantic_fixture(root: Path, *, review_status: str = "pass") -> dict:
 
 
 class SimplifiedWorkbenchContractTests(unittest.TestCase):
+    def test_platform_agent_and_skill_source_layout(self):
+        primary = PROJECT / "work" / "agents" / "flashdb-orchestrator.md"
+        self.assertTrue(primary.is_file())
+        self.assertIn("mode: primary", primary.read_text(encoding="utf-8"))
+
+        expected_subagents = {
+            "rust-implementer.md",
+            "test-migrator.md",
+            "test-semantic-reviewer.md",
+        }
+        present_subagents = {path.name for path in (PROJECT / "work" / "subagent").glob("*.md")}
+        self.assertEqual(expected_subagents, present_subagents)
+        self.assertFalse(list((PROJECT / "work" / "skills").glob("*.md")))
+        for skill in (PROJECT / "work" / "skills").iterdir():
+            self.assertTrue((skill / "SKILL.md").is_file(), skill)
+
     def test_required_tools_are_result_oriented(self):
         required = {
             "scan_c_project.py",
@@ -89,7 +105,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
 
     def test_primary_contract_is_thin_agent_four_stage_flow(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
-        orchestrator = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
         for stage in ("ANALYZE", "IMPLEMENT", "VERIFY_AND_REPAIR", "TEST_AND_REPORT"):
             self.assertIn(stage, instruction)
             self.assertIn(stage, orchestrator)
@@ -103,22 +119,21 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
 
     def test_agents_cannot_bypass_project_owned_temp_or_subagent_contracts(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
-        orchestrator = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
         self.assertIn("logs/trace/tmp/<task>/", instruction)
         self.assertIn("不得访问或使用 `/tmp/**`、`/var/tmp/**`", instruction)
         self.assertIn('"*": deny', orchestrator)
-        self.assertIn('"general": allow', orchestrator)
-        self.assertIn("若运行时只提供 `general`", orchestrator)
-        self.assertIn("完整读取并执行对应 `work/skills/{subagent}.md`", orchestrator)
+        self.assertNotIn('"general": allow', orchestrator)
+        self.assertIn("不得调用 `general`", orchestrator)
+        self.assertIn("完整模型 JSON", orchestrator)
         for name in (
-            "flashdb-orchestrator.md",
-            "c-analyzer.md",
             "rust-implementer.md",
-            "repairer.md",
             "test-migrator.md",
             "test-semantic-reviewer.md",
         ):
-            agent = (PROJECT / "work" / "skills" / name).read_text(encoding="utf-8")
+            agent = (PROJECT / "work" / "subagent" / name).read_text(encoding="utf-8")
+            self.assertIn("mode: subagent", agent, name)
+            self.assertIn("task: deny", agent, name)
             self.assertIn('"* /tmp*": deny', agent, name)
             self.assertIn('"*=/tmp*": deny', agent, name)
             self.assertIn('"* /var/tmp*": deny', agent, name)
@@ -130,19 +145,16 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
 
     def test_context_contract_uses_bounded_automatic_worker_handoffs(self):
         instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
-        orchestrator = (PROJECT / "work" / "skills" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
-        implementer = (PROJECT / "work" / "skills" / "rust-implementer.md").read_text(encoding="utf-8")
-        repairer = (PROJECT / "work" / "skills" / "repairer.md").read_text(encoding="utf-8")
+        orchestrator = (PROJECT / "work" / "agents" / "flashdb-orchestrator.md").read_text(encoding="utf-8")
+        implementer = (PROJECT / "work" / "subagent" / "rust-implementer.md").read_text(encoding="utf-8")
         design = (PROJECT.parent / "design_doc" / "Q11-OpenCode上下文爆炸分析与优化方案.md").read_text(encoding="utf-8")
         self.assertIn("不得要求或接收 C/Rust 源码全文", instruction)
         self.assertIn("一个 failure cluster", instruction)
-        self.assertIn("新的 repair session", instruction)
+        self.assertIn("新的 `rust-implementer` session", instruction)
         self.assertIn("不得依赖用户第二次输入", orchestrator)
         self.assertIn("不得创建要求返回全文源码的 reader task", orchestrator)
         self.assertIn("完成一次最小实现或修复后立即返回", implementer)
         self.assertIn("不得自行进入下一轮验证、调试或扩大到其他 failure cluster", implementer)
-        self.assertIn("完成一次修改后立即返回", repairer)
-        self.assertIn("新的 repair session 接力", repairer)
         self.assertIn("不依赖 compact、插件、人工 continuation 或新的 primary session", design)
         self.assertNotIn("FULL content", instruction + orchestrator)
         self.assertNotIn("do not summarize", instruction + orchestrator)
@@ -173,7 +185,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         self.assertIn("真实 C compile/link/run", text)
 
     def test_semantic_reviewer_is_self_contained(self):
-        reviewer = (PROJECT / "work" / "skills" / "test-semantic-reviewer.md").read_text(encoding="utf-8")
+        reviewer = (PROJECT / "work" / "subagent" / "test-semantic-reviewer.md").read_text(encoding="utf-8")
         self.assertIn("对每个动态 C scenario，依次完成以下操作", reviewer)
         self.assertIn("关键 API、输入数据、初始化/控制配置、生命周期边界、操作顺序", reviewer)
         self.assertNotIn("评分平台的方案 B", reviewer)

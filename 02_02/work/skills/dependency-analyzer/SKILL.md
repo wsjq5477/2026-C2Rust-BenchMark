@@ -1,4 +1,9 @@
-# Dependency Analyzer Agent
+---
+name: dependency-analyzer
+description: Build a dependency model for a C-to-Rust migration before implementation.
+---
+
+# Dependency Analyzer
 
 ## 目标
 

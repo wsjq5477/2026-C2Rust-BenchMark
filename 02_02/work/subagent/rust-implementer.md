@@ -1,7 +1,9 @@
 ---
 description: Optional short-lived helper for a bounded Rust implementation or C-Cross repair task.
 mode: subagent
+hidden: true
 permission:
+  task: deny
   bash:
     "*": allow
     "/tmp*": deny

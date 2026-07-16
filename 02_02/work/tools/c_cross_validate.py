@@ -1239,7 +1239,7 @@ def _malformed_row(index: int, case: Any, c_cross: Path, root: Path) -> dict[str
         "diagnosis": "c_cross_harness_not_supported",
         "reason": reason,
         "log": _relative_log_path(log, root),
-        "handoff": "c-analyzer",
+        "handoff": "primary",
     }
 
 
@@ -1363,7 +1363,7 @@ def _expected_tests_by_suite(
 
 def _handoff_for_diagnosis(diagnosis: str) -> str:
     if diagnosis in {"c_model_signature_gap", "c_cross_harness_not_supported", "c_cross_result_parse_failed"}:
-        return "c-analyzer"
+        return "primary"
     if diagnosis in {
         "rust_staticlib_build_failed",
         "c_abi_layout_mismatch",
@@ -1713,7 +1713,7 @@ def build_matrix(
             "diagnosis": "c_cross_harness_not_supported",
             "reason": reason,
             "log": _relative_log_path(log, root),
-            "handoff": "c-analyzer",
+            "handoff": "primary",
         })
 
     compile_log: list[str] = []
@@ -1935,7 +1935,7 @@ def build_matrix(
                 "scenario_id": scenario_row.get("scenario_id"),
                 "scorer_case_id": scenario_row.get("scorer_case_id"),
                 "suite": scenario_row.get("suite"),
-                "handoff": "c-analyzer" if parse_failed else scenario_row.get("handoff"),
+                "handoff": "primary" if parse_failed else scenario_row.get("handoff"),
                 "reason": scenario_row.get("parse_reason") if parse_failed else scenario_row.get("reason"),
                 "log": scenario_row.get("log"),
                 "failure_layer": "protocol" if parse_failed else scenario_row.get("failure_layer"),

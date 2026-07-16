@@ -1,4 +1,9 @@
-# Compile Healer Agent
+---
+name: compile-healer
+description: Diagnose and repair a bounded Rust compile or test failure from real evidence.
+---
+
+# Compile Healer
 
 ## 目标
 

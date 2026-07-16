@@ -1,7 +1,9 @@
 ---
 description: Read-only semantic review of dynamically migrated FlashDB Rust tests.
 mode: subagent
+hidden: true
 permission:
+  task: deny
   bash:
     "*": allow
     "/tmp*": deny
