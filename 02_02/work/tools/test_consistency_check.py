@@ -240,7 +240,17 @@ def _review_issues(
         add_issue(issues, "invalid_semantic_review", "<review>", "schema_version must be 1")
     if review.get("reviewer_mode") not in REVIEWER_MODES:
         add_issue(issues, "invalid_semantic_review", "<review>", "reviewer_mode is invalid")
-    issues.extend({"code": "stale_consistency_evidence", "scenario_id": "<review>", "message": message} for message in _fingerprint_matches(root, review.get("input_fingerprint"), fingerprint))
+    freshness_errors = _fingerprint_matches(root, review.get("input_fingerprint"), fingerprint)
+    if freshness_errors:
+        summary["status"] = "stale"
+        summary["freshness_errors"] = freshness_errors
+        add_issue(
+            issues,
+            "stale_semantic_review",
+            "<review>",
+            "semantic review must be rerun for current inputs: " + "; ".join(freshness_errors),
+        )
+        return issues, summary
     if review.get("total_c_scenarios") != len(cases) or review.get("reviewed_scenarios") != len(cases):
         add_issue(issues, "incomplete_semantic_review", "<review>", "review must cover every dynamic C scenario")
     review_cases = review.get("cases")
@@ -370,11 +380,17 @@ def analyze_consistency(root: Path) -> dict[str, Any]:
     mapped_tests = {item.get("rust_test") for item in scenarios if isinstance(item.get("rust_test"), str)}
     rust_only = sorted(rust_test_functions(root, mapping) - mapped_tests)
     passed = 0
+    review_is_current_and_passed = review_summary.get("status") == "pass"
     rendered_scenarios: list[dict[str, Any]] = []
     for result in scenario_results:
         scenario_id = result["scenario_id"]
         case_issues = [item["code"] for item in issues if item.get("scenario_id") == scenario_id]
-        status = "pass" if not case_issues else "fail"
+        if case_issues:
+            status = "fail"
+        elif review_is_current_and_passed:
+            status = "pass"
+        else:
+            status = "unresolved"
         passed += status == "pass"
         rendered_scenarios.append({"scenario_id": scenario_id, "status": status, "issue_codes": case_issues})
     logic_mismatch = [item for item in issues if str(item.get("code", "")).startswith(("logic_mismatch", "semantic_review_"))]

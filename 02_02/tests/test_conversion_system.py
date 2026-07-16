@@ -30,6 +30,7 @@ def load_tool(name: str):
 GATE = load_tool("gate.py")
 PLACEHOLDER = load_tool("placeholder_check.py")
 CONSISTENCY = load_tool("test_consistency_check.py")
+TRIAGE = load_tool("test_failure_triage.py")
 
 
 def semantic_fixture(root: Path, *, review_status: str = "pass") -> dict:
@@ -274,6 +275,96 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             codes = {item["code"] for item in consistency["issues"]}
             self.assertIn("semantic_review_lifecycle", codes)
             self.assertIn("logic_mismatch", codes)
+            self.assertEqual("fail", consistency["scenarios"][0]["status"])
+
+    def test_test_and_report_contract_orders_real_repair_evidence(self):
+        instruction = (PROJECT / "INSTRUCTION.md").read_text(encoding="utf-8")
+        section = instruction.split("### 4. TEST_AND_REPORT", 1)[1]
+        placeholder = section.index("placeholder_check.py")
+        cargo = section.index("cargo_capture.py")
+        reviewer = section.index("test-semantic-reviewer.md")
+        consistency = section.index("test_consistency_check.py")
+        self.assertLess(placeholder, cargo)
+        self.assertLess(cargo, reviewer)
+        self.assertLess(reviewer, consistency)
+        self.assertIn("全部失败", section)
+        self.assertIn("不能自动证明测试预言错误", section)
+        self.assertIn("真实修改才消耗一轮", section)
+
+    def test_placeholder_uses_source_evidence_not_mapping_status(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            semantic_fixture(root)
+            mapping_path = root / "logs" / "trace" / "rust_test_mapping.json"
+            mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+            mapping["scenarios"][0]["implementation_status"] = "pending"
+            mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
+            report = PLACEHOLDER.analyze_placeholders(
+                root,
+                root / "flashDB_rust" / "tests",
+                mapping_path,
+            )
+            self.assertEqual("pass", report["status"])
+            self.assertNotIn("implementation_pending", {item["code"] for item in report["issues"]})
+
+    def test_stale_semantic_review_short_circuits_derived_mismatches(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            semantic_fixture(root, review_status="fail")
+            test_file = root / "flashDB_rust" / "tests" / "dynamic.rs"
+            test_file.write_text(test_file.read_text(encoding="utf-8") + "\n// changed\n", encoding="utf-8")
+            consistency = CONSISTENCY.analyze_consistency(root)
+            self.assertEqual("fail", consistency["status"])
+            self.assertEqual(1, consistency["issue_count"])
+            self.assertEqual("stale_semantic_review", consistency["issues"][0]["code"])
+            self.assertEqual("stale", consistency["semantic_review"]["status"])
+            self.assertEqual(0, consistency["passed_scenarios"])
+            self.assertEqual([], consistency["logic_mismatch"])
+
+    def test_triage_extracts_all_assertion_failures_without_guessing_oracle(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            trace = root / "logs" / "trace"
+            trace.mkdir(parents=True)
+            (trace / "rust_test_mapping.json").write_text(json.dumps({
+                "scenarios": [
+                    {"id": "case-a", "rust_test": "rust_case_a", "rust_file": "flashDB_rust/tests/a.rs", "source_file": "tests/a.c", "required_c_tests": ["test_a"]},
+                    {"id": "case-b", "rust_test": "rust_case_b", "rust_file": "flashDB_rust/tests/b.rs", "source_file": "tests/b.c", "required_c_tests": ["test_b"]},
+                ],
+            }), encoding="utf-8")
+            (trace / "cargo-test.log").write_text(
+                "---- suite::rust_case_a stdout ----\n"
+                "thread 'suite::rust_case_a' panicked at tests/a.rs:10:5:\n"
+                "assertion failed: expected_a\n\n"
+                "---- suite::rust_case_b stdout ----\n"
+                "thread 'suite::rust_case_b' panicked at tests/b.rs:20:5:\n"
+                "assertion `left == right` failed\n  left: 4\n right: 5\n\n"
+                "failures:\n    suite::rust_case_a\n    suite::rust_case_b\n",
+                encoding="utf-8",
+            )
+            records = TRIAGE.build_records(root, trace)
+            self.assertEqual(["rust_case_a", "rust_case_b"], [item["failed_test"] for item in records])
+            self.assertEqual(["case-a", "case-b"], [item["scenario_id"] for item in records])
+            self.assertTrue(all(item["classification"] == "insufficient_evidence" for item in records))
+            self.assertTrue(all(not item["allow_src_edit"] for item in records))
+            self.assertNotIn("test_oracle_suspect", {item["classification"] for item in records})
+
+    def test_triage_authorizes_only_evidenced_production_source_location(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            trace = root / "logs" / "trace"
+            trace.mkdir(parents=True)
+            (trace / "cargo-test.log").write_text(
+                "---- suite::rust_case stdout ----\n"
+                "thread 'suite::rust_case' panicked at flashDB_rust/src/storage.rs:42:9:\n"
+                "storage invariant failed\n\n"
+                "failures:\n    suite::rust_case\n",
+                encoding="utf-8",
+            )
+            record = TRIAGE.build_records(root, trace)[0]
+            self.assertEqual("rust_impl_suspect", record["classification"])
+            self.assertTrue(record["allow_src_edit"])
+            self.assertEqual(["flashDB_rust/src/storage.rs"], record["allowed_edit_scope"])
 
     def test_final_gate_rejects_stale_test_evidence(self):
         with project_temp_directory() as directory:

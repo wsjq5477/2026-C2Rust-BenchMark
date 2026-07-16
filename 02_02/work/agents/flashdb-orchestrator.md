@@ -66,11 +66,11 @@ python3 work/tools/gate.py --stage VERIFY_AND_REPAIR --root .
 
 ### TEST_AND_REPORT
 
-迁移 Rust tests 后，先运行 `placeholder_check.py`，再按照 `work/subagent/test-semantic-reviewer.md` 进行独立、只读的逐场景审查，写入 `test-semantic-review.json`；最后运行 `test_consistency_check.py` 汇总动态 mapping、源码 evidence 和审查结论。mapping 自称的 coverage/evidence 不能替代这次审查。
+迁移 Rust tests 后，先运行 `placeholder_check.py` 和 `cargo_capture.py`。`implementation_status`、mapping 自称的 coverage/evidence 都不是通过证据。Cargo 失败时消费 `test-failure-triage.jsonl` 中的全部失败；assertion mismatch 不得自动归为测试预言错误，必须对照映射的 C test/helper、Rust test、setup、数据、生命周期和同场景 C-Cross 证据后再决定修改 tests/mapping 或 Rust 生产源码。
 
-若 placeholder、审查或 consistency 失败，只把失败 scenario 的 C/Rust evidence 与 differences 交给测试迁移者；最小修复后重跑 placeholder、Reviewer、consistency，最多两轮。优先用新的独立 reviewer session；没有可用 subagent 时，主执行者必须先完成单独的只读审查步骤，再开始修复。修复耗尽仍保留失败结果并生成报告。
+Cargo 通过后，按照 `work/subagent/test-semantic-reviewer.md` 进行独立、只读的逐场景审查，写入 `test-semantic-review.json`；最后运行 `test_consistency_check.py`。任一检查失败时只把失败 scenario 的局部证据交给对应修改者；最小修复后从 placeholder、Cargo、fresh Reviewer、consistency 完整重跑，最多两轮。只有真实源码或 mapping 修改才消耗轮次，刷新 stale reviewer 不计轮次；修改生产源码后必须重新运行最终全量 C-Cross。优先用新的独立 reviewer session；没有可用 subagent 时，主执行者必须先完成单独的只读审查步骤，再开始修复。修复耗尽仍保留失败结果并生成报告。
 
-检查结果必须与当前 C model、Rust tests、mapping 指纹匹配。之后运行 cargo capture 和 unsafe ratio，写入阶段日志与最终验证摘要，生成报告，然后运行：
+检查结果必须与当前 C model、Rust tests、mapping 指纹匹配。之后运行 unsafe ratio，写入阶段日志与最终验证摘要，生成报告，然后运行：
 
 ```bash
 python3 work/tools/gate.py --stage FINAL --root .

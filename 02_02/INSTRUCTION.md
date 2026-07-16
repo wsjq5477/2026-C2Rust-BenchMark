@@ -95,24 +95,31 @@ python3 work/tools/migrate_tests.py \
   --mapping logs/trace/rust_test_mapping.json
 ```
 
-每一轮测试迁移或 mapping 修改后，先运行确定性占位检查；随后按 [test-semantic-reviewer.md](work/subagent/test-semantic-reviewer.md) 完成一次独立、只读的逐场景 C/Rust 审查，再汇总一致性结果：
+每一轮测试迁移或 mapping 修改后，先运行确定性占位检查和真实 Cargo 验证。`implementation_status` 只是 mapping 中的任务提示，不能作为通过证据；不得通过机械修改该字段消除失败。
 
 ```bash
 python3 work/tools/placeholder_check.py \
   --root . --tests flashDB_rust/tests \
   --mapping logs/trace/rust_test_mapping.json \
   --output logs/trace/test-placeholder-check.json
+python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace || true
+```
+
+`cargo-results.json.test_status` 失败时，必须消费 `test-failure-triage.jsonl` 中的全部失败，而不是只处理第一项。triage 的 assertion 只能证明发生了不一致，不能自动证明测试预言错误。必须对照映射的 C test/helper、Rust test、setup、数据、生命周期和同场景 C-Cross 证据后，才能决定修改 tests/mapping 还是经证据授权修改 `flashDB_rust/src/`。
+
+Cargo 通过后，按 [test-semantic-reviewer.md](work/subagent/test-semantic-reviewer.md) 完成一次独立、只读的逐场景 C/Rust 审查，再汇总一致性结果：
+
+```bash
 # 按 work/subagent/test-semantic-reviewer.md 只写 logs/trace/test-semantic-review.json
 python3 work/tools/test_consistency_check.py \
   --root . --out logs/trace/test-consistency.json
 ```
 
-若任一检查失败，只读取失败 scenario 的 C/Rust evidence 和 differences，最小修改测试或 mapping 后完整重跑上述三步；最多两轮修复。两轮后仍失败时保留失败 JSON，继续生成报告，不能伪造通过。
+placeholder、Cargo、semantic review 或 consistency 任一失败时，只读取失败 scenario 的局部证据并做最小修改，然后从 placeholder、Cargo、fresh reviewer、consistency 完整重跑。最多两轮测试修复；只有 tests、mapping 或经 C 证据授权的 Rust 生产源码发生真实修改才消耗一轮，单纯重跑 reviewer、刷新 fingerprint 或修改状态字段不计轮次。修改生产源码后还必须重新运行最终全量 C-Cross。两轮后仍失败时保留失败产物并继续生成报告，不能伪造通过。
 
-全部检查完成后捕获 Rust 测试并计算 unsafe ratio：
+上述检查完成或修复预算耗尽后计算 unsafe ratio：
 
 ```bash
-python3 work/tools/cargo_capture.py --project flashDB_rust --out logs/trace || true
 python3 work/tools/unsafe_ratio.py --project flashDB_rust --out logs/trace/unsafe-ratio.json
 ```
 
