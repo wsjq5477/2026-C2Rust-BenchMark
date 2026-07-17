@@ -1,6 +1,22 @@
-02_02/flashDB_rust/
+# Generated migration outputs (match at any directory depth)
+flashDB_rust/
+logs/
+log/
+result/
+results/
+reports/
+
+# Build and temporary outputs
+target/
+tmp/
+*.log
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Per-run OpenCode workspace
 02_02/.opencode/
-02_02/logs/
-02_02/reports/
-02_02/result/
-*__pycache__*
+
+# Keep the GPT reference baseline under version control
+!02_02_gpt/**
