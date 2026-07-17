@@ -426,6 +426,53 @@ def analyze_consistency(root: Path) -> dict[str, Any]:
     }
 
 
+def capture_validated_and_restore_regression(root: Path) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    try:
+        previous_best = submission_snapshot.select_best(root)
+    except (OSError, ValueError, json.JSONDecodeError):
+        previous_best = {}
+    captured = submission_snapshot.capture(root, kind="validated")
+    previous_score = previous_best.get("score_vector")
+    current_score = captured.get("score_vector")
+    should_restore = bool(
+        previous_best.get("kind") == "validated"
+        and isinstance(previous_score, list)
+        and isinstance(current_score, list)
+        and current_score < previous_score
+        and captured.get("promoted") is False
+    )
+    if not should_restore:
+        return captured, None
+    try:
+        restored = submission_snapshot.restore_best(
+            root,
+            reason="regression",
+            restore_evidence=False,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        evidence = {
+            "status": "best_restore_failed",
+            "reason": "validated_test_score_regression",
+            "regressed_snapshot_id": captured.get("snapshot_id"),
+            "regressed_score_vector": current_score,
+            "error": str(exc),
+            "next_action": "repair_best_restore",
+        }
+        write_json(root / "logs" / "trace" / "test-regression-restore.json", evidence)
+        return captured, evidence
+    evidence = {
+        "status": "restore_confirmation_required",
+        "reason": "validated_test_score_regression",
+        "regressed_snapshot_id": captured.get("snapshot_id"),
+        "regressed_score_vector": current_score,
+        "restored_snapshot_id": restored.get("snapshot_id"),
+        "restored_score_vector": restored.get("score_vector"),
+        "next_action": "rerun_cargo_semantic_review_and_consistency",
+    }
+    write_json(root / "logs" / "trace" / "test-regression-restore.json", evidence)
+    return captured, evidence
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate migrated Rust tests and a read-only semantic review.")
     parser.add_argument("--root", default=".", help="Workbench root directory.")
@@ -468,21 +515,29 @@ def main(argv: list[str] | None = None) -> int:
         full_confirmation_id=confirmation_id,
     )
     report["work_queue"] = repair_work_queue.phase_summary(queue_phase)
+    regression_restore: dict[str, Any] | None = None
     if args.out:
         write_json(Path(args.out), report)
         if report.get("total_scenarios"):
             try:
-                snapshot = submission_snapshot.capture(root.resolve(), kind="validated")
+                snapshot, regression_restore = capture_validated_and_restore_regression(root.resolve())
                 report["submission_snapshot"] = snapshot
+                if regression_restore is not None:
+                    report["convergence_status"] = regression_restore["status"]
+                    report["submission_regression_restore"] = regression_restore
+                else:
+                    (root.resolve() / "logs" / "trace" / "test-regression-restore.json").unlink(missing_ok=True)
                 write_json(Path(args.out), report)
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 report["submission_snapshot_error"] = str(exc)
                 write_json(Path(args.out), report)
-    print("TEST_CONSISTENCY_CHECK: " + report["status"].upper())
+    print("TEST_CONSISTENCY_CHECK: " + (
+        str(regression_restore["status"]).upper() if regression_restore is not None else report["status"].upper()
+    ))
     print(f"issues={report['issue_count']}")
     for issue in report["issues"]:
         print(f"- {issue['scenario_id']}: {issue['code']}: {issue['message']}")
-    return 0 if report["status"] == "pass" else 1
+    return 1 if regression_restore is not None else 0 if report["status"] == "pass" else 1
 
 
 if __name__ == "__main__":

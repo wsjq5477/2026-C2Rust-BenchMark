@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import contest_guard
+import final_receipt
 import submission_snapshot
 
 
@@ -74,6 +75,7 @@ def start(root: Path, *, freeze_after_seconds: float) -> dict[str, Any]:
         return existing
 
     submission_snapshot.unprotect_submission(root)
+    final_receipt.invalidate(root)
     for name in (
         "ready.json",
         "freeze-requested.json",
@@ -267,6 +269,14 @@ def stop(root: Path) -> dict[str, Any]:
     run = _read(control / "run.json")
     if not run:
         return {"status": "not_started"}
+    if run.get("status") == "frozen":
+        return {"status": "frozen", "run_id": run.get("run_id"), "watchdog_alive": False}
+    receipt_verification = final_receipt.verify(root, expected_run_id=str(run.get("run_id")))
+    if not receipt_verification.get("valid"):
+        raise ValueError(
+            "NORMAL_FINAL_NOT_READY: "
+            + "; ".join(receipt_verification.get("errors") or ["FINAL receipt is invalid"])
+        )
     _atomic_json(control / "stop-requested.json", {"run_id": run.get("run_id"), "status": "stop_requested"})
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline and _pid_alive(run.get("watchdog_pid")):
@@ -276,6 +286,7 @@ def stop(root: Path) -> dict[str, Any]:
         "status": stopped.get("status", "stop_requested"),
         "run_id": run.get("run_id"),
         "watchdog_alive": _pid_alive(run.get("watchdog_pid")),
+        "final_receipt": "valid",
     }
 
 

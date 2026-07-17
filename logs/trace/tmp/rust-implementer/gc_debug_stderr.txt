@@ -1,0 +1,32 @@
+[DBG] set_kv fail key=kv3 vlen=1005 r=6 gc_req=false oldest=0 sec=4096 max=16384
+[DBG] sec_cache[4] addr=12288 store=1 dirty=1 remain=4082 ekv=12302
+[DBG] sec_cache[5] addr=8192 store=2 dirty=1 remain=1004 ekv=11284
+[DBG] sec_cache[6] addr=4096 store=2 dirty=2 remain=1004 ekv=7188
+[DBG] sec_cache[7] addr=0 store=2 dirty=2 remain=1004 ekv=3092
+  FAIL test_fdb_gc: result == FDB_NO_ERR (line 397)
+[DBG] set_kv fail key=kv0 vlen=1005 r=6 gc_req=false oldest=0 sec=4096 max=16384
+[DBG] sec_cache[4] addr=12288 store=1 dirty=1 remain=4082 ekv=12302
+[DBG] sec_cache[5] addr=8192 store=2 dirty=1 remain=1004 ekv=11284
+[DBG] sec_cache[6] addr=4096 store=2 dirty=2 remain=1004 ekv=7188
+[DBG] sec_cache[7] addr=0 store=2 dirty=2 remain=1004 ekv=3092
+[DBG] set_kv fail key=kv1 vlen=1005 r=6 gc_req=false oldest=0 sec=4096 max=16384
+[DBG] sec_cache[4] addr=12288 store=1 dirty=1 remain=4082 ekv=12302
+[DBG] sec_cache[5] addr=8192 store=2 dirty=1 remain=1004 ekv=11284
+[DBG] sec_cache[6] addr=4096 store=2 dirty=2 remain=1004 ekv=7188
+[DBG] sec_cache[7] addr=0 store=2 dirty=2 remain=1004 ekv=3092
+[DBG] set_kv fail key=kv2 vlen=1005 r=6 gc_req=false oldest=0 sec=4096 max=16384
+[DBG] sec_cache[4] addr=12288 store=1 dirty=1 remain=4082 ekv=12302
+[DBG] sec_cache[5] addr=8192 store=2 dirty=1 remain=1004 ekv=11284
+[DBG] sec_cache[6] addr=4096 store=2 dirty=2 remain=1004 ekv=7188
+[DBG] sec_cache[7] addr=0 store=2 dirty=2 remain=1004 ekv=3092
+[DBG] set_kv fail key=kv3 vlen=1005 r=6 gc_req=false oldest=0 sec=4096 max=16384
+[DBG] sec_cache[4] addr=12288 store=1 dirty=1 remain=4082 ekv=12302
+[DBG] sec_cache[5] addr=8192 store=2 dirty=1 remain=1004 ekv=11284
+[DBG] sec_cache[6] addr=4096 store=2 dirty=2 remain=1004 ekv=7188
+[DBG] sec_cache[7] addr=0 store=2 dirty=2 remain=1004 ekv=3092
+[DBG] set_kv fail key=kv5 vlen=2010 r=6 gc_req=false oldest=0 sec=4096 max=16384
+[DBG] sec_cache[4] addr=12288 store=1 dirty=1 remain=4082 ekv=12302
+[DBG] sec_cache[5] addr=8192 store=2 dirty=1 remain=1046 ekv=11242
+[DBG] sec_cache[6] addr=4096 store=2 dirty=2 remain=1004 ekv=7188
+[DBG] sec_cache[7] addr=0 store=2 dirty=2 remain=1004 ekv=3092
+  FAIL test_fdb_gc2: result == FDB_NO_ERR (line 397)

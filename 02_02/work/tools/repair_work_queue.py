@@ -9,6 +9,7 @@ the remaining dynamically discovered work.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
@@ -124,6 +125,9 @@ def sync_tasks(
     # Inputs are dynamic.  Removed tasks are retained for audit but do not
     # participate in convergence for the current phase scope.
     phase["dynamic_task_ids"] = sorted(dynamic)
+    phase["dynamic_scope_fingerprint"] = hashlib.sha256(
+        json.dumps(sorted(dynamic)).encode("utf-8")
+    ).hexdigest()
     if full:
         phase["last_full_confirmation_id"] = full_confirmation_id
     _promote_second_sweep(phase)
@@ -236,6 +240,7 @@ def phase_summary(phase: dict[str, Any]) -> dict[str, Any]:
         "pending_task_ids": sorted(pending),
         "sweep": int(phase.get("sweep", 1)),
         "last_full_confirmation_id": phase.get("last_full_confirmation_id"),
+        "dynamic_scope_fingerprint": phase.get("dynamic_scope_fingerprint"),
     }
 
 

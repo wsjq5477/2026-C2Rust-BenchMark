@@ -317,6 +317,9 @@ def final_c_cross_verified(matrix: dict[str, Any], attempts: list[dict[str, Any]
     return (
         matrix.get("mode") == "full"
         and matrix.get("scope") == "all"
+        and matrix.get("scope_kind") == "full"
+        and isinstance(matrix.get("scope_ids"), list)
+        and isinstance(matrix.get("scope_fingerprint"), str)
         and matrix.get("attempt_kind") == "final"
         and isinstance(scenarios, list)
         and bool(scenarios)
@@ -341,6 +344,9 @@ def failed_c_cross_final_verified(
         and convergence.get("execution_id") == matrix.get("execution_id")
         and matrix.get("mode") == "full"
         and matrix.get("scope") == "all"
+        and matrix.get("scope_kind") == "full"
+        and isinstance(matrix.get("scope_ids"), list)
+        and isinstance(matrix.get("scope_fingerprint"), str)
         and matrix.get("attempt_kind") == "confirmation"
         and isinstance(scenarios, list)
         and bool(scenarios)
@@ -465,6 +471,7 @@ def write_report(root: Path, output: Path, issues: Path) -> str:
         and cargo["test_execution"].get("status") == "pass"
         and placeholders.get("status") == "pass"
         and consistency.get("status") == "pass"
+        and consistency.get("convergence_status") not in {"restore_confirmation_required", "best_restore_failed"}
         and evidence_current
         and _unsafe_ratio_passes(ratio)
     )

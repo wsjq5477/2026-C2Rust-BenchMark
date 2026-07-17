@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -44,6 +45,7 @@ REPORT = load_tool("report_writer.py")
 QUEUE = load_tool("repair_work_queue.py")
 SNAPSHOT = load_tool("submission_snapshot.py")
 WATCHDOG = load_tool("contest_watchdog.py")
+FINAL_RECEIPT = load_tool("final_receipt.py")
 
 
 def implementation_fixture(root: Path, *, implemented: bool = False) -> dict:
@@ -194,6 +196,7 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             "unsafe_ratio.py",
             "report_writer.py",
             "gate.py",
+            "final_receipt.py",
         }
         present = {path.name for path in TOOLS.glob("*.py")}
         self.assertTrue(required.issubset(present))
@@ -310,6 +313,8 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             self.assertIn("Rust tests: `not_run`", report)
             self.assertIn("unsafe ratio: `not_run`", report)
             self.assertEqual([], GATE.check_final(root))
+            self.assertEqual(0, GATE.main(["--stage", "FINAL", "--root", str(root)]))
+            self.assertTrue(FINAL_RECEIPT.verify(root)["valid"])
 
     def test_implement_failed_final_can_report_current_build_failure(self):
         with project_temp_directory() as directory:
@@ -429,6 +434,10 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
         self.assertIn("queued scenario", instruction)
         self.assertIn("完成一次真实修改后立即返回", instruction)
         self.assertIn("验证失败时使用新 session", orchestrator)
+        self.assertIn("restore_confirmation_required", instruction)
+        self.assertIn("final-gate-receipt.json", instruction)
+        self.assertIn("NORMAL_FINAL_NOT_READY", instruction)
+        self.assertIn("targeted/suite/full score 禁止跨 scope 比较", orchestrator)
 
     def test_global_repair_budget_constants_are_removed(self):
         sources = "\n".join(
@@ -959,9 +968,12 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             root = Path(directory)
             cross_dir = root / "logs" / "trace" / "c-cross"
             cross_dir.mkdir(parents=True)
-            (root / "logs" / "trace" / "validation-matrix.json").write_text(
-                json.dumps({
+            matrix = {
                     "execution_id": "attempt-1",
+                    "mode": "full",
+                    "scope": "all",
+                    "attempt_kind": "checkpoint",
+                    "scenarios": [{"scenario_id": "dynamic-case", "rust_impl_c_test": "fail"}],
                     "convergence": {
                         "status": "repair_required",
                         "terminal": False,
@@ -977,7 +989,10 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
                             "last_full_confirmation_id": None,
                         },
                     },
-                }), encoding="utf-8"
+                }
+            matrix.update(GATE.expected_matrix_scope(matrix))
+            (root / "logs" / "trace" / "validation-matrix.json").write_text(
+                json.dumps(matrix), encoding="utf-8"
             )
             (cross_dir / "attempts.jsonl").write_text(
                 json.dumps({"attempt_id": "attempt-1", "kind": "checkpoint"}) + "\n",
@@ -1281,6 +1296,162 @@ class SimplifiedWorkbenchContractTests(unittest.TestCase):
             errors = GATE.check_test_quality(root)
             self.assertIn("test-placeholder-check.json is stale or does not match current inputs", errors)
             self.assertIn("test-consistency.json is stale or does not match current inputs", errors)
+
+    def test_final_request_requires_current_full_ready_state(self):
+        current_manifest = {"flashDB_rust/src/lib.rs": "digest"}
+        ready = CROSS.annotate_matrix_scope({
+            "mode": "full",
+            "scope": "all",
+            "attempt_kind": "confirmation",
+            "execution_id": "confirm-1",
+            "scenarios": [{"scenario_id": "case-a", "rust_impl_c_test": "pass"}],
+            "convergence": {"status": "ready_for_final"},
+        })
+        attempts = [{
+            "attempt_id": "confirm-1",
+            "source_manifest": current_manifest,
+            "regression": False,
+        }]
+        self.assertEqual([], CROSS.validate_final_request(ready, attempts, current_manifest))
+        failed = {**ready, "scenarios": [{"scenario_id": "case-a", "rust_impl_c_test": "fail"}]}
+        errors = CROSS.validate_final_request(failed, attempts, current_manifest)
+        self.assertTrue(any("every full-scope scenario passed" in error for error in errors))
+
+    def test_full_scope_regression_auto_restores_runtime_best(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            project = root / "flashDB_rust"
+            c_cross = root / "logs" / "trace" / "c-cross"
+            queue_path = root / "logs" / "trace" / "repair-work-queue.json"
+            source = project / "src" / "lib.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text("pub fn value() -> u8 { 15 }\n", encoding="utf-8")
+            CROSS._snapshot_project(
+                c_cross,
+                project,
+                attempt_id="best-15",
+                score=[15, 0, -9, 45],
+                scope_fingerprint="full-scope",
+                scenario_ids=["case-a"],
+            )
+            source.write_text("pub fn value() -> u8 { 13 }\n", encoding="utf-8")
+            QUEUE.sync_tasks(queue_path, "c_cross", ["case-a"])
+            matrix = CROSS.annotate_matrix_scope({
+                "mode": "full",
+                "scope": "all",
+                "scenarios": [{"scenario_id": "case-a", "rust_impl_c_test": "fail"}],
+            })
+            attempt = {"attempt_id": "regressed-13", "kind": "confirmation", "regression": True}
+            result = CROSS.auto_restore_regressed_full_attempt(
+                c_cross, project, queue_path, attempt, matrix, [attempt]
+            )
+            self.assertIsNotNone(result)
+            convergence, restore = result
+            self.assertEqual("restore_confirmation_required", convergence["status"])
+            self.assertEqual("run_full_confirmation", convergence["next_action"])
+            self.assertEqual("restored", restore["status"])
+            self.assertEqual("pub fn value() -> u8 { 15 }\n", source.read_text(encoding="utf-8"))
+
+    def test_targeted_attempt_cannot_replace_full_runtime_best(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            project = root / "flashDB_rust"
+            c_cross = root / "logs" / "trace" / "c-cross"
+            source = project / "src" / "lib.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text("pub fn value() -> u8 { 15 }\n", encoding="utf-8")
+            CROSS._snapshot_project(
+                c_cross,
+                project,
+                attempt_id="best-full",
+                score=[15, 0, -9, 45],
+                scope_fingerprint="full-scope",
+                scenario_ids=["case-a", "case-b"],
+            )
+            targeted = CROSS.annotate_matrix_scope({
+                "execution_id": "targeted-1",
+                "mode": "full",
+                "scope": "selected",
+                "selected_scenarios": ["case-a"],
+                "scenarios": [{"scenario_id": "case-a", "rust_impl_c_test": "pass"}],
+            })
+            attempt = CROSS.record_attempt(
+                c_cross,
+                None,
+                targeted,
+                attempt_kind="checkpoint",
+                trigger="fixture",
+                changed_files=[],
+                project_root=project,
+                source_manifest=CROSS._source_manifest(project),
+            )
+            best = json.loads((c_cross / "snapshots" / "best.json").read_text(encoding="utf-8"))
+            self.assertEqual("targeted", attempt["scope_kind"])
+            self.assertEqual("best-full", best["attempt_id"])
+
+    def test_regression_restore_keeps_validation_evidence_for_fresh_rerun(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            project = root / "flashDB_rust"
+            trace = root / "logs" / "trace"
+            source = project / "src" / "lib.rs"
+            source.parent.mkdir(parents=True)
+            trace.mkdir(parents=True)
+            (project / "Cargo.toml").write_text("[package]\nname='fixture'\nversion='0.1.0'\n", encoding="utf-8")
+            source.write_text("pub fn value() -> u8 { 1 }\n", encoding="utf-8")
+            cargo_path = trace / "cargo-results.json"
+            cargo_path.write_text(json.dumps({"build_status": "pass", "marker": "best"}), encoding="utf-8")
+            SNAPSHOT.capture(root, kind="baseline")
+            source.write_text("pub fn value() -> u8 { 0 }\n", encoding="utf-8")
+            cargo_path.write_text(json.dumps({"build_status": "pass", "marker": "current"}), encoding="utf-8")
+            restored = SNAPSHOT.restore_best(root, reason="regression")
+            self.assertEqual("pub fn value() -> u8 { 1 }\n", source.read_text(encoding="utf-8"))
+            self.assertEqual("current", json.loads(cargo_path.read_text(encoding="utf-8"))["marker"])
+            self.assertEqual([], restored["restored_evidence"])
+            self.assertEqual("fresh_confirmation_required", restored["evidence_mode"])
+
+    def test_test_score_regression_requests_fresh_confirmation(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            (root / "logs" / "trace").mkdir(parents=True)
+            previous = {"kind": "validated", "score_vector": [1, 15, 15, 15, 15, 0, -9]}
+            captured = {
+                "snapshot_id": "lower",
+                "score_vector": [1, 13, 13, 13, 13, -5, -11],
+                "promoted": False,
+            }
+            restored = {"snapshot_id": "best", "score_vector": previous["score_vector"]}
+            with mock.patch.object(CONSISTENCY.submission_snapshot, "select_best", return_value=previous), \
+                 mock.patch.object(CONSISTENCY.submission_snapshot, "capture", return_value=captured), \
+                 mock.patch.object(CONSISTENCY.submission_snapshot, "restore_best", return_value=restored) as restore_call:
+                _, evidence = CONSISTENCY.capture_validated_and_restore_regression(root)
+            self.assertEqual("restore_confirmation_required", evidence["status"])
+            self.assertEqual("rerun_cargo_semantic_review_and_consistency", evidence["next_action"])
+            restore_call.assert_called_once_with(root, reason="regression", restore_evidence=False)
+
+    def test_watchdog_normal_stop_requires_current_final_receipt(self):
+        with project_temp_directory() as directory:
+            root = Path(directory)
+            project = root / "flashDB_rust"
+            (project / "src").mkdir(parents=True)
+            (project / "Cargo.toml").write_text("[package]\nname='fixture'\nversion='0.1.0'\n", encoding="utf-8")
+            source = project / "src" / "lib.rs"
+            source.write_text("pub fn value() -> u8 { 1 }\n", encoding="utf-8")
+            (root / "result").mkdir(parents=True)
+            (root / "result" / "output.md").write_text("STATUS: FAILED\n", encoding="utf-8")
+            WATCHDOG.start(root, freeze_after_seconds=60)
+            with self.assertRaisesRegex(ValueError, "NORMAL_FINAL_NOT_READY"):
+                WATCHDOG.stop(root)
+            FINAL_RECEIPT.create(root, terminal_status="failed_final")
+            source.write_text("pub fn value() -> u8 { 2 }\n", encoding="utf-8")
+            self.assertFalse(FINAL_RECEIPT.verify(root)["valid"])
+            with self.assertRaisesRegex(ValueError, "NORMAL_FINAL_NOT_READY"):
+                WATCHDOG.stop(root)
+            source.write_text("pub fn value() -> u8 { 1 }\n", encoding="utf-8")
+            FINAL_RECEIPT.create(root, terminal_status="failed_final")
+            stopped = WATCHDOG.stop(root)
+            self.assertEqual("stopped", stopped["status"])
+            self.assertEqual("valid", stopped["final_receipt"])
 
 
 if __name__ == "__main__":

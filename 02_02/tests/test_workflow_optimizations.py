@@ -157,6 +157,7 @@ def write_successful_c_cross_evidence(root: Path) -> None:
         "scenarios": [{"scenario_id": "dynamic-case", "rust_impl_c_test": "pass"}],
         "convergence": convergence,
     }
+    matrix.update(GATE.expected_matrix_scope(matrix))
     (trace / "validation-matrix.json").write_text(json.dumps(matrix), encoding="utf-8")
     (cross / "attempts.jsonl").write_text(
         json.dumps({"attempt_id": "final-1", "kind": "final"}) + "\n",
@@ -191,6 +192,7 @@ class ResultEvidenceTests(unittest.TestCase):
             "execution_id": "final-1",
             "scenarios": [{"rust_impl_c_test": "pass"}],
         }
+        passing.update(GATE.expected_matrix_scope(passing))
         self.assertTrue(REPORT.final_c_cross_verified(passing, [{"attempt_id": "final-1", "kind": "final"}]))
         self.assertFalse(REPORT.final_c_cross_verified(passing, [{"attempt_id": "older", "kind": "final"}]))
 
@@ -224,13 +226,15 @@ class ResultEvidenceTests(unittest.TestCase):
             semantic_fixture(root)
             (trace / "cargo-results.json").write_text(json.dumps({"build_status": "fail", "test_status": "fail"}), encoding="utf-8")
             (trace / "unsafe-ratio.json").write_text(json.dumps({"unsafe_ratio": 0.2}), encoding="utf-8")
-            (trace / "validation-matrix.json").write_text(json.dumps({
+            matrix = {
                 "mode": "full",
                 "scope": "all",
                 "attempt_kind": "confirmation",
                 "execution_id": "confirm-1",
                 "scenarios": [{"scenario_id": "dynamic-case", "rust_impl_c_test": "fail", "reason": "mismatch"}],
-            }), encoding="utf-8")
+            }
+            matrix.update(GATE.expected_matrix_scope(matrix))
+            (trace / "validation-matrix.json").write_text(json.dumps(matrix), encoding="utf-8")
             repair_attempts = [{"attempt_id": "confirm-1", "kind": "confirmation"}]
             (trace / "c-cross" / "attempts.jsonl").write_text(
                 "".join(json.dumps(row) + "\n" for row in repair_attempts),

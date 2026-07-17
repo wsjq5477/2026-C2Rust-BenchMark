@@ -4,14 +4,20 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
 from typing import Any
 
+import final_receipt
+
 
 VALID_CROSS_RESULTS = {"pass", "fail", "not_run", "not_supported", "parse_failed", "unresolved"}
-VALID_CONVERGENCE_STATES = {"repair_required", "ready_for_final", "success", "failed_final"}
+VALID_CONVERGENCE_STATES = {
+    "repair_required", "restore_confirmation_required", "best_restore_failed",
+    "ready_for_final", "success", "failed_final",
+}
 
 
 def load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -52,6 +58,29 @@ def queue_phase_summary(root: Path, phase_name: str) -> tuple[dict[str, Any], st
     if not isinstance(phase, dict) or not isinstance(phase.get("summary"), dict):
         return {}, f"missing repair queue phase {phase_name}"
     return phase["summary"], None
+
+
+def expected_matrix_scope(matrix: dict[str, Any]) -> dict[str, Any]:
+    scenarios = matrix.get("scenarios") if isinstance(matrix.get("scenarios"), list) else []
+    scope_ids = sorted({
+        str(row.get("scenario_id") or row.get("source_test"))
+        for row in scenarios
+        if isinstance(row, dict) and (row.get("scenario_id") or row.get("source_test"))
+    })
+    if matrix.get("mode") == "full" and matrix.get("scope") == "all":
+        scope_kind = "full"
+    elif matrix.get("scope") == "selected" and matrix.get("selected_scenarios"):
+        scope_kind = "targeted"
+    elif matrix.get("scope") == "selected" and matrix.get("selected_suites"):
+        scope_kind = "suite"
+    else:
+        scope_kind = "partial"
+    payload = {"scope_kind": scope_kind, "mode": matrix.get("mode"), "scenario_ids": scope_ids}
+    return {
+        "scope_kind": scope_kind,
+        "scope_ids": scope_ids,
+        "scope_fingerprint": hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest(),
+    }
 
 
 def require_paths(root: Path, paths: list[str]) -> list[str]:
@@ -260,6 +289,11 @@ def check_convergence(root: Path) -> tuple[dict[str, Any] | None, list[str]]:
         errors.append(f"validation-matrix.json: {matrix_error}")
     elif summary.get("execution_id") != matrix.get("execution_id"):
         errors.append("failure-summary.json must match the current validation matrix")
+    if isinstance(matrix, dict):
+        expected_scope = expected_matrix_scope(matrix)
+        for key, value in expected_scope.items():
+            if matrix.get(key) != value:
+                errors.append(f"validation-matrix.json {key} is missing or inconsistent")
     attempts, attempts_error = load_jsonl(cross / "attempts.jsonl")
     if attempts_error:
         errors.append(f"c-cross/attempts.jsonl: {attempts_error}")
@@ -279,7 +313,14 @@ def check_convergence(root: Path) -> tuple[dict[str, Any] | None, list[str]]:
             rows = [row for row in scenarios if isinstance(row, dict)] if isinstance(scenarios, list) else []
             all_pass = bool(rows) and all(row.get("rust_impl_c_test") == "pass" for row in rows)
             full_scope = matrix.get("mode") == "full" and matrix.get("scope") == "all"
-            if all_pass and full_scope and matrix.get("attempt_kind") == "final":
+            auto_restore = matrix.get("auto_restore") if isinstance(matrix.get("auto_restore"), dict) else {}
+            if auto_restore.get("status") == "restored":
+                expected_status = "restore_confirmation_required"
+                expected_next_action = "run_full_confirmation"
+            elif auto_restore.get("status") == "failed":
+                expected_status = "best_restore_failed"
+                expected_next_action = "repair_best_restore"
+            elif all_pass and full_scope and matrix.get("attempt_kind") == "final":
                 expected_status = "success"
                 expected_next_action = "report_success"
             elif all_pass and full_scope:
@@ -317,6 +358,10 @@ def check_verify_and_repair(root: Path) -> list[str]:
     if convergence is not None and convergence.get("status") == "repair_required":
         pending = convergence.get("work_queue", {}).get("pending_task_ids", []) if isinstance(convergence.get("work_queue"), dict) else []
         errors.append(f"C-Cross convergence is repair_required; continue queued tasks ({len(pending)} pending)")
+    elif convergence is not None and convergence.get("status") == "restore_confirmation_required":
+        errors.append("C-Cross best-known source was restored; run fresh full confirmation before continuing")
+    elif convergence is not None and convergence.get("status") == "best_restore_failed":
+        errors.append("C-Cross best-known source restoration failed; repair the restore evidence before continuing")
     errors.extend(check_no_c_sources_in_src(root))
     return errors
 
@@ -386,6 +431,10 @@ def check_test_quality(
             persisted, persisted_error = load_json(root / "logs" / "trace" / "test-consistency.json")
             if persisted_error or persisted is None:
                 errors.append(f"test-consistency.json: {persisted_error}")
+            elif persisted.get("convergence_status") in {"restore_confirmation_required", "best_restore_failed"}:
+                errors.append(
+                    "test submission regression is not confirmed; repair/confirm the best restore and rerun Cargo, semantic review, and consistency"
+                )
             elif any(persisted.get(key) != consistency.get(key) for key in ("status", "issue_count", "input_fingerprint", "semantic_review")):
                 errors.append("test-consistency.json is stale or does not match current inputs")
             if require_pass and consistency.get("status") != "pass":
@@ -426,6 +475,7 @@ def evaluate_test_stage(root: Path) -> tuple[str, list[str], dict[str, Any]]:
         cargo_pass
         and placeholder_pass
         and isinstance(consistency, dict) and consistency.get("status") == "pass"
+        and consistency.get("convergence_status") not in {"restore_confirmation_required", "best_restore_failed"}
     )
     if test_success:
         status = "success"
@@ -597,6 +647,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     errors = checks[args.stage](root)
     if errors:
+        if args.stage == "FINAL":
+            final_receipt.invalidate(root)
         print(
             "IMPLEMENT: IMPLEMENTATION_REQUIRED"
             if args.stage == "IMPLEMENT"
@@ -605,6 +657,23 @@ def main(argv: list[str] | None = None) -> int:
         for error in errors:
             print(f"- {error}")
         return 1
+    if args.stage == "FINAL":
+        deadline, deadline_error = load_json(root / "logs" / "trace" / "deadline-final.json")
+        is_deadline_final = bool(
+            deadline_error is None
+            and isinstance(deadline, dict)
+            and deadline.get("status") == "submission_frozen"
+        )
+        if not is_deadline_final:
+            output_text = (root / "result" / "output.md").read_text(encoding="utf-8", errors="ignore")
+            terminal_status = "failed_final" if "STATUS: FAILED" in output_text else "success"
+            try:
+                final_receipt.create(root, terminal_status=terminal_status)
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                final_receipt.invalidate(root)
+                print("FINAL: FAIL")
+                print(f"- could not create current FINAL receipt: {exc}")
+                return 1
     if args.stage == "FINAL":
         output = root / "result" / "output.md"
         if output.is_file() and "STATUS: FAILED" in output.read_text(encoding="utf-8", errors="ignore"):

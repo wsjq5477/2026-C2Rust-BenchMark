@@ -404,8 +404,15 @@ def verify_current(root: Path, snapshot_id: str | None = None) -> dict[str, Any]
     }
 
 
-def restore_best(root: Path, *, reason: str) -> dict[str, Any]:
+def restore_best(
+    root: Path,
+    *,
+    reason: str,
+    restore_evidence: bool | None = None,
+) -> dict[str, Any]:
     root = root.resolve()
+    if restore_evidence is None:
+        restore_evidence = reason == "contest_deadline"
     pointer = select_best(root)
     snapshot_id = pointer.get("snapshot_id")
     if not isinstance(snapshot_id, str):
@@ -435,7 +442,7 @@ def restore_best(root: Path, *, reason: str) -> dict[str, Any]:
                     candidate.rmdir()
 
     evidence_restored: list[str] = []
-    for row in manifest.get("evidence", []):
+    for row in manifest.get("evidence", []) if restore_evidence else []:
         if not isinstance(row, dict) or not isinstance(row.get("path"), str) or not isinstance(row.get("snapshot_name"), str):
             continue
         relative = Path(row["path"])
@@ -460,6 +467,8 @@ def restore_best(root: Path, *, reason: str) -> dict[str, Any]:
         "score_vector": manifest.get("score_vector"),
         "restored_files": sorted(path.as_posix() for path in expected),
         "restored_evidence": sorted(evidence_restored),
+        "evidence_mode": "restored" if restore_evidence else "fresh_confirmation_required",
+        "next_action": "finalize_deadline" if restore_evidence else "rerun_cargo_and_consistency",
         "verification": verification,
     }
     _atomic_json(root / "logs" / "trace" / "submission-restore.json", evidence)

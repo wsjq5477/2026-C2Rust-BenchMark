@@ -1,0 +1,403 @@
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=4 using_sector=0 kv_size=34 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=1 dirty=1 remain=4082 empty_kv=14 kv_size=34 threshold=116
+[DEBUG alloc_kv] result empty_kv=14
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=4048 empty_kv=48
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=34 gc_request=false
+[DEBUG alloc_kv] result empty_kv=48
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=4014 empty_kv=82
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=33 gc_request=false
+[DEBUG alloc_kv] result empty_kv=82
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=3981 empty_kv=115
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=33 gc_request=false
+[DEBUG alloc_kv] result empty_kv=115
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=4 using_sector=0 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=1 dirty=1 remain=4082 empty_kv=14 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=14
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=3056 empty_kv=1040
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=1040
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=2030 empty_kv=2066
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=2066
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=4096 check_ok=true store=1 dirty=1 remain=4082 empty_kv=4110 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=4110
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=2 using_sector=2 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=5136
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=1 remain=2030 empty_kv=6162
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=2 using_sector=2 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=6162
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=2 using_sector=2 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=8192 check_ok=true store=1 dirty=1 remain=4082 empty_kv=8206 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=8206
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=3056 empty_kv=9232
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=9232
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=2030 empty_kv=10258
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=10258
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG] set_kv failed: key=kv3 value_len=1005 result=6 gc_request=false oldest_addr=0 sec_size=4096 max_size=16384
+  FAIL test_fdb_gc: result == FDB_NO_ERR (line 397)
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG] set_kv failed: key=kv0 value_len=1005 result=6 gc_request=false oldest_addr=0 sec_size=4096 max_size=16384
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG] set_kv failed: key=kv1 value_len=1005 result=6 gc_request=false oldest_addr=0 sec_size=4096 max_size=16384
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG] set_kv failed: key=kv2 value_len=1005 result=6 gc_request=false oldest_addr=0 sec_size=4096 max_size=16384
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG] set_kv failed: key=kv3 value_len=1005 result=6 gc_request=false oldest_addr=0 sec_size=4096 max_size=16384
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=4 using_sector=0 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=1 dirty=1 remain=4082 empty_kv=14 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=14
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=3056 empty_kv=1040
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=1040
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=2030 empty_kv=2066
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=2066
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=4096 check_ok=true store=1 dirty=1 remain=4082 empty_kv=4110 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=4110
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=2 using_sector=2 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=5136
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=1 remain=2030 empty_kv=6162
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=2 using_sector=2 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=6162
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=2 using_sector=2 kv_size=3036 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092 kv_size=3036 threshold=3118
+[DEBUG alloc_kv search empty] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188 kv_size=3036 threshold=3118
+[DEBUG alloc_kv search empty] sec_addr=8192 check_ok=true store=1 dirty=1 remain=4082 empty_kv=8206 kv_size=3036 threshold=3118
+[DEBUG alloc_kv] result empty_kv=8206
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=2031 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=2 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1046 empty_kv=11242
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv] empty_sector=1 using_sector=3 kv_size=2031 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=false
+[DEBUG alloc_kv] result empty_kv=4294967295
+[DEBUG] set_kv failed: key=kv5 value_len=2010 result=6 gc_request=false oldest_addr=0 sec_size=4096 max_size=16384
+  FAIL test_fdb_gc2: result == FDB_NO_ERR (line 397)
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=4 using_sector=0 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=1 dirty=1 remain=4082 empty_kv=14 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=14
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=3056 empty_kv=1040
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=1040
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=2030 empty_kv=2066
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=2066
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=3 using_sector=1 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=4096 check_ok=true store=1 dirty=1 remain=4082 empty_kv=4110 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=4110
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=6 using_sector=2 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=5136
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=1 remain=2030 empty_kv=6162
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=6 using_sector=2 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=6162
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=1 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=0 empty_kv=4294967295
+[DEBUG alloc_kv] empty_sector=6 using_sector=2 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=4096 check_ok=true store=2 dirty=1 remain=1004 empty_kv=7188 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=8192 check_ok=true store=1 dirty=1 remain=4082 empty_kv=8206 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=8206
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=1 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=3056 empty_kv=9232
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=1 dirty=1 remain=4082 empty_kv=16398
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=4082 empty_kv=20494
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=4082 empty_kv=24590
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=4082 empty_kv=28686
+[DEBUG alloc_kv] empty_sector=5 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=9232
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=1 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=2030 empty_kv=10258
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=1 dirty=1 remain=4082 empty_kv=16398
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=4082 empty_kv=20494
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=4082 empty_kv=24590
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=4082 empty_kv=28686
+[DEBUG alloc_kv] empty_sector=5 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=10258
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=1 dirty=1 remain=4082 empty_kv=16398
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=4082 empty_kv=20494
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=4082 empty_kv=24590
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=4082 empty_kv=28686
+[DEBUG alloc_kv] empty_sector=5 using_sector=3 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=12288 check_ok=true store=1 dirty=1 remain=4082 empty_kv=12302 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=12302
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=1 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=2 dirty=1 remain=3056 empty_kv=13328
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=1 dirty=1 remain=4082 empty_kv=16398
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=4082 empty_kv=20494
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=4082 empty_kv=24590
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=4082 empty_kv=28686
+[DEBUG alloc_kv] empty_sector=4 using_sector=4 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=13328
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=2 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=2 dirty=1 remain=2030 empty_kv=14354
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=1 dirty=1 remain=4082 empty_kv=16398
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=4082 empty_kv=20494
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=4082 empty_kv=24590
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=4082 empty_kv=28686
+[DEBUG alloc_kv] empty_sector=4 using_sector=4 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=14354
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=2 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=2 dirty=1 remain=1004 empty_kv=15380
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=1 dirty=1 remain=4082 empty_kv=16398
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=4082 empty_kv=20494
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=4082 empty_kv=24590
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=4082 empty_kv=28686
+[DEBUG alloc_kv] empty_sector=4 using_sector=4 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=8192 check_ok=true store=2 dirty=2 remain=1004 empty_kv=11284 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=12288 check_ok=true store=2 dirty=1 remain=1004 empty_kv=15380 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=16384 check_ok=true store=1 dirty=1 remain=4082 empty_kv=16398 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=16398
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=2 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=2 dirty=1 remain=1004 empty_kv=15380
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=2 dirty=1 remain=3056 empty_kv=17424
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=4082 empty_kv=20494
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=4082 empty_kv=24590
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=4082 empty_kv=28686
+[DEBUG alloc_kv] empty_sector=3 using_sector=5 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=17424
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=2 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=2 dirty=2 remain=1004 empty_kv=15380
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=2 dirty=1 remain=2030 empty_kv=18450
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=4082 empty_kv=20494
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=4082 empty_kv=24590
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=4082 empty_kv=28686
+[DEBUG alloc_kv] empty_sector=3 using_sector=5 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] result empty_kv=18450
+[DEBUG alloc_kv count] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092
+[DEBUG alloc_kv count] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188
+[DEBUG alloc_kv count] sec_addr=8192 check_ok=true store=2 dirty=2 remain=1004 empty_kv=11284
+[DEBUG alloc_kv count] sec_addr=12288 check_ok=true store=2 dirty=2 remain=1004 empty_kv=15380
+[DEBUG alloc_kv count] sec_addr=16384 check_ok=true store=2 dirty=1 remain=1004 empty_kv=19476
+[DEBUG alloc_kv count] sec_addr=20480 check_ok=true store=1 dirty=1 remain=4082 empty_kv=20494
+[DEBUG alloc_kv count] sec_addr=24576 check_ok=true store=1 dirty=1 remain=4082 empty_kv=24590
+[DEBUG alloc_kv count] sec_addr=28672 check_ok=true store=1 dirty=1 remain=4082 empty_kv=28686
+[DEBUG alloc_kv] empty_sector=3 using_sector=5 kv_size=1026 gc_request=false
+[DEBUG alloc_kv] trying empty sectors, threshold=true
+[DEBUG alloc_kv search empty] sec_addr=0 check_ok=true store=2 dirty=1 remain=1004 empty_kv=3092 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=4096 check_ok=true store=2 dirty=2 remain=1004 empty_kv=7188 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=8192 check_ok=true store=2 dirty=2 remain=1004 empty_kv=11284 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=12288 check_ok=true store=2 dirty=2 remain=1004 empty_kv=15380 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=16384 check_ok=true store=2 dirty=1 remain=1004 empty_kv=19476 kv_size=1026 threshold=1108
+[DEBUG alloc_kv search empty] sec_addr=20480 check_ok=true store=1 dirty=1 remain=4082 empty_kv=20494 kv_size=1026 threshold=1108
+[DEBUG alloc_kv] result empty_kv=20494

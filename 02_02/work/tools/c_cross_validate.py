@@ -287,6 +287,45 @@ def _matrix_outcomes(matrix: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _matrix_scope_ids(matrix: dict[str, Any] | None) -> list[str]:
+    scenarios = matrix.get("scenarios") if isinstance(matrix, dict) else []
+    return sorted({
+        str(row.get("scenario_id") or row.get("source_test"))
+        for row in scenarios if isinstance(row, dict) and (row.get("scenario_id") or row.get("source_test"))
+    }) if isinstance(scenarios, list) else []
+
+
+def _matrix_scope_kind(matrix: dict[str, Any] | None) -> str:
+    if not isinstance(matrix, dict):
+        return "unknown"
+    if matrix.get("mode") == "full" and matrix.get("scope", "all") == "all":
+        return "full"
+    if matrix.get("scope") == "selected":
+        suites = matrix.get("selected_suites")
+        scenarios = matrix.get("selected_scenarios")
+        if isinstance(scenarios, list) and scenarios:
+            return "targeted"
+        if isinstance(suites, list) and suites:
+            return "suite"
+    return "partial"
+
+
+def matrix_scope_fingerprint(matrix: dict[str, Any] | None) -> str:
+    payload = {
+        "scope_kind": _matrix_scope_kind(matrix),
+        "mode": matrix.get("mode") if isinstance(matrix, dict) else None,
+        "scenario_ids": _matrix_scope_ids(matrix),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def annotate_matrix_scope(matrix: dict[str, Any]) -> dict[str, Any]:
+    matrix["scope_kind"] = _matrix_scope_kind(matrix)
+    matrix["scope_ids"] = _matrix_scope_ids(matrix)
+    matrix["scope_fingerprint"] = matrix_scope_fingerprint(matrix)
+    return matrix
+
+
 def compare_attempt(previous: dict[str, Any] | None, current: dict[str, Any]) -> dict[str, Any]:
     before = _matrix_outcomes(previous)
     after = _matrix_outcomes(current)
@@ -340,6 +379,13 @@ def compare_attempt(previous: dict[str, Any] | None, current: dict[str, Any]) ->
             failure_fingerprint(row)
             for source_test, row in after["failures"].items()
             if source_test in previous_scope
+        ),
+        "scope_relation": (
+            "same"
+            if matrix_scope_fingerprint(previous) == matrix_scope_fingerprint(current)
+            else "overlap"
+            if previous_scope & current_scope
+            else "disjoint"
         ),
     }
 
@@ -460,6 +506,33 @@ def validate_repair_request(
     return errors
 
 
+def validate_final_request(
+    previous_matrix: dict[str, Any] | None,
+    attempts: list[dict[str, Any]],
+    current_source_manifest: dict[str, str],
+) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(previous_matrix, dict):
+        return ["final requires a current full result in ready_for_final state"]
+    annotate_matrix_scope(previous_matrix)
+    convergence = previous_matrix.get("convergence")
+    if previous_matrix.get("scope_kind") != "full":
+        errors.append("final requires a preceding full-scope validation")
+    rows = previous_matrix.get("scenarios")
+    scenarios = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    if not scenarios or any(row.get("rust_impl_c_test") != "pass" for row in scenarios):
+        errors.append("final is only valid after every full-scope scenario passed")
+    if not isinstance(convergence, dict) or convergence.get("status") != "ready_for_final":
+        errors.append("final requires current ready_for_final convergence evidence")
+    if not attempts or attempts[-1].get("attempt_id") != previous_matrix.get("execution_id"):
+        errors.append("final requires the latest attempt to match the ready_for_final matrix")
+    elif attempts[-1].get("source_manifest") != current_source_manifest:
+        errors.append("Rust src/** changed after ready_for_final; record and confirm the change before final")
+    if attempts and attempts[-1].get("regression") is True:
+        errors.append("final is blocked until the restored best source receives full confirmation")
+    return errors
+
+
 def _attempt_score(matrix: dict[str, Any]) -> list[int]:
     outcomes = _matrix_outcomes(matrix)
     layer_rank = {
@@ -496,6 +569,8 @@ def _snapshot_project(
     *,
     attempt_id: str,
     score: list[int],
+    scope_fingerprint: str,
+    scenario_ids: list[str],
 ) -> dict[str, Any] | None:
     project_root = project_root.resolve()
     files = _project_snapshot_files(project_root)
@@ -517,6 +592,9 @@ def _snapshot_project(
         "schema_version": 1,
         "attempt_id": attempt_id,
         "score": score,
+        "scope_kind": "full",
+        "scope_fingerprint": scope_fingerprint,
+        "scenario_ids": scenario_ids,
         "project_name": project_root.name,
         "source_scope": "src/**",
         "files": manifest_files,
@@ -525,6 +603,9 @@ def _snapshot_project(
     best = {
         "attempt_id": attempt_id,
         "score": score,
+        "scope_kind": "full",
+        "scope_fingerprint": scope_fingerprint,
+        "scenario_ids": scenario_ids,
         "snapshot": f"logs/trace/c-cross/snapshots/{safe_id}",
         "manifest": f"logs/trace/c-cross/snapshots/{safe_id}/manifest.json",
         "file_count": len(manifest_files),
@@ -609,6 +690,45 @@ def restore_best_known(c_cross: Path, project_root: Path) -> dict[str, Any]:
     return evidence
 
 
+def auto_restore_regressed_full_attempt(
+    c_cross: Path,
+    project_root: Path,
+    queue_path: Path,
+    attempt: dict[str, Any],
+    matrix: dict[str, Any],
+    attempts: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    if attempt.get("regression") is not True or matrix.get("scope_kind") != "full":
+        return None
+    queue = repair_work_queue.load_queue(queue_path)
+    phases = queue.get("phases") if isinstance(queue.get("phases"), dict) else {}
+    queue_phase = phases.get("c_cross") if isinstance(phases.get("c_cross"), dict) else {
+        "phase": "c_cross", "sweep": 1, "tasks": {}, "dynamic_task_ids": []
+    }
+    restore_error = None
+    restored: dict[str, Any] | None = None
+    try:
+        restored = restore_best_known(c_cross, project_root)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        restore_error = str(exc)
+    status = "restore_confirmation_required" if restored is not None else "best_restore_failed"
+    convergence = {
+        "status": status,
+        "terminal": False,
+        "next_action": "run_full_confirmation" if restored is not None else "repair_best_restore",
+        "repair_attempts_recorded": len(_repair_rows(attempts)),
+        "work_queue": repair_work_queue.phase_summary(queue_phase),
+    }
+    restore_result = {
+        "status": restored.get("status") if restored is not None else "failed",
+        "reason": "full_scope_score_regression",
+        "best_attempt_id": restored.get("best_attempt_id") if restored is not None else None,
+        "source_manifest": restored.get("source_manifest") if restored is not None else None,
+        "error": restore_error,
+    }
+    return convergence, restore_result
+
+
 def record_attempt(
     c_cross: Path,
     previous: dict[str, Any] | None,
@@ -660,6 +780,7 @@ def record_attempt(
     attempts_path = c_cross / "attempts.jsonl"
     prior_attempts = _read_jsonl(attempts_path)
     attempt_id = str(current.get("execution_id") or f"attempt-{time.time_ns()}")
+    annotate_matrix_scope(current)
     comparison = compare_attempt(previous, current)
     prior_stalled = int(prior_attempts[-1].get("stalled_rounds", 0)) if prior_attempts else 0
     stalled_rounds = 0 if previous is None or comparison["progress"] else prior_stalled + 1
@@ -676,17 +797,31 @@ def record_attempt(
 
     best_known = _load_best_known(c_cross)
     score = _attempt_score(current)
-    full_scope = current.get("mode") == "full" and current.get("scope", "all") == "all"
+    full_scope = current.get("scope_kind") == "full"
     best_matrix = _load_best_matrix(c_cross, best_known) if full_scope else None
+    best_score = best_known.get("score") if isinstance(best_known, dict) else None
     if best_matrix is not None:
+        annotate_matrix_scope(best_matrix)
         best_comparison = compare_attempt(best_matrix, current)
-        if best_comparison["regression"]:
+        same_full_scope = best_matrix.get("scope_fingerprint") == current.get("scope_fingerprint")
+        if (
+            same_full_scope
+            and best_comparison["regression"]
+            and isinstance(best_score, list)
+            and score <= best_score
+        ):
             comparison["regression"] = True
             comparison["progress"] = False
             comparison["progress_reasons"] = []
             comparison["fingerprints_before"] = best_comparison["fingerprints_before"]
             comparison["comparable_fingerprints"] = best_comparison["comparable_fingerprints"]
-    best_score = best_known.get("score") if isinstance(best_known, dict) else None
+        elif same_full_scope and isinstance(best_score, list) and score > best_score:
+            # A higher full-scope score is useful overall even if the exact pass
+            # set changed. Preserve the changed-set evidence without treating
+            # the improved candidate as an automatic rollback.
+            comparison["regression"] = False
+            if best_comparison["regression"]:
+                comparison["progress_reasons"].append("full score improved with a changed pass set")
     best_scope_compatible = isinstance(best_known, dict) and best_known.get("source_scope") == "src/**"
     snapshot_error = None
     if (
@@ -701,6 +836,8 @@ def record_attempt(
                 project_root,
                 attempt_id=attempt_id,
                 score=score,
+                scope_fingerprint=str(current["scope_fingerprint"]),
+                scenario_ids=list(current["scope_ids"]),
             ) or best_known
         except (OSError, ValueError) as exc:
             snapshot_error = str(exc)
@@ -741,6 +878,9 @@ def record_attempt(
         },
         "stalled_rounds": stalled_rounds,
         "score": score,
+        "scope_kind": current.get("scope_kind"),
+        "scope_ids": current.get("scope_ids"),
+        "scope_fingerprint": current.get("scope_fingerprint"),
         "best_known": best_known,
         "snapshot_error": snapshot_error,
         "restore_best_available": bool(comparison["regression"] and best_known),
@@ -1768,6 +1908,7 @@ def _write_failure_summary(
     c_cross: Path,
     attempts: list[dict[str, Any]] | None = None,
     queue_phase: dict[str, Any] | None = None,
+    convergence_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write actionable failures and the per-task convergence decision."""
     scenarios = matrix.get("scenarios")
@@ -1783,21 +1924,21 @@ def _write_failure_summary(
                     "diagnosis", "reason", "log", "handoff",
                 )
             })
-    convergence = convergence_status(matrix, attempts or [], queue_phase)
+    convergence = convergence_override or convergence_status(matrix, attempts or [], queue_phase)
+    guidance_by_status = {
+        "repair_required": "Repair the next queued scenario or shared-root cluster, then run targeted and affected-suite validation.",
+        "restore_confirmation_required": "The best-known Rust source was restored; run an unfiltered full confirmation before any repair or final attempt.",
+        "best_restore_failed": "Best-known source restoration failed; do not continue to report or final.",
+        "failed_final": "Every remaining repair task is exhausted and a full confirmation preserved the failures.",
+        "ready_for_final": "Run a fresh full final verification.",
+        "success": "Fresh full final verification passed.",
+    }
     summary = {
         "stage": "VERIFY_RUST_WITH_C_TESTS",
         **convergence,
         "execution_id": matrix.get("execution_id"),
         "failures": failures,
-        "guidance": (
-            "Repair the next queued scenario or shared-root cluster, then run targeted and affected-suite validation."
-            if convergence["status"] == "repair_required"
-            else "Every remaining repair task is exhausted and a full confirmation preserved the failures."
-            if convergence["status"] == "failed_final"
-            else "Run a fresh full final verification."
-            if convergence["status"] == "ready_for_final"
-            else "Fresh full final verification passed."
-        ),
+        "guidance": guidance_by_status.get(str(convergence.get("status")), "Validation has no legal terminal action."),
     }
     _write_json(c_cross / "failure-summary.json", summary)
     return summary
@@ -2238,7 +2379,7 @@ def build_matrix(
     _write_jsonl(c_cross / "workbench-issues.jsonl", workbench_issues)
     summary = Counter(item["rust_impl_c_test"] for item in scenarios)
     stage_result, verification_result = _verification_results(scenarios)
-    return {
+    return annotate_matrix_scope({
         "stage": "VERIFY_RUST_WITH_C_TESTS",
         "policy": "strict",
         "mode": mode,
@@ -2253,7 +2394,7 @@ def build_matrix(
         "stage_result": stage_result,
         "verification_result": verification_result,
         "scenarios": scenarios,
-    }
+    })
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2330,6 +2471,10 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("repair --changed-file must stay under flashDB_rust/src/")
     elif args.repair_kind != "local":
         parser.error("--repair-kind architecture is only valid with --attempt-kind repair")
+    if args.attempt_kind in {"confirmation", "final"} and (
+        args.mode != "full" or args.suites or args.scenarios
+    ):
+        parser.error(f"--attempt-kind {args.attempt_kind} requires unfiltered --mode full scope")
 
     if args.scaffold_layout_only:
         result = run_scaffold_layout_check(root, out, project_name=args.project)
@@ -2378,6 +2523,10 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(previous_manifest, dict)
         else []
     )
+    if args.attempt_kind == "final":
+        final_errors = validate_final_request(previous_matrix, attempts_before, source_manifest)
+        if final_errors:
+            parser.error("; ".join(final_errors))
     if args.attempt_kind == "repair":
         if isinstance(previous_manifest, dict):
             actual_changed_files = source_changes
@@ -2460,6 +2609,38 @@ def main(argv: list[str] | None = None) -> int:
     }
     attempts_after = attempts_before + [attempt]
     queue_path = out / "repair-work-queue.json"
+    auto_restore = auto_restore_regressed_full_attempt(
+        c_cross,
+        project_root,
+        queue_path,
+        attempt,
+        matrix,
+        attempts_after,
+    )
+    if auto_restore is not None:
+        convergence, restore_result = auto_restore
+        queue = repair_work_queue.load_queue(queue_path)
+        phases = queue.get("phases") if isinstance(queue.get("phases"), dict) else {}
+        queue_phase = phases.get("c_cross") if isinstance(phases.get("c_cross"), dict) else {
+            "phase": "c_cross", "sweep": 1, "tasks": {}, "dynamic_task_ids": []
+        }
+        matrix["auto_restore"] = restore_result
+        matrix["convergence"] = convergence
+        _write_failure_summary(
+            matrix,
+            c_cross,
+            attempts_after,
+            queue_phase,
+            convergence_override=convergence,
+        )
+        _write_json(out / "c-cross" / "checkpoints" / f"{execution_id}.json", matrix)
+        _write_json(matrix_path, matrix)
+        print("VERIFY_RUST_WITH_C_TESTS: " + (
+            "BEST_KNOWN_AUTO_RESTORED" if restore_result.get("status") == "restored" else "BEST_KNOWN_RESTORE_FAILED"
+        ))
+        print(f"convergence_status={convergence['status']}")
+        print(f"next_action={convergence['next_action']}")
+        return 1
     outcomes = _matrix_outcomes(matrix)
     fingerprints = {
         scenario_id: failure_fingerprint(row)
